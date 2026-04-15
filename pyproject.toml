@@ -2,9 +2,9 @@
 name = "proctor-station"
 version = "0.1.0"
 description = "NUC-based proctoring station with face recognition, recording, and browser lockdown"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "face-recognition>=1.3.0",
+    "dlib>=19.24",
     "opencv-python-headless>=4.9.0",
     "mediapipe>=0.10.9",
     "numpy>=1.26.0",
@@ -25,4 +25,4 @@ dev = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"

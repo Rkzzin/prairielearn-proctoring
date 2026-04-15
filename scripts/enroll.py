@@ -165,7 +165,7 @@ def enroll_from_csv(
                 continue
 
             # Usar a mesma foto com jitter para gerar variações
-            # (face_recognition gera perturbações aleatórias)
+            # (dlib gera perturbações aleatórias via num_jitters)
             old_jitters = recognizer.config.num_jitters
             recognizer.config.num_jitters = num_jitters
 

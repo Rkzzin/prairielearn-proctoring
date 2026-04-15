@@ -1,2 +1,10 @@
+# Python files and setup
+/.venv
 /venv
 .env
+__pycache__*
+/src/proctor_station*
+
+
+# Students information
+encodings

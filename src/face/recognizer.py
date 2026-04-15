@@ -1,7 +1,7 @@
 """Módulo de reconhecimento facial — enrollment e identificação.
 
-Usa a biblioteca `face_recognition` (wrapper do dlib) para gerar
-encodings 128-dimensionais e comparar rostos.
+Usa dlib diretamente para detecção (HOG/CNN), landmark prediction,
+e encoding (ResNet 128-d). Sem dependência de face_recognition.
 
 Uso típico:
     recognizer = FaceRecognizer(config)
@@ -18,7 +18,7 @@ import pickle
 from pathlib import Path
 
 import cv2
-import face_recognition
+import dlib
 import numpy as np
 
 from src.core.config import FaceConfig
@@ -33,6 +33,19 @@ from src.core.models import (
 logger = logging.getLogger(__name__)
 
 
+def _dlib_rect_to_tlbr(rect: dlib.rectangle) -> tuple[int, int, int, int]:
+    """Converte dlib.rectangle para (top, right, bottom, left)."""
+    return (rect.top(), rect.right(), rect.bottom(), rect.left())
+
+
+def _face_distance(known_encodings: list[np.ndarray], face_encoding: np.ndarray) -> np.ndarray:
+    """Calcula distância euclidiana entre um encoding e uma lista de conhecidos."""
+    if not known_encodings:
+        return np.array([])
+    known = np.array(known_encodings)
+    return np.linalg.norm(known - face_encoding, axis=1)
+
+
 class FaceRecognizer:
     """Gerencia enrollment e identificação facial de alunos."""
 
@@ -41,6 +54,48 @@ class FaceRecognizer:
         self.turma: TurmaEncodings | None = None
         self._encodings_dir = Path(self.config.encodings_dir)
         self._encodings_dir.mkdir(parents=True, exist_ok=True)
+
+        # Carregar modelos dlib
+        missing = self.config.validate_models()
+        if missing:
+            raise FileNotFoundError(
+                f"Modelos dlib não encontrados: {missing}. "
+                f"Rode: ./scripts/download_models.sh {self.config.models_dir}"
+            )
+
+        self._detector = dlib.get_frontal_face_detector()
+        self._shape_predictor = dlib.shape_predictor(
+            str(self.config.shape_predictor_path)
+        )
+        self._face_encoder = dlib.face_recognition_model_v1(
+            str(self.config.recognition_model_path)
+        )
+
+        if self.config.use_cnn_detector:
+            self._cnn_detector = dlib.cnn_face_detection_model_v1(
+                str(self.config.cnn_detector_path)
+            )
+
+    # ──────────────────────────────────────────────
+    #  Detecção interna
+    # ──────────────────────────────────────────────
+
+    def _detect_faces(self, rgb: np.ndarray) -> list[dlib.rectangle]:
+        """Detecta rostos e retorna lista de dlib.rectangle."""
+        if self.config.use_cnn_detector:
+            detections = self._cnn_detector(rgb, 1)
+            return [d.rect for d in detections]
+        return self._detector(rgb, 1)
+
+    def _compute_encoding(
+        self, rgb: np.ndarray, face_rect: dlib.rectangle
+    ) -> np.ndarray:
+        """Computa o encoding 128-d de um rosto detectado."""
+        shape = self._shape_predictor(rgb, face_rect)
+        encoding = self._face_encoder.compute_face_descriptor(
+            rgb, shape, self.config.num_jitters
+        )
+        return np.array(encoding)
 
     # ──────────────────────────────────────────────
     #  Enrollment
@@ -56,32 +111,22 @@ class FaceRecognizer:
 
         Cada frame deve conter exatamente 1 rosto. Frames com 0 ou >1
         rostos são descartados silenciosamente.
-
-        Args:
-            student_id: RA do aluno.
-            student_name: Nome completo.
-            frames: Lista de imagens BGR capturadas da webcam.
-
-        Returns:
-            EnrollmentResult com status e quantidade de samples válidos.
         """
         student = StudentEncoding(student_id=student_id, student_name=student_name)
         discarded = 0
 
         for i, frame in enumerate(frames):
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            locations = face_recognition.face_locations(rgb, model=self.config.detection_model)
+            faces = self._detect_faces(rgb)
 
-            if len(locations) != 1:
+            if len(faces) != 1:
                 discarded += 1
                 logger.debug(
-                    "Frame %d descartado: %d rostos detectados", i, len(locations)
+                    "Frame %d descartado: %d rostos detectados", i, len(faces)
                 )
                 continue
 
-            encoding = face_recognition.face_encodings(
-                rgb, locations, num_jitters=self.config.num_jitters
-            )[0]
+            encoding = self._compute_encoding(rgb, faces[0])
             student.add_encoding(encoding)
 
         if len(student.encodings) < 2:
@@ -94,7 +139,6 @@ class FaceRecognizer:
                 f"{discarded} frames descartados.",
             )
 
-        # Adiciona à turma atual (se carregada)
         if self.turma is not None:
             self.turma.add_student(student)
 
@@ -122,21 +166,7 @@ class FaceRecognizer:
         num_samples: int | None = None,
         delay_between_samples_ms: int = 500,
     ) -> EnrollmentResult:
-        """Captura frames da webcam e faz enrollment.
-
-        Captura `num_samples` frames com intervalo entre eles, pedindo
-        ao aluno que mova levemente a cabeça entre capturas.
-
-        Args:
-            student_id: RA do aluno.
-            student_name: Nome completo.
-            camera_index: Índice da câmera (default: config).
-            num_samples: Quantidade de capturas (default: config).
-            delay_between_samples_ms: Intervalo entre capturas em ms.
-
-        Returns:
-            EnrollmentResult.
-        """
+        """Captura frames da webcam e faz enrollment."""
         cam_idx = camera_index if camera_index is not None else self.config.camera_index
         n_samples = num_samples or self.config.samples_per_student
 
@@ -156,7 +186,6 @@ class FaceRecognizer:
         frames = []
         try:
             for i in range(n_samples):
-                # Descartar frames antigos do buffer
                 for _ in range(5):
                     cap.grab()
 
@@ -199,21 +228,19 @@ class FaceRecognizer:
         rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
         # Detectar rostos
-        locations_small = face_recognition.face_locations(
-            rgb_small, model=self.config.detection_model
-        )
+        faces = self._detect_faces(rgb_small)
 
-        if len(locations_small) == 0:
+        if len(faces) == 0:
             return IdentifyResult(status=IdentifyStatus.NO_FACE, face_count=0)
 
-        if len(locations_small) > 1:
+        if len(faces) > 1:
             return IdentifyResult(
                 status=IdentifyStatus.MULTIPLE_FACES,
-                face_count=len(locations_small),
+                face_count=len(faces),
             )
 
         # Encoding do rosto detectado
-        encoding = face_recognition.face_encodings(rgb_small, locations_small)[0]
+        encoding = self._compute_encoding(rgb_small, faces[0])
 
         # Comparar com todos os alunos da turma
         student_ids, known_encodings = self.turma.get_all_mean_encodings()
@@ -221,18 +248,18 @@ class FaceRecognizer:
         if not known_encodings:
             return IdentifyResult(status=IdentifyStatus.NO_MATCH, face_count=1)
 
-        distances = face_recognition.face_distance(known_encodings, encoding)
+        distances = _face_distance(known_encodings, encoding)
         best_idx = int(np.argmin(distances))
         best_distance = float(distances[best_idx])
 
         # Escalar location de volta para resolução original
-        top, right, bottom, left = locations_small[0]
+        rect = faces[0]
         inv_scale = 1.0 / scale
         face_loc = (
-            int(top * inv_scale),
-            int(right * inv_scale),
-            int(bottom * inv_scale),
-            int(left * inv_scale),
+            int(rect.top() * inv_scale),
+            int(rect.right() * inv_scale),
+            int(rect.bottom() * inv_scale),
+            int(rect.left() * inv_scale),
         )
 
         if best_distance < self.config.match_threshold:
@@ -257,10 +284,7 @@ class FaceRecognizer:
     def identify_best_of_n(
         self, frames: list[np.ndarray], n: int = 3
     ) -> IdentifyResult:
-        """Roda identificação em N frames e retorna o melhor match.
-
-        Útil para reduzir falsos negativos no gate de acesso.
-        """
+        """Roda identificação em N frames e retorna o melhor match."""
         best: IdentifyResult | None = None
 
         for frame in frames[:n]:
@@ -272,7 +296,6 @@ class FaceRecognizer:
         if best is not None:
             return best
 
-        # Se nenhum match, retorna o último resultado
         return result  # type: ignore[return-value]
 
     # ──────────────────────────────────────────────
@@ -280,14 +303,7 @@ class FaceRecognizer:
     # ──────────────────────────────────────────────
 
     def save_turma(self, turma: TurmaEncodings | None = None) -> Path:
-        """Salva os encodings da turma em arquivo .pkl.
-
-        Args:
-            turma: Turma a salvar (default: turma carregada).
-
-        Returns:
-            Caminho do arquivo salvo.
-        """
+        """Salva os encodings da turma em arquivo .pkl."""
         turma = turma or self.turma
         if turma is None:
             raise RuntimeError("Nenhuma turma para salvar.")
@@ -305,17 +321,7 @@ class FaceRecognizer:
         return filepath
 
     def load_turma(self, turma_id: str) -> TurmaEncodings:
-        """Carrega encodings de uma turma a partir do arquivo .pkl.
-
-        Args:
-            turma_id: Identificador da turma (ex: "ES2025-T1").
-
-        Returns:
-            TurmaEncodings carregada.
-
-        Raises:
-            FileNotFoundError: Se o arquivo .pkl não existir.
-        """
+        """Carrega encodings de uma turma a partir do arquivo .pkl."""
         filepath = self._encodings_dir / f"{turma_id}.pkl"
         if not filepath.exists():
             raise FileNotFoundError(
@@ -335,14 +341,7 @@ class FaceRecognizer:
         return turma
 
     def create_turma(self, turma_id: str) -> TurmaEncodings:
-        """Cria uma nova turma vazia e a define como ativa.
-
-        Args:
-            turma_id: Identificador da turma.
-
-        Returns:
-            TurmaEncodings criada.
-        """
+        """Cria uma nova turma vazia e a define como ativa."""
         self.turma = TurmaEncodings(turma_id=turma_id)
         logger.info("Turma '%s' criada (vazia)", turma_id)
         return self.turma

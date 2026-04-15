@@ -4,8 +4,7 @@ Módulo leve que roda a cada frame durante a prova.
 Diferente do recognizer (que identifica *quem*), o detector
 apenas conta quantos rostos estão visíveis e onde estão.
 
-Usa face_recognition.face_locations() com modelo HOG para
-performance em CPU.
+Usa dlib.get_frontal_face_detector() (HOG) para performance em CPU.
 """
 
 from __future__ import annotations
@@ -13,7 +12,7 @@ from __future__ import annotations
 import logging
 
 import cv2
-import face_recognition
+import dlib
 import numpy as np
 
 from src.core.config import FaceConfig
@@ -26,6 +25,7 @@ class FaceDetector:
 
     def __init__(self, config: FaceConfig | None = None):
         self.config = config or FaceConfig()
+        self._detector = dlib.get_frontal_face_detector()
 
     def detect(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
         """Detecta rostos no frame e retorna suas localizações.
@@ -41,15 +41,14 @@ class FaceDetector:
         small = cv2.resize(frame, (0, 0), fx=scale, fy=scale)
         rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
-        locations = face_recognition.face_locations(
-            rgb_small, model=self.config.detection_model
-        )
+        rects = self._detector(rgb_small, 1)
 
         # Escalar de volta para resolução original
         inv = 1.0 / scale
         return [
-            (int(t * inv), int(r * inv), int(b * inv), int(l * inv))
-            for t, r, b, l in locations
+            (int(r.top() * inv), int(r.right() * inv),
+             int(r.bottom() * inv), int(r.left() * inv))
+            for r in rects
         ]
 
     def count_faces(self, frame: np.ndarray) -> int:
@@ -71,7 +70,7 @@ class FaceDetector:
 
         Args:
             frame: Imagem BGR.
-            locations: Localizações dos rostos (se None, detecta automaticamente).
+            locations: Localizações (top, right, bottom, left). Se None, detecta automaticamente.
             color: Cor BGR do retângulo.
             label: Texto a exibir acima do rosto.
 

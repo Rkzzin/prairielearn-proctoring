@@ -1,12 +1,27 @@
 """Configuração central da proctoring station."""
 
 from pathlib import Path
-from pydantic_settings import BaseSettings
+
 from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
 class FaceConfig(BaseSettings):
     """Parâmetros do módulo de reconhecimento facial."""
+
+    # Model paths (dlib)
+    models_dir: Path = Field(
+        default=Path("models"),
+        description="Diretório com os .dat do dlib",
+    )
+    shape_predictor: str = Field(
+        default="shape_predictor_68_face_landmarks.dat",
+        description="Arquivo do shape predictor (dentro de models_dir)",
+    )
+    recognition_model: str = Field(
+        default="dlib_face_recognition_resnet_model_v1.dat",
+        description="Arquivo do modelo de reconhecimento (dentro de models_dir)",
+    )
 
     # Enrollment
     encodings_dir: Path = Field(
@@ -23,9 +38,9 @@ class FaceConfig(BaseSettings):
         default=0.45,
         description="Distância máxima para considerar match (menor = mais restritivo)",
     )
-    detection_model: str = Field(
-        default="hog",
-        description="Modelo de detecção: 'hog' (CPU) ou 'cnn' (GPU)",
+    use_cnn_detector: bool = Field(
+        default=False,
+        description="Usar CNN detector (GPU) em vez de HOG (CPU)",
     )
     max_identification_attempts: int = Field(
         default=3,
@@ -47,6 +62,29 @@ class FaceConfig(BaseSettings):
         default=1,
         description="Jitters para encoding (mais = mais preciso, mais lento). Use 3-5 no enrollment.",
     )
+
+    @property
+    def shape_predictor_path(self) -> Path:
+        return self.models_dir / self.shape_predictor
+
+    @property
+    def recognition_model_path(self) -> Path:
+        return self.models_dir / self.recognition_model
+
+    @property
+    def cnn_detector_path(self) -> Path:
+        return self.models_dir / "mmod_human_face_detector.dat"
+
+    def validate_models(self) -> list[str]:
+        """Retorna lista de modelos faltantes."""
+        missing = []
+        if not self.shape_predictor_path.exists():
+            missing.append(str(self.shape_predictor_path))
+        if not self.recognition_model_path.exists():
+            missing.append(str(self.recognition_model_path))
+        if self.use_cnn_detector and not self.cnn_detector_path.exists():
+            missing.append(str(self.cnn_detector_path))
+        return missing
 
     model_config = {"env_prefix": "PROCTOR_FACE_"}
 

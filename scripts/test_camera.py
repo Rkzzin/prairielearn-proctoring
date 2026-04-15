@@ -15,16 +15,29 @@ import time
 from pathlib import Path
 
 import cv2
+import dlib
+import numpy as np
 
+# Adicionar raiz do projeto ao path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import face_recognition
+MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
 
 def test_camera(camera_index: int = 0, headless: bool = False) -> bool:
     print(f"\n{'='*50}")
     print(f"  Teste de câmera — /dev/video{camera_index}")
     print(f"{'='*50}\n")
+
+    # 0. Verificar modelos
+    sp_path = MODELS_DIR / "shape_predictor_68_face_landmarks.dat"
+    rec_path = MODELS_DIR / "dlib_face_recognition_resnet_model_v1.dat"
+
+    if not sp_path.exists() or not rec_path.exists():
+        print("  ✗ Modelos dlib não encontrados")
+        print(f"    Rode: ./scripts/download_models.sh {MODELS_DIR}")
+        return False
+    print("  ✓ Modelos dlib encontrados")
 
     # 1. Abrir câmera
     cap = cv2.VideoCapture(camera_index)
@@ -41,7 +54,6 @@ def test_camera(camera_index: int = 0, headless: bool = False) -> bool:
     print(f"  ✓ Câmera aberta: {w}x{h} @ {fps:.0f}fps")
 
     # 2. Capturar frame de teste
-    # Descartar primeiros frames (warm-up)
     for _ in range(10):
         cap.grab()
 
@@ -52,20 +64,25 @@ def test_camera(camera_index: int = 0, headless: bool = False) -> bool:
         return False
     print(f"  ✓ Frame capturado: {frame.shape}")
 
-    # 3. Testar detecção facial
+    # 3. Testar detecção facial (HOG)
+    detector = dlib.get_frontal_face_detector()
     print("  … Testando detecção facial (HOG)...")
-    t0 = time.time()
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    locations = face_recognition.face_locations(rgb, model="hog")
+    t0 = time.time()
+    faces = detector(rgb, 1)
     dt = time.time() - t0
-    print(f"  ✓ Detecção: {len(locations)} rosto(s) em {dt*1000:.0f}ms")
+    print(f"  ✓ Detecção: {len(faces)} rosto(s) em {dt*1000:.0f}ms")
 
     # 4. Testar encoding (se rosto detectado)
-    if locations:
+    if len(faces) > 0:
+        sp = dlib.shape_predictor(str(sp_path))
+        encoder = dlib.face_recognition_model_v1(str(rec_path))
+
+        shape = sp(rgb, faces[0])
         t0 = time.time()
-        encodings = face_recognition.face_encodings(rgb, locations)
+        encoding = encoder.compute_face_descriptor(rgb, shape, 1)
         dt = time.time() - t0
-        print(f"  ✓ Encoding: {len(encodings[0])}d em {dt*1000:.0f}ms")
+        print(f"  ✓ Encoding: {len(encoding)}d em {dt*1000:.0f}ms")
 
     # 5. Benchmark: FPS de detecção
     print("  … Benchmark de detecção (20 frames)...")
@@ -75,7 +92,7 @@ def test_camera(camera_index: int = 0, headless: bool = False) -> bool:
         if ret:
             small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
             rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-            face_recognition.face_locations(rgb_small, model="hog")
+            detector(rgb_small, 1)
     dt = time.time() - t0
     detection_fps = 20 / dt
     print(f"  ✓ Detection FPS (scale=0.5): {detection_fps:.1f} fps")
@@ -97,15 +114,21 @@ def test_camera(camera_index: int = 0, headless: bool = False) -> bool:
 
             small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
             rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-            locs = face_recognition.face_locations(rgb_small, model="hog")
+            rects = detector(rgb_small, 1)
 
-            for top, right, bottom, left in locs:
-                s = 2  # scale back
-                cv2.rectangle(frame, (left*s, top*s), (right*s, bottom*s), (0, 255, 0), 2)
+            for r in rects:
+                s = 2
+                cv2.rectangle(
+                    frame,
+                    (r.left() * s, r.top() * s),
+                    (r.right() * s, r.bottom() * s),
+                    (0, 255, 0),
+                    2,
+                )
 
             cv2.putText(
                 frame,
-                f"Faces: {len(locs)} | FPS: {detection_fps:.0f} | Q=sair",
+                f"Faces: {len(rects)} | FPS: {detection_fps:.0f} | Q=sair",
                 (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,

@@ -2,14 +2,15 @@
 
 Roda sem câmera — usa imagens sintéticas para testar a lógica.
 Para testes com câmera real, use scripts/test_camera.py.
+
+Os testes de identificação e enrollment mockam os objetos dlib
+para evitar dependência dos arquivos .dat dos modelos.
 """
 
 from __future__ import annotations
 
-import pickle
-import tempfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, patch, PropertyMock
 
 import numpy as np
 import pytest
@@ -20,7 +21,6 @@ from src.core.models import (
     StudentEncoding,
     TurmaEncodings,
 )
-from src.face.recognizer import FaceRecognizer
 
 
 # ── Fixtures ──
@@ -28,25 +28,9 @@ from src.face.recognizer import FaceRecognizer
 
 @pytest.fixture
 def tmp_encodings_dir(tmp_path: Path) -> Path:
-    """Diretório temporário para encodings."""
     d = tmp_path / "encodings"
     d.mkdir()
     return d
-
-
-@pytest.fixture
-def config(tmp_encodings_dir: Path) -> FaceConfig:
-    return FaceConfig(
-        encodings_dir=tmp_encodings_dir,
-        match_threshold=0.45,
-        detection_model="hog",
-        detection_scale=1.0,
-    )
-
-
-@pytest.fixture
-def recognizer(config: FaceConfig) -> FaceRecognizer:
-    return FaceRecognizer(config)
 
 
 @pytest.fixture
@@ -55,14 +39,13 @@ def sample_turma() -> TurmaEncodings:
     turma = TurmaEncodings(turma_id="TEST-001")
 
     rng = np.random.default_rng(42)
-    for i, (ra, nome) in enumerate([
+    for ra, nome in [
         ("11111", "Alice Silva"),
         ("22222", "Bob Santos"),
         ("33333", "Carol Oliveira"),
-    ]):
-        # Gerar encoding "base" e adicionar ruído para simular variações
+    ]:
         base = rng.standard_normal(128).astype(np.float64)
-        base = base / np.linalg.norm(base)  # normalizar
+        base = base / np.linalg.norm(base)
 
         student = StudentEncoding(student_id=ra, student_name=nome)
         for _ in range(3):
@@ -72,6 +55,61 @@ def sample_turma() -> TurmaEncodings:
         turma.add_student(student)
 
     return turma
+
+
+def _make_dlib_rect(top: int, right: int, bottom: int, left: int) -> MagicMock:
+    """Cria um mock de dlib.rectangle."""
+    rect = MagicMock()
+    rect.top.return_value = top
+    rect.right.return_value = right
+    rect.bottom.return_value = bottom
+    rect.left.return_value = left
+    return rect
+
+
+def _make_recognizer(tmp_encodings_dir, detector_return=None, encoding_return=None):
+    """Cria um FaceRecognizer com dlib mockado.
+
+    Mocka dlib no nível do módulo recognizer para que o __init__
+    não tente carregar arquivos .dat reais.
+    """
+    from src.face.recognizer import FaceRecognizer, _face_distance
+
+    config = FaceConfig(
+        encodings_dir=tmp_encodings_dir,
+        match_threshold=0.45,
+        use_cnn_detector=False,
+        detection_scale=1.0,
+        models_dir=tmp_encodings_dir,  # dummy, won't be used
+    )
+
+    # Mockar validate_models para não checar arquivos
+    with patch.object(config, "validate_models", return_value=[]):
+        with patch("src.face.recognizer.dlib") as mock_dlib:
+            # Configurar detector
+            mock_detector = MagicMock()
+            if detector_return is not None:
+                mock_detector.return_value = detector_return
+            mock_dlib.get_frontal_face_detector.return_value = mock_detector
+
+            # Configurar shape predictor
+            mock_sp = MagicMock()
+            mock_dlib.shape_predictor.return_value = mock_sp
+
+            # Configurar face encoder
+            mock_encoder = MagicMock()
+            if encoding_return is not None:
+                mock_encoder.compute_face_descriptor.return_value = encoding_return
+            mock_dlib.face_recognition_model_v1.return_value = mock_encoder
+
+            rec = FaceRecognizer(config)
+
+            # Guardar referências para testes manipularem
+            rec._mock_detector = mock_detector
+            rec._mock_encoder = mock_encoder
+            rec._mock_dlib = mock_dlib
+
+    return rec
 
 
 # ── Testes de TurmaEncodings ──
@@ -109,180 +147,178 @@ class TestStudentEncoding:
 
 class TestPersistence:
     def test_save_and_load_turma(
-        self, recognizer: FaceRecognizer, sample_turma: TurmaEncodings
+        self, tmp_encodings_dir: Path, sample_turma: TurmaEncodings
     ):
-        recognizer.turma = sample_turma
-        path = recognizer.save_turma()
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec.turma = sample_turma
+        path = rec.save_turma()
         assert path.exists()
         assert path.suffix == ".pkl"
 
-        # Criar novo recognizer e carregar
-        r2 = FaceRecognizer(recognizer.config)
-        loaded = r2.load_turma("TEST-001")
+        rec2 = _make_recognizer(tmp_encodings_dir)
+        loaded = rec2.load_turma("TEST-001")
         assert loaded.student_count == 3
         assert "11111" in loaded.students
 
-    def test_load_nonexistent_turma(self, recognizer: FaceRecognizer):
+    def test_load_nonexistent_turma(self, tmp_encodings_dir: Path):
+        rec = _make_recognizer(tmp_encodings_dir)
         with pytest.raises(FileNotFoundError):
-            recognizer.load_turma("NONEXISTENT")
+            rec.load_turma("NONEXISTENT")
 
     def test_list_turmas(
-        self, recognizer: FaceRecognizer, sample_turma: TurmaEncodings
+        self, tmp_encodings_dir: Path, sample_turma: TurmaEncodings
     ):
-        recognizer.turma = sample_turma
-        recognizer.save_turma()
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec.turma = sample_turma
+        rec.save_turma()
 
-        turmas = recognizer.list_turmas()
+        turmas = rec.list_turmas()
         assert "TEST-001" in turmas
 
-    def test_create_turma(self, recognizer: FaceRecognizer):
-        turma = recognizer.create_turma("NEW-001")
+    def test_create_turma(self, tmp_encodings_dir: Path):
+        rec = _make_recognizer(tmp_encodings_dir)
+        turma = rec.create_turma("NEW-001")
         assert turma.turma_id == "NEW-001"
         assert turma.student_count == 0
-        assert recognizer.turma is turma
+        assert rec.turma is turma
 
 
-# ── Testes de identificação (com mocks) ──
+# ── Testes de identificação ──
 
 
 class TestIdentify:
-    @patch("src.face.recognizer.face_recognition")
     def test_identify_match(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer, sample_turma: TurmaEncodings
+        self, tmp_encodings_dir: Path, sample_turma: TurmaEncodings
     ):
-        recognizer.turma = sample_turma
-
-        # Simular detecção de 1 rosto
-        mock_fr.face_locations.return_value = [(50, 200, 200, 50)]
-
-        # Retornar encoding próximo ao do aluno "Alice"
         alice_enc = sample_turma.students["11111"].mean_encoding
-        mock_fr.face_encodings.return_value = [alice_enc + np.random.normal(0, 0.01, 128)]
+        # Retornar encoding muito próximo ao da Alice
+        probe = alice_enc + np.random.default_rng(7).normal(0, 0.01, 128)
 
-        # face_distance real (não mockar para testar a lógica)
-        mock_fr.face_distance.side_effect = lambda known, unknown: np.array([
-            np.linalg.norm(k - unknown) for k in known
-        ])
+        face_rect = _make_dlib_rect(50, 200, 200, 50)
+        rec = _make_recognizer(tmp_encodings_dir)
 
+        # Configurar: detector retorna 1 rosto, encoder retorna probe
+        rec._detector = MagicMock(return_value=[face_rect])
+        rec._mock_encoder.compute_face_descriptor.return_value = probe
+
+        rec.turma = sample_turma
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        result = recognizer.identify(frame)
+        result = rec.identify(frame)
 
         assert result.is_match
         assert result.student_id == "11111"
         assert result.student_name == "Alice Silva"
         assert result.confidence is not None and result.confidence > 0.5
 
-    @patch("src.face.recognizer.face_recognition")
     def test_identify_no_face(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer, sample_turma: TurmaEncodings
+        self, tmp_encodings_dir: Path, sample_turma: TurmaEncodings
     ):
-        recognizer.turma = sample_turma
-        mock_fr.face_locations.return_value = []
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec._detector = MagicMock(return_value=[])  # nenhum rosto
+        rec.turma = sample_turma
 
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        result = recognizer.identify(frame)
+        result = rec.identify(frame)
 
         assert result.status == IdentifyStatus.NO_FACE
         assert result.face_count == 0
 
-    @patch("src.face.recognizer.face_recognition")
     def test_identify_multiple_faces(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer, sample_turma: TurmaEncodings
+        self, tmp_encodings_dir: Path, sample_turma: TurmaEncodings
     ):
-        recognizer.turma = sample_turma
-        mock_fr.face_locations.return_value = [
-            (50, 200, 200, 50),
-            (50, 500, 200, 350),
-        ]
+        face1 = _make_dlib_rect(50, 200, 200, 50)
+        face2 = _make_dlib_rect(50, 500, 200, 350)
+
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec._detector = MagicMock(return_value=[face1, face2])
+        rec.turma = sample_turma
 
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        result = recognizer.identify(frame)
+        result = rec.identify(frame)
 
         assert result.status == IdentifyStatus.MULTIPLE_FACES
         assert result.face_count == 2
 
-    @patch("src.face.recognizer.face_recognition")
     def test_identify_no_match(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer, sample_turma: TurmaEncodings
+        self, tmp_encodings_dir: Path, sample_turma: TurmaEncodings
     ):
-        recognizer.turma = sample_turma
-        mock_fr.face_locations.return_value = [(50, 200, 200, 50)]
-
-        # Encoding aleatório, distante de todos os alunos
         random_enc = np.random.default_rng(99).standard_normal(128)
-        mock_fr.face_encodings.return_value = [random_enc]
-        mock_fr.face_distance.side_effect = lambda known, unknown: np.array([
-            np.linalg.norm(k - unknown) for k in known
-        ])
+        face_rect = _make_dlib_rect(50, 200, 200, 50)
+
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec._detector = MagicMock(return_value=[face_rect])
+        rec._mock_encoder.compute_face_descriptor.return_value = random_enc
+        rec.turma = sample_turma
 
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
-        result = recognizer.identify(frame)
+        result = rec.identify(frame)
 
         assert result.status == IdentifyStatus.NO_MATCH
 
-    def test_identify_without_turma(self, recognizer: FaceRecognizer):
+    def test_identify_without_turma(self, tmp_encodings_dir: Path):
+        rec = _make_recognizer(tmp_encodings_dir)
+
         frame = np.zeros((720, 1280, 3), dtype=np.uint8)
         with pytest.raises(RuntimeError, match="Nenhuma turma carregada"):
-            recognizer.identify(frame)
+            rec.identify(frame)
 
 
-# ── Testes de enrollment (com mocks) ──
+# ── Testes de enrollment ──
 
 
 class TestEnrollment:
-    @patch("src.face.recognizer.face_recognition")
-    def test_enroll_from_frames_success(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer
-    ):
-        recognizer.create_turma("TEST")
+    def test_enroll_from_frames_success(self, tmp_encodings_dir: Path):
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec.create_turma("TEST")
 
-        # 5 frames, cada um com 1 rosto
-        mock_fr.face_locations.return_value = [(50, 200, 200, 50)]
-        mock_fr.face_encodings.return_value = [np.random.standard_normal(128)]
+        face_rect = _make_dlib_rect(50, 200, 200, 50)
+        rec._detector = MagicMock(return_value=[face_rect])
+        rec._mock_encoder.compute_face_descriptor.return_value = (
+            np.random.standard_normal(128)
+        )
 
         frames = [np.zeros((720, 1280, 3), dtype=np.uint8)] * 5
-        result = recognizer.enroll_from_frames("12345", "Test Student", frames)
+        result = rec.enroll_from_frames("12345", "Test Student", frames)
 
         assert result.success is True
         assert result.samples_captured == 5
-        assert "12345" in recognizer.turma.students
+        assert "12345" in rec.turma.students
 
-    @patch("src.face.recognizer.face_recognition")
-    def test_enroll_from_frames_not_enough_faces(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer
-    ):
-        recognizer.create_turma("TEST")
+    def test_enroll_from_frames_not_enough_faces(self, tmp_encodings_dir: Path):
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec.create_turma("TEST")
 
-        # Nenhum rosto detectado
-        mock_fr.face_locations.return_value = []
+        rec._detector = MagicMock(return_value=[])  # nenhum rosto
 
         frames = [np.zeros((720, 1280, 3), dtype=np.uint8)] * 5
-        result = recognizer.enroll_from_frames("12345", "Test Student", frames)
+        result = rec.enroll_from_frames("12345", "Test Student", frames)
 
         assert result.success is False
         assert result.samples_captured == 0
 
-    @patch("src.face.recognizer.face_recognition")
-    def test_enroll_discards_multi_face_frames(
-        self, mock_fr: MagicMock, recognizer: FaceRecognizer
-    ):
-        recognizer.create_turma("TEST")
+    def test_enroll_discards_multi_face_frames(self, tmp_encodings_dir: Path):
+        rec = _make_recognizer(tmp_encodings_dir)
+        rec.create_turma("TEST")
 
-        # 3 frames com 1 rosto, 2 frames com 2 rostos
+        face1 = _make_dlib_rect(50, 200, 200, 50)
+        face2 = _make_dlib_rect(50, 500, 200, 350)
+
         call_count = 0
 
-        def mock_locations(img, model="hog"):
+        def mock_detect(rgb, upsample):
             nonlocal call_count
             call_count += 1
             if call_count <= 3:
-                return [(50, 200, 200, 50)]
-            return [(50, 200, 200, 50), (50, 500, 200, 350)]
+                return [face1]
+            return [face1, face2]
 
-        mock_fr.face_locations.side_effect = mock_locations
-        mock_fr.face_encodings.return_value = [np.random.standard_normal(128)]
+        rec._detector = MagicMock(side_effect=mock_detect)
+        rec._mock_encoder.compute_face_descriptor.return_value = (
+            np.random.standard_normal(128)
+        )
 
         frames = [np.zeros((720, 1280, 3), dtype=np.uint8)] * 5
-        result = recognizer.enroll_from_frames("12345", "Test Student", frames)
+        result = rec.enroll_from_frames("12345", "Test Student", frames)
 
         assert result.success is True
         assert result.samples_captured == 3
