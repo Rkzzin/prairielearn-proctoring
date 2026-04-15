@@ -8,3 +8,7 @@ __pycache__*
 
 # Students information
 encodings
+
+
+# Face recognition models
+/models
