@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel two-column">
+  <article class="panel inset">
+    <h2>Resumo da sessão</h2>
+    <dl class="meta">
+      <div><dt>ID</dt><dd>{{ session.session_id }}</dd></div>
+      <div><dt>Estação</dt><dd>{{ session.station_id }}</dd></div>
+      <div><dt>Assessment</dt><dd>{{ session.assessment }}</dd></div>
+      <div><dt>Turma</dt><dd>{{ session.turma }}</dd></div>
+      <div><dt>Aluno</dt><dd>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</dd></div>
+      <div><dt>Flags</dt><dd>{{ session.flags_count }}</dd></div>
+    </dl>
+    {% if session.recordings %}
+    <div class="video-stack">
+      {% for asset in session.recordings %}
+      <div>
+        <h3>{{ asset.label }}</h3>
+        <video controls preload="metadata" src="{{ asset.url }}"></video>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty">Sem vídeos anexados ainda. A estrutura já aceita URLs presignadas do S3.</p>
+    {% endif %}
+  </article>
+
+  <article class="panel inset">
+    <h2>Timeline de eventos</h2>
+    {% if session.events %}
+    <ol class="timeline">
+      {% for event in session.events %}
+      <li>
+        <strong>{{ event.event_type }}</strong>
+        <span>{{ event.timestamp.isoformat() }}</span>
+        <span>{{ event.severity.value }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="empty">Nenhum evento anexado.</p>
+    {% endif %}
+  </article>
+</section>
+{% endblock %}
+

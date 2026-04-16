@@ -1,0 +1,30 @@
+{% if stations %}
+<div class="station-grid">
+  {% for station in stations %}
+  <article class="station-card">
+    <div class="station-head">
+      <div>
+        <h3>{{ station.station_name }}</h3>
+        <p>{{ station.station_id }}</p>
+      </div>
+      <span class="badge badge-{{ station.status.value|lower }}">{{ station.status.value }}</span>
+    </div>
+    <dl class="meta">
+      <div><dt>Aluno</dt><dd>{% if station.student %}{{ station.student.student_name }}{% else %}vazio{% endif %}</dd></div>
+      <div><dt>Turma</dt><dd>{{ station.turma or "—" }}</dd></div>
+      <div><dt>Assessment</dt><dd>{{ station.assessment or "—" }}</dd></div>
+      <div><dt>Tempo</dt><dd>{% if station.seconds_remaining is not none %}{{ station.seconds_remaining }} s{% else %}—{% endif %}</dd></div>
+    </dl>
+    {% if station.last_event %}
+    <p class="event-line">
+      Último evento: <strong>{{ station.last_event.event_type }}</strong>
+      <span>{{ station.last_event.severity.value }}</span>
+    </p>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">Nenhuma estação reportou heartbeat ainda.</p>
+{% endif %}
+

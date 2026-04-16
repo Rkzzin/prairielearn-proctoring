@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title }} · Proctor Dashboard</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Proctoring Station</p>
+      <h1>{{ title }}</h1>
+    </div>
+    <nav class="nav">
+      <a href="/">Monitoramento</a>
+      <a href="/config">Configuração</a>
+      <a href="/enrollment">Enrollment</a>
+    </nav>
+  </header>
+  <main class="layout">
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
+

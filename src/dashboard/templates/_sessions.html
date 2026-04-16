@@ -1,0 +1,31 @@
+{% if sessions %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Sessão</th>
+        <th>Estação</th>
+        <th>Aluno</th>
+        <th>Status</th>
+        <th>Flags</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for session in sessions %}
+      <tr>
+        <td>{{ session.assessment }}</td>
+        <td>{{ session.station_id }}</td>
+        <td>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</td>
+        <td>{{ session.status.value }}</td>
+        <td>{{ session.flags_count }}</td>
+        <td><a href="/sessions/{{ session.session_id }}">Revisar</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">Nenhuma sessão registrada.</p>
+{% endif %}
+
