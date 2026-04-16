@@ -1,0 +1,10 @@
+{"timestamp": 1776337547.1273103, "frame_number": 149, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 177.18032997330397, "yaw": 36.094019668783666, "roll": -2.3513043625673284, "eye_ratio": null}}
+{"timestamp": 1776337552.8899815, "frame_number": 320, "event_type": "SESSION_BLOCKED", "severity": "CRITICAL", "details": {}}
+{"timestamp": 1776337595.9790957, "frame_number": 35, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 176.15146491908908, "yaw": 48.806627779117726, "roll": 1.5305348330715993, "eye_ratio": null}}
+{"timestamp": 1776337601.0075555, "frame_number": 184, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 174.8401884402299, "yaw": -18.510234680277108, "roll": 6.386275361944395, "eye_ratio": null}}
+{"timestamp": 1776337603.8442605, "frame_number": 268, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 170.15130149399414, "yaw": -33.0939370688776, "roll": 13.077242110877023, "eye_ratio": null}}
+{"timestamp": 1776337605.8667605, "frame_number": 328, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 175.92877426820004, "yaw": -32.09892633033262, "roll": 5.480467202568442, "eye_ratio": null}}
+{"timestamp": 1776337607.8911211, "frame_number": 388, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 176.7270379234111, "yaw": -28.64030620568399, "roll": 8.156431479446393, "eye_ratio": null}}
+{"timestamp": 1776337608.499616, "frame_number": 406, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 177.16587348342264, "yaw": -32.42918566119498, "roll": 7.175133558978524, "eye_ratio": null}}
+{"timestamp": 1776337612.2794685, "frame_number": 518, "event_type": "PROCTOR_WARNING", "severity": "WARNING", "details": {"pitch": 168.89548278959612, "yaw": -41.96662803913016, "roll": 10.838625738963389, "eye_ratio": null}}
+{"timestamp": 1776337619.1633463, "frame_number": 722, "event_type": "SESSION_BLOCKED", "severity": "CRITICAL", "details": {}}

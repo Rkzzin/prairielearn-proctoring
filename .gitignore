@@ -4,6 +4,8 @@
 .env
 __pycache__*
 /src/proctor_station*
+.codex
+.pytho-version
 
 
 # Students information
