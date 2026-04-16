@@ -1,4 +1,0 @@
-{"timestamp": 1776354620.6192367, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "SUA_TURMA_20260416_125017"}}
-{"timestamp": 1776354620.7045076, "frame": 1, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 16.87, "smooth_yaw": 16.87, "pitch": -176.59, "eye_ratio": null}}
-{"timestamp": 1776354623.7695713, "frame": 34, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
-{"timestamp": 1776354633.0706193, "frame": 127, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 127}}

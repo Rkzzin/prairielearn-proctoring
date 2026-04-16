@@ -1,6 +1,0 @@
-{"timestamp": 1776354844.5224938, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "SUA_TURMA_20260416_125401"}}
-{"timestamp": 1776354844.6082113, "frame": 1, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -0.58, "smooth_yaw": -0.58, "pitch": 173.13, "eye_ratio": null}}
-{"timestamp": 1776354849.6612656, "frame": 54, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
-{"timestamp": 1776354851.8627436, "frame": 76, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "GAZE"}}
-{"timestamp": 1776354851.961359, "frame": 77, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -3.25, "smooth_yaw": -3.25, "pitch": 173.05, "eye_ratio": null}}
-{"timestamp": 1776354853.463473, "frame": 92, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 92}}

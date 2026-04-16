@@ -29,6 +29,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from src.core.config import AppConfig, FaceConfig, ProctorConfig
 from src.face.recognizer import FaceRecognizer
 from src.proctor.engine import ProctorEngine, ProctorState
+from src.recorder.capture import Capture
+from src.recorder.uploader import Uploader
 
 # ── Cores BGR ──
 GREEN  = (0, 200, 0)
@@ -123,6 +125,8 @@ def phase_proctor(
     engine: ProctorEngine,
     cap: cv2.VideoCapture,
     student_name: str,
+    capture: Capture | None = None,
+    uploader: Uploader | None = None,
 ) -> None:
     """Fase 2 — loop de proctoring ao vivo.
 
@@ -133,6 +137,11 @@ def phase_proctor(
     print("  Q = encerrar | U = desbloquear (simula re-identificação)\n")
 
     engine.start()
+    if uploader:
+        uploader.start()
+    if capture:
+        capture.start()
+        print("  Gravação iniciada (webcam + tela)")
     frame_times: list[float] = []
 
     try:
@@ -187,7 +196,11 @@ def phase_proctor(
                 print("  → Sessão desbloqueada manualmente")
 
     finally:
+        if capture:
+            capture.stop()
         engine.stop()
+        if uploader:
+            uploader.stop()
         cv2.destroyAllWindows()
         print(f"\n  Sessão encerrada. Log salvo em:")
         print(f"  {engine._logger.log_path}")
@@ -203,12 +216,16 @@ def main() -> None:
                         help="Máx de tentativas de identificação (default: 30)")
     parser.add_argument("--session-id", dest="session_id", default=None,
                         help="ID da sessão para o log (default: turma_timestamp)")
+    parser.add_argument("--no-record", dest="no_record", action="store_true",
+                        help="Desativar gravação (só identificação + proctoring)")
     args = parser.parse_args()
 
     # Configs
     face_cfg    = FaceConfig()
     proctor_cfg = ProctorConfig()
     app_cfg     = AppConfig()
+    rec_cfg     = app_cfg.recorder
+    s3_cfg      = app_cfg.s3
 
     session_id = args.session_id or (
         f"{args.turma}_{time.strftime('%Y%m%d_%H%M%S')}"
@@ -252,7 +269,27 @@ def main() -> None:
             app_config=app_cfg,
             enable_eye_gaze=False,
         )
-        phase_proctor(engine, cap, student_name)
+        # Recorder (opcional)
+        capture = None
+        uploader = None
+        if not args.no_record:
+            uploader = Uploader(
+                session_id=session_id,
+                s3_config=s3_cfg,
+                app_config=app_cfg,
+                delete_after_upload=rec_cfg.delete_after_upload,
+            )
+            capture = Capture(
+                session_id=session_id,
+                s3_config=s3_cfg,
+                face_config=face_cfg,
+                app_config=app_cfg,
+                on_segment_ready=uploader.enqueue,
+                display=rec_cfg.display,
+                screen_size=rec_cfg.screen_size,
+            )
+
+        phase_proctor(engine, cap, student_name, capture=capture, uploader=uploader)
 
     finally:
         cap.release()

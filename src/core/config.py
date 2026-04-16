@@ -119,6 +119,30 @@ class ProctorConfig(BaseSettings):
     )
 
 
+class RecorderConfig(BaseSettings):
+    """Parâmetros do módulo de gravação."""
+
+    display: str = Field(
+        default=":0.0",
+        description="Display X11 para captura de tela",
+    )
+    screen_size: str = Field(
+        default="1920x1080",
+        description="Resolução da tela para captura",
+    )
+    delete_after_upload: bool = Field(
+        default=True,
+        description="Remover arquivo local após upload S3 bem-sucedido",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="PROCTOR_REC_",
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
 class S3Config(BaseSettings):
     """Configuração do bucket S3.
 
@@ -168,6 +192,7 @@ class AppConfig(BaseSettings):
 
     face: FaceConfig = Field(default_factory=FaceConfig)
     proctor: ProctorConfig = Field(default_factory=ProctorConfig)
+    recorder: RecorderConfig = Field(default_factory=RecorderConfig)
     s3: S3Config = Field(default_factory=S3Config)
 
     api_port: int = 8000
