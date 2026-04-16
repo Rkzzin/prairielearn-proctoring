@@ -1,15 +1,26 @@
-"""Configuração central da proctoring station."""
+"""Configuração central da proctoring station.
+
+Valores podem ser definidos via:
+  1. Variáveis de ambiente (prioridade maior)
+  2. Arquivo .env na raiz do projeto (prioridade menor)
+
+Veja .env.example para referência completa.
+"""
 
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Raiz do projeto (dois níveis acima deste arquivo: src/core/config.py)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_ENV_FILE = _PROJECT_ROOT / ".env"
 
 
 class FaceConfig(BaseSettings):
     """Parâmetros do módulo de reconhecimento facial."""
 
-    # Model paths (dlib)
+    # Model paths (dlib) — ficam na NUC
     models_dir: Path = Field(
         default=Path("models"),
         description="Diretório com os .dat do dlib",
@@ -23,14 +34,10 @@ class FaceConfig(BaseSettings):
         description="Arquivo do modelo de reconhecimento (dentro de models_dir)",
     )
 
-    # Enrollment
+    # Encodings — ficam na NUC, gerados via enroll
     encodings_dir: Path = Field(
-        default=Path("src/face/encodings"),
-        description="Diretório com arquivos .pkl de encodings por turma",
-    )
-    samples_per_student: int = Field(
-        default=5,
-        description="Quantidade de frames capturados no enrollment",
+        default=Path("data/encodings"),
+        description="Diretório local com arquivos .pkl de encodings por turma",
     )
 
     # Identificação
@@ -76,7 +83,7 @@ class FaceConfig(BaseSettings):
         return self.models_dir / "mmod_human_face_detector.dat"
 
     def validate_models(self) -> list[str]:
-        """Retorna lista de modelos faltantes."""
+        """Retorna lista de modelos dlib faltantes."""
         missing = []
         if not self.shape_predictor_path.exists():
             missing.append(str(self.shape_predictor_path))
@@ -86,7 +93,12 @@ class FaceConfig(BaseSettings):
             missing.append(str(self.cnn_detector_path))
         return missing
 
-    model_config = {"env_prefix": "PROCTOR_FACE_"}
+    model_config = SettingsConfigDict(
+        env_prefix="PROCTOR_FACE_",
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class ProctorConfig(BaseSettings):
@@ -94,22 +106,61 @@ class ProctorConfig(BaseSettings):
 
     gaze_h_threshold: float = 0.35
     gaze_v_threshold: float = 0.30
-    gaze_duration_sec: float = 3.0
+    gaze_duration_sec: float = 5.0   # warning após 5s de desvio
+    gaze_block_sec: float = 10.0     # bloqueio após 10s de desvio
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True
 
-    model_config = {"env_prefix": "PROCTOR_"}
+    model_config = SettingsConfigDict(
+        env_prefix="PROCTOR_",
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class S3Config(BaseSettings):
-    """Configuração de upload S3."""
+    """Configuração do bucket S3.
 
-    bucket: str = "proctor-recordings"
-    region: str = "us-east-1"
-    prefix: str = ""
-    segment_duration_sec: int = 300
+    Dois prefixos dentro do mesmo bucket:
+      - photos_prefix/  → fotos de cadastro (nome_do_aluno.png por turma)
+      - recordings_prefix/ → gravações de prova (gerenciado pelo recorder)
 
-    model_config = {"env_prefix": "PROCTOR_S3_"}
+    Estrutura das fotos:
+      s3://{bucket}/{photos_prefix}/{turma_id}/{nome_do_aluno}.png
+    """
+
+    bucket: str = Field(
+        default="proctor-station",
+        description="Nome do bucket S3",
+    )
+    region: str = Field(default="us-east-1")
+    photos_prefix: str = Field(
+        default="fotos",
+        description="Prefixo S3 onde ficam as fotos de cadastro dos alunos",
+    )
+    recordings_prefix: str = Field(
+        default="gravacoes",
+        description="Prefixo S3 onde ficam as gravações de prova",
+    )
+    segment_duration_sec: int = Field(
+        default=300,
+        description="Duração de cada segmento de gravação em segundos",
+    )
+
+    def photos_prefix_for_turma(self, turma_id: str) -> str:
+        """Retorna o prefixo S3 das fotos de uma turma específica.
+
+        Ex: 'fotos/ES2025-T1/'
+        """
+        return f"{self.photos_prefix}/{turma_id}/"
+
+    model_config = SettingsConfigDict(
+        env_prefix="PROCTOR_S3_",
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 class AppConfig(BaseSettings):
@@ -123,7 +174,12 @@ class AppConfig(BaseSettings):
     log_level: str = "INFO"
     data_dir: Path = Path("/opt/proctor/data")
 
-    model_config = {"env_prefix": "PROCTOR_APP_"}
+    model_config = SettingsConfigDict(
+        env_prefix="PROCTOR_APP_",
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 # Singleton

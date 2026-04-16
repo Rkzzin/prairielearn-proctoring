@@ -1,0 +1,16 @@
+{"timestamp": 1776354640.937997, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "SUA_TURMA_20260416_125037"}}
+{"timestamp": 1776354641.022114, "frame": 1, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 2.83, "smooth_yaw": 2.83, "pitch": 174.01, "eye_ratio": null}}
+{"timestamp": 1776354644.059561, "frame": 34, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
+{"timestamp": 1776354649.0598247, "frame": 84, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "GAZE"}}
+{"timestamp": 1776354649.1589954, "frame": 85, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -3.29, "smooth_yaw": -3.29, "pitch": 176.1, "eye_ratio": null}}
+{"timestamp": 1776354652.1600935, "frame": 115, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
+{"timestamp": 1776354654.9555328, "frame": 143, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "GAZE"}}
+{"timestamp": 1776354655.0758464, "frame": 144, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776354660.1542513, "frame": 195, "type": "ABSENCE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "ABSENCE"}}
+{"timestamp": 1776354663.6560724, "frame": 230, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "ABSENCE"}}
+{"timestamp": 1776354663.7557771, "frame": 231, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 19.16, "smooth_yaw": 19.16, "pitch": -174.83, "eye_ratio": null}}
+{"timestamp": 1776354666.7559743, "frame": 261, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
+{"timestamp": 1776354669.057191, "frame": 284, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "GAZE"}}
+{"timestamp": 1776354669.1558137, "frame": 285, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 10.1, "smooth_yaw": 10.1, "pitch": -172.13, "eye_ratio": null}}
+{"timestamp": 1776354672.1564088, "frame": 315, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
+{"timestamp": 1776354679.3713813, "frame": 387, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 387}}
