@@ -12,9 +12,7 @@ Layout esperado no bucket:
 from __future__ import annotations
 
 import io
-from pathlib import Path
 import logging
-import os
 from dataclasses import dataclass
 
 import boto3
@@ -135,14 +133,11 @@ class S3Client:
         return False
 
 # ──────────────────────────────────────────────
-#  Factory — escolhe S3Client ou LocalS3Client
+#  Factory
 # ──────────────────────────────────────────────
 
-def get_s3_client(config: S3Config | None = None) -> "S3Client | LocalS3Client":
-    """Retorna o cliente S3 correto com base na variável PROCTOR_S3_MOCK.
-
-    Se PROCTOR_S3_MOCK=true no .env ou no ambiente, retorna LocalS3Client
-    (lê de mock_s3/ local). Caso contrário, retorna S3Client (AWS real).
+def get_s3_client(config: S3Config | None = None) -> S3Client:
+    """Retorna um S3Client configurado.
 
     Uso:
         from src.core.s3_client import get_s3_client
@@ -152,21 +147,4 @@ def get_s3_client(config: S3Config | None = None) -> "S3Client | LocalS3Client":
     Args:
         config: S3Config opcional. Se None, usa defaults / .env.
     """
-    # Carregar .env explicitamente — os.getenv() sozinho não lê o arquivo
-    _env_file = Path(__file__).resolve().parent.parent.parent / ".env"
-    if _env_file.exists():
-        for line in _env_file.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, _, val = line.partition("=")
-                os.environ.setdefault(key.strip(), val.strip())
-
-    use_mock = os.getenv("PROCTOR_S3_MOCK", "false").lower() in ("true", "1", "yes")
-
-    if use_mock:
-        from src.core.local_s3_client import LocalS3Client
-        mock_dir = os.getenv("PROCTOR_S3_MOCK_DIR", "mock_s3")
-        logger.info("Modo mock S3 ativo — usando pasta local: %s", mock_dir)
-        return LocalS3Client(config=config, mock_dir=mock_dir)
-
     return S3Client(config=config)

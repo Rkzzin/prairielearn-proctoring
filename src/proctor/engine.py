@@ -222,7 +222,12 @@ class ProctorEngine:
         self._handle_gaze(gaze_data)
 
     def _handle_no_face(self) -> None:
-        """Gerencia a ausência de rosto."""
+        """Gerencia a ausência de rosto.
+
+        Qualquer estado não-BLOCKED transita para ABSENCE ao perder o rosto.
+        Isso inclui GAZE_WARN — o timer de desvio é descartado e o de
+        ausência começa imediatamente.
+        """
         now = time.time()
 
         if self.state == ProctorState.ABSENCE:
@@ -231,16 +236,17 @@ class ProctorEngine:
                 self._block(BlockReason.ABSENCE)
             return
 
-        # Primeira detecção de ausência
-        if self.state == ProctorState.NORMAL:
-            self.state = ProctorState.ABSENCE
-            self._absence_start = now
-            self._logger.log_event(
-                frame=self._frame_count,
-                event_type=EventType.ABSENCE_WARNING,
-                severity=Severity.WARNING,
-                details={"timeout_sec": self._cfg.absence_timeout_sec},
-            )
+        # NORMAL ou GAZE_WARN → iniciar ausência
+        self._warn_start = 0.0  # descartar timer de gaze se estava em GAZE_WARN
+        self._yaw_window.clear()
+        self.state = ProctorState.ABSENCE
+        self._absence_start = now
+        self._logger.log_event(
+            frame=self._frame_count,
+            event_type=EventType.ABSENCE_WARNING,
+            severity=Severity.WARNING,
+            details={"timeout_sec": self._cfg.absence_timeout_sec},
+        )
 
     def _handle_gaze(self, data: GazeData) -> None:
         """Gerencia desvio de olhar com suavização."""
@@ -290,7 +296,7 @@ class ProctorEngine:
                 # Olhar voltou antes do timeout
                 self.state = ProctorState.NORMAL
                 self._warn_start = 0.0
-            elif (now - self._warn_start) >= self._cfg.gaze_block_sec:
+            elif (now - self._warn_start) >= self._cfg.gaze_duration_sec:
                 self._block(BlockReason.GAZE)
 
     def _block(self, reason: BlockReason) -> None:

@@ -55,9 +55,13 @@ def _make_app_config(tmp_path: Path) -> AppConfig:
     return AppConfig(data_dir=tmp_path)
 
 
-def _gaze(yaw: float = 0.0, pitch: float = 0.0, eye_ratio: float | None = None,
+def _gaze(yaw: float = 0.0, pitch: float = 180.0, eye_ratio: float | None = None,
           face_count: int = 1) -> GazeData:
-    """Cria GazeData sintético."""
+    """Cria GazeData sintético.
+
+    pitch=180.0 é o valor neutro — espelha o que solvePnP retorna com
+    cabeça ereta (o engine normaliza como abs(abs(pitch) - 180) / 90.0).
+    """
     return GazeData(yaw=yaw, pitch=pitch, roll=0.0,
                     eye_ratio=eye_ratio, face_count=face_count)
 
@@ -193,6 +197,21 @@ class TestAbsenceFSM:
 
         _feed(engine, _gaze())
         assert engine.state == ProctorState.NORMAL
+
+
+    def test_gaze_warn_transitions_to_absence_on_no_face(self, tmp_path: Path):
+        """Rosto some enquanto em GAZE_WARN → ABSENCE imediato, timer de gaze descartado."""
+        cfg = _make_config(gaze_dur=10.0)  # timeout longo para não bloquear por gaze
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        _feed(engine, _gaze(yaw=45.0))   # → GAZE_WARN
+        assert engine.state == ProctorState.GAZE_WARN
+        assert engine._warn_start > 0.0
+
+        _feed(engine, None)              # rosto some → ABSENCE
+        assert engine.state == ProctorState.ABSENCE
+        assert engine._warn_start == 0.0  # timer de gaze resetado
+        assert len(engine._yaw_window) == 0
 
 
 # ── Testes de FSM: multi-face ────────────────────────────────────────────────

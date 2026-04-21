@@ -1,2 +1,0 @@
-{"timestamp": 1776356125.0318637, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "SUA_TURMA_20260416_131521"}}
-{"timestamp": 1776356129.788714, "frame": 50, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 50}}

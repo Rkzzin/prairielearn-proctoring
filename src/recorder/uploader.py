@@ -11,9 +11,6 @@ Layout no S3:
         screen_000.mp4
         screen_001.mp4
 
-Comportamento em modo mock (PROCTOR_S3_MOCK=true):
-    Upload é simulado — arquivo local é mantido, nada vai ao S3.
-
 Retry: 3 tentativas com backoff exponencial (2s, 4s, 8s).
 Se todas falharem, o arquivo é mantido localmente e logado para
 reprocessamento manual.
@@ -31,11 +28,9 @@ Uso típico:
 from __future__ import annotations
 
 import logging
-import os
 import queue
 import threading
 import time
-from pathlib import Path
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -73,17 +68,12 @@ class Uploader:
         self._cfg = s3_config or S3Config()
         self._app_cfg = app_config or AppConfig()
         self._delete = delete_after_upload
-        self._mock = self._is_mock_mode()
 
         self._queue: queue.Queue[SegmentInfo | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._failed: list[SegmentInfo] = []  # segmentos que falharam após retries
 
-        if not self._mock:
-            self._s3 = boto3.client("s3", region_name=self._cfg.region)
-        else:
-            self._s3 = None
-            logger.info("Uploader em modo mock — arquivos mantidos localmente")
+        self._s3 = boto3.client("s3", region_name=self._cfg.region)
 
     # ──────────────────────────────────────────────
     #  Ciclo de vida
@@ -146,10 +136,6 @@ class Uploader:
 
     def _upload_with_retry(self, segment: SegmentInfo) -> None:
         """Tenta fazer upload com retry e backoff exponencial."""
-        if self._mock:
-            self._simulate_upload(segment)
-            return
-
         for attempt in range(1, _MAX_RETRIES + 1):
             try:
                 self._upload(segment)
@@ -196,15 +182,6 @@ class Uploader:
             segment.path.unlink()
             logger.debug("Arquivo local removido: %s", segment.path)
 
-    def _simulate_upload(self, segment: SegmentInfo) -> None:
-        """Simula upload em modo mock — só loga, não remove o arquivo."""
-        s3_key = self._s3_key(segment)
-        size_mb = segment.path.stat().st_size / 1_048_576 if segment.path.exists() else 0
-        logger.info(
-            "[MOCK] Upload simulado: %s → s3://%s/%s (%.1f MB)",
-            segment.path.name, self._cfg.bucket, s3_key, size_mb,
-        )
-
     # ──────────────────────────────────────────────
     #  Helpers
     # ──────────────────────────────────────────────
@@ -219,22 +196,3 @@ class Uploader:
             f"/{segment.session_id}"
             f"/{segment.path.name}"
         )
-
-    @staticmethod
-    def _is_mock_mode() -> bool:
-        """Lê PROCTOR_S3_MOCK do ambiente ou .env."""
-        # Verificar ambiente primeiro
-        val = os.getenv("PROCTOR_S3_MOCK", "").lower()
-        if val:
-            return val in ("true", "1", "yes")
-
-        # Tentar .env
-        env_file = Path(__file__).resolve().parent.parent.parent / ".env"
-        if env_file.exists():
-            for line in env_file.read_text().splitlines():
-                line = line.strip()
-                if line.startswith("PROCTOR_S3_MOCK="):
-                    val = line.split("=", 1)[1].strip().lower()
-                    return val in ("true", "1", "yes")
-
-        return False

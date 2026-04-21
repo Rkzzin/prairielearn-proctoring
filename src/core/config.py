@@ -106,8 +106,7 @@ class ProctorConfig(BaseSettings):
 
     gaze_h_threshold: float = 0.35
     gaze_v_threshold: float = 0.30
-    gaze_duration_sec: float = 5.0   # warning após 5s de desvio
-    gaze_block_sec: float = 10.0     # bloqueio após 10s de desvio
+    gaze_duration_sec: float = 5.0   # segundos em GAZE_WARN antes de BLOCKED
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True
 
