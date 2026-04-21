@@ -1,0 +1,13 @@
+{% if enrollments %}
+<ul class="stack">
+  {% for enrollment in enrollments %}
+  <li>
+    <strong>{{ enrollment.student_name }}</strong> · {{ enrollment.student_id }} · {{ enrollment.turma }}
+    <span>{{ enrollment.source }}{% if enrollment.file_names %} · {{ enrollment.file_names|join(', ') }}{% endif %}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">Nenhum enrollment registrado.</p>
+{% endif %}
+

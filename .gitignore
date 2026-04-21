@@ -6,6 +6,7 @@ __pycache__*
 /src/proctor_station*
 .codex
 .python-version
+tmp-*
 
 
 # Students information

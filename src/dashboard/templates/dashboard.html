@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <div class="hero-card">
+    <span class="metric">{{ stations|length }}</span>
+    <span>estações registradas</span>
+  </div>
+  <div class="hero-card">
+    <span class="metric">{{ sessions|length }}</span>
+    <span>sessões conhecidas</span>
+  </div>
+  <div class="hero-card">
+    <span class="metric">{{ enrollments|length }}</span>
+    <span>enrollments recentes</span>
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Estações em tempo real</h2>
+    <p>Atualização por HTMX a cada 5 segundos.</p>
+  </div>
+  <div
+    id="stations-panel"
+    hx-get="/partials/stations"
+    hx-trigger="load, every 5s"
+    hx-swap="innerHTML"
+  >
+    {% include "_stations.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <div class="panel-header">
+    <h2>Sessões recentes</h2>
+    <p>Use a revisão para abrir a timeline de eventos e links de vídeo.</p>
+  </div>
+  <div
+    id="sessions-panel"
+    hx-get="/partials/sessions"
+    hx-trigger="load, every 10s"
+    hx-swap="innerHTML"
+  >
+    {% include "_sessions.html" %}
+  </div>
+</section>
+{% endblock %}
+

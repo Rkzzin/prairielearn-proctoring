@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel two-column">
+  <form class="form-card" id="config-form">
+    <h2>Nova prova</h2>
+    <label>Turma<input type="text" name="turma" value="ES2025-T1"></label>
+    <label>Assessment<input type="text" name="assessment" value="Quiz-03"></label>
+    <label>Timer (min)<input type="number" name="timer_minutes" value="45"></label>
+    <label>PrairieLearn URL<input type="url" name="prairielearn_url" value="https://pl.exemplo.edu.br/course/123/assessment/456"></label>
+    <label>Allowlist (uma por linha)<textarea name="allowlist_lines">pl.exemplo.edu.br
+cdn.prairielearn.org
+cdnjs.cloudflare.com</textarea></label>
+    <label>Estações alvo (IDs separados por vírgula)<input type="text" name="target_station_ids" value="{% for station in stations %}{{ station.station_id }}{% if not loop.last %}, {% endif %}{% endfor %}"></label>
+    <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
+    <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
+    <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="5.0"></label>
+    <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
+    <button type="button" onclick="submitConfig()">Distribuir configuração</button>
+  </form>
+
+  <section class="panel inset">
+    <h2>Configs recentes</h2>
+    {% if configs %}
+    <ul class="stack">
+      {% for config in configs %}
+      <li>
+        <strong>{{ config.assessment }}</strong> · {{ config.turma }}
+        <span>{{ config.target_station_ids|join(', ') or 'sem alvo' }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="empty">Nenhuma configuração distribuída.</p>
+    {% endif %}
+  </section>
+</section>
+
+<script>
+async function submitConfig() {
+  const form = document.getElementById('config-form');
+  const data = new FormData(form);
+  const payload = {
+    turma: data.get('turma'),
+    assessment: data.get('assessment'),
+    timer_minutes: Number(data.get('timer_minutes')),
+    prairielearn_url: data.get('prairielearn_url'),
+    allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
+    target_station_ids: String(data.get('target_station_ids') || '').split(',').map(v => v.trim()).filter(Boolean),
+    gaze_h_threshold: Number(data.get('gaze_h_threshold')),
+    gaze_duration_sec: Number(data.get('gaze_duration_sec')),
+    absence_timeout_sec: Number(data.get('absence_timeout_sec')),
+    multi_face_block: data.get('multi_face_block') === 'on',
+    s3_prefix: ''
+  };
+  const response = await fetch('/api/configs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (response.ok) {
+    window.location.reload();
+  }
+}
+</script>
+{% endblock %}
+

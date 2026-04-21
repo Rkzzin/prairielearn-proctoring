@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel two-column">
+  <form
+    class="form-card"
+    hx-post="/api/enrollment"
+    hx-encoding="multipart/form-data"
+    hx-target="#enrollment-list"
+    hx-swap="innerHTML"
+  >
+    <h2>Novo enrollment</h2>
+    <label>Turma<input type="text" name="turma" value="ES2025-T1"></label>
+    <label>RA<input type="text" name="student_id" value=""></label>
+    <label>Nome<input type="text" name="student_name" value=""></label>
+    <label>Origem
+      <select name="source">
+        <option value="upload">Upload de fotos</option>
+        <option value="webcam">Webcam ao vivo</option>
+      </select>
+    </label>
+    <label>Fotos<input type="file" name="files" multiple></label>
+    <button type="submit">Registrar</button>
+  </form>
+
+  <section class="panel inset">
+    <h2>Cadastros recentes</h2>
+    <div id="enrollment-list">
+      {% include "_enrollments.html" %}
+    </div>
+  </section>
+</section>
+{% endblock %}
+
