@@ -82,13 +82,13 @@ echo "=========================================="
 echo "  2/6  Criando Python virtual environment"
 echo "=========================================="
 
-if [ -d ".venv" ]; then
+if [ -d "venv" ]; then
     warn "venv já existe — recriando..."
-    rm -rf .venv
+    rm -rf venv
 fi
 
-python3.12 -m venv .venv
-source .venv/bin/activate
+python3.12 -m venv venv
+source venv/bin/activate
 log "venv criado e ativado: $(which python3)"
 
 python3 -m pip install --upgrade pip --quiet
@@ -149,7 +149,7 @@ echo "  Setup completo!"
 echo "=========================================="
 echo ""
 echo "  Para ativar o venv:"
-echo "    source .venv/bin/activate"
+echo "    source venv/bin/activate"
 echo ""
 echo "  Para cadastrar alunos:"
 echo "    python3 scripts/enroll.py --turma MINHA-TURMA --ra 12345 --nome 'Nome'"

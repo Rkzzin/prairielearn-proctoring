@@ -1,0 +1,119 @@
+{"timestamp": 1776891470.023711, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_20260422_175747"}}
+{"timestamp": 1776891470.5162947, "frame": 4, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776891471.2560315, "frame": 4, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776891471.6730208, "frame": 7, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 4.04, "smooth_yaw": -6.77, "pitch": -158.07, "eye_ratio": null}}
+{"timestamp": 1776891471.9210427, "frame": 9, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 1.89, "smooth_yaw": -1.96, "pitch": -160.21, "eye_ratio": null}}
+{"timestamp": 1776891474.6381917, "frame": 32, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 53.43, "smooth_yaw": 27.45, "pitch": -172.16, "eye_ratio": null}}
+{"timestamp": 1776891474.7520704, "frame": 33, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891475.349907, "frame": 38, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 44.49, "smooth_yaw": 44.49, "pitch": -167.74, "eye_ratio": null}}
+{"timestamp": 1776891480.6651947, "frame": 83, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -26.13, "smooth_yaw": -27.0, "pitch": -166.02, "eye_ratio": null}}
+{"timestamp": 1776891483.036333, "frame": 103, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -23.69, "smooth_yaw": -17.75, "pitch": -160.82, "eye_ratio": null}}
+{"timestamp": 1776891485.0329287, "frame": 120, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 42.02, "smooth_yaw": 28.07, "pitch": -168.57, "eye_ratio": null}}
+{"timestamp": 1776891485.270856, "frame": 122, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891485.966939, "frame": 128, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 45.57, "smooth_yaw": 45.57, "pitch": -163.75, "eye_ratio": null}}
+{"timestamp": 1776891486.3203917, "frame": 131, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -9.22, "smooth_yaw": 7.02, "pitch": -149.63, "eye_ratio": null}}
+{"timestamp": 1776891487.0444617, "frame": 137, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -13.3, "smooth_yaw": -5.16, "pitch": -161.81, "eye_ratio": null}}
+{"timestamp": 1776891487.3919928, "frame": 140, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -13.26, "smooth_yaw": -13.36, "pitch": -161.28, "eye_ratio": null}}
+{"timestamp": 1776891488.2168224, "frame": 147, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -5.65, "smooth_yaw": -12.45, "pitch": -161.05, "eye_ratio": null}}
+{"timestamp": 1776891490.3324552, "frame": 165, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776891496.4171216, "frame": 165, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776891497.642258, "frame": 175, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 9.64, "smooth_yaw": 7.72, "pitch": -159.06, "eye_ratio": null}}
+{"timestamp": 1776891499.303141, "frame": 189, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -14.7, "smooth_yaw": -6.11, "pitch": -159.1, "eye_ratio": null}}
+{"timestamp": 1776891499.8844645, "frame": 194, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -11.81, "smooth_yaw": -16.36, "pitch": -160.21, "eye_ratio": null}}
+{"timestamp": 1776891500.3551805, "frame": 198, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -14.65, "smooth_yaw": -14.44, "pitch": -161.19, "eye_ratio": null}}
+{"timestamp": 1776891505.4972548, "frame": 241, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -9.97, "smooth_yaw": -18.37, "pitch": -161.83, "eye_ratio": null}}
+{"timestamp": 1776891506.8130667, "frame": 252, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -7.12, "smooth_yaw": -11.93, "pitch": -161.52, "eye_ratio": null}}
+{"timestamp": 1776891507.8773937, "frame": 261, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -13.35, "smooth_yaw": -11.48, "pitch": -159.46, "eye_ratio": null}}
+{"timestamp": 1776891510.562969, "frame": 284, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 39.55, "smooth_yaw": 28.07, "pitch": -173.72, "eye_ratio": null}}
+{"timestamp": 1776891515.672395, "frame": 328, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
+{"timestamp": 1776891516.6736004, "frame": 328, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "GAZE"}}
+{"timestamp": 1776891517.6554303, "frame": 336, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 3.56, "smooth_yaw": 0.98, "pitch": -149.27, "eye_ratio": null}}
+{"timestamp": 1776891518.1146252, "frame": 340, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891518.2325683, "frame": 341, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 9.34, "smooth_yaw": 9.34, "pitch": -157.79, "eye_ratio": null}}
+{"timestamp": 1776891519.1687565, "frame": 349, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 15.02, "smooth_yaw": 15.65, "pitch": -161.51, "eye_ratio": null}}
+{"timestamp": 1776891519.4135613, "frame": 351, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 17.84, "smooth_yaw": 16.66, "pitch": -154.33, "eye_ratio": null}}
+{"timestamp": 1776891520.1378274, "frame": 357, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 0.14, "smooth_yaw": 14.79, "pitch": -158.56, "eye_ratio": null}}
+{"timestamp": 1776891522.173015, "frame": 374, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -16.35, "smooth_yaw": -17.39, "pitch": -160.03, "eye_ratio": null}}
+{"timestamp": 1776891523.3257096, "frame": 384, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -27.53, "smooth_yaw": -24.05, "pitch": -151.85, "eye_ratio": null}}
+{"timestamp": 1776891523.6825933, "frame": 387, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891523.9124196, "frame": 389, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -29.06, "smooth_yaw": -29.06, "pitch": -167.26, "eye_ratio": null}}
+{"timestamp": 1776891525.219348, "frame": 400, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776891526.5940294, "frame": 400, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776891527.235052, "frame": 405, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -19.77, "smooth_yaw": -18.06, "pitch": -161.8, "eye_ratio": null}}
+{"timestamp": 1776891527.5834413, "frame": 408, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -25.42, "smooth_yaw": -19.83, "pitch": -158.92, "eye_ratio": null}}
+{"timestamp": 1776891528.0435054, "frame": 412, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -28.57, "smooth_yaw": -21.28, "pitch": -158.07, "eye_ratio": null}}
+{"timestamp": 1776891560.5039587, "frame": 686, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891565.5921936, "frame": 726, "type": "ABSENCE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "ABSENCE"}}
+{"timestamp": 1776891567.4269352, "frame": 726, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "ABSENCE"}}
+{"timestamp": 1776891568.1286807, "frame": 731, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -26.3, "smooth_yaw": -20.98, "pitch": -159.79, "eye_ratio": null}}
+{"timestamp": 1776891574.7267346, "frame": 783, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 31.78, "smooth_yaw": 32.3, "pitch": -173.42, "eye_ratio": null}}
+{"timestamp": 1776891580.7799091, "frame": 832, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891585.8019264, "frame": 873, "type": "ABSENCE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "ABSENCE"}}
+{"timestamp": 1776891593.738024, "frame": 873, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "ABSENCE"}}
+{"timestamp": 1776891594.289552, "frame": 877, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 41.11, "smooth_yaw": 28.11, "pitch": 176.23, "eye_ratio": null}}
+{"timestamp": 1776891596.8999255, "frame": 898, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891597.13223, "frame": 900, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 63.29, "smooth_yaw": 63.29, "pitch": -176.54, "eye_ratio": null}}
+{"timestamp": 1776891597.3856008, "frame": 902, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891598.2262444, "frame": 909, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 53.61, "smooth_yaw": 53.61, "pitch": -167.91, "eye_ratio": null}}
+{"timestamp": 1776891605.589334, "frame": 967, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 15.89, "smooth_yaw": 23.45, "pitch": -161.59, "eye_ratio": null}}
+{"timestamp": 1776891606.3516068, "frame": 973, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -5.74, "smooth_yaw": 11.13, "pitch": -158.49, "eye_ratio": null}}
+{"timestamp": 1776891607.498883, "frame": 982, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891608.1049292, "frame": 987, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 38.79, "smooth_yaw": 38.79, "pitch": -178.69, "eye_ratio": null}}
+{"timestamp": 1776891609.745287, "frame": 1000, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776891613.7372854, "frame": 1000, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776891613.9158797, "frame": 1001, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 27.93, "smooth_yaw": 27.93, "pitch": -165.73, "eye_ratio": null}}
+{"timestamp": 1776891615.4455168, "frame": 1013, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 54.64, "smooth_yaw": 28.83, "pitch": -172.76, "eye_ratio": null}}
+{"timestamp": 1776891615.5678518, "frame": 1014, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891615.935432, "frame": 1017, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 53.78, "smooth_yaw": 53.78, "pitch": -165.32, "eye_ratio": null}}
+{"timestamp": 1776891618.5779846, "frame": 1038, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 30.23, "smooth_yaw": 27.01, "pitch": -178.58, "eye_ratio": null}}
+{"timestamp": 1776891619.0653327, "frame": 1042, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776891621.3113303, "frame": 1042, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776891622.6050744, "frame": 1052, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 48.09, "smooth_yaw": 27.32, "pitch": -177.53, "eye_ratio": null}}
+{"timestamp": 1776891622.857913, "frame": 1054, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891623.4519703, "frame": 1059, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 61.32, "smooth_yaw": 61.32, "pitch": 178.5, "eye_ratio": null}}
+{"timestamp": 1776891623.574374, "frame": 1060, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891624.6710613, "frame": 1069, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 53.84, "smooth_yaw": 53.84, "pitch": -161.35, "eye_ratio": null}}
+{"timestamp": 1776891625.1529253, "frame": 1073, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891625.6324544, "frame": 1077, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 48.51, "smooth_yaw": 48.51, "pitch": -161.63, "eye_ratio": null}}
+{"timestamp": 1776891626.2366245, "frame": 1082, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891626.3519938, "frame": 1083, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 52.06, "smooth_yaw": 52.06, "pitch": -163.35, "eye_ratio": null}}
+{"timestamp": 1776891626.5878294, "frame": 1085, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891626.8360183, "frame": 1087, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 52.99, "smooth_yaw": 52.99, "pitch": -166.69, "eye_ratio": null}}
+{"timestamp": 1776891626.9667192, "frame": 1088, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891627.200771, "frame": 1090, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 51.37, "smooth_yaw": 51.37, "pitch": -160.93, "eye_ratio": null}}
+{"timestamp": 1776891627.322946, "frame": 1091, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891629.3685062, "frame": 1108, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 9.78, "smooth_yaw": 9.78, "pitch": -157.11, "eye_ratio": null}}
+{"timestamp": 1776891631.227229, "frame": 1123, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 4.39, "smooth_yaw": 7.38, "pitch": -161.39, "eye_ratio": null}}
+{"timestamp": 1776891635.6493273, "frame": 1159, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891635.8911479, "frame": 1161, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 54.87, "smooth_yaw": 54.87, "pitch": -164.02, "eye_ratio": null}}
+{"timestamp": 1776891637.2243302, "frame": 1172, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891637.3568802, "frame": 1173, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -9.31, "smooth_yaw": -9.31, "pitch": -139.55, "eye_ratio": null}}
+{"timestamp": 1776891638.9368403, "frame": 1186, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -13.42, "smooth_yaw": -13.16, "pitch": -160.28, "eye_ratio": null}}
+{"timestamp": 1776891643.2954311, "frame": 1221, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 30.77, "smooth_yaw": 27.09, "pitch": 179.53, "eye_ratio": null}}
+{"timestamp": 1776891646.8816478, "frame": 1251, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 31.81, "smooth_yaw": 27.31, "pitch": -179.4, "eye_ratio": null}}
+{"timestamp": 1776891651.0013783, "frame": 1284, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 49.5, "smooth_yaw": 28.2, "pitch": -163.24, "eye_ratio": null}}
+{"timestamp": 1776891654.1365817, "frame": 1309, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891654.2573245, "frame": 1310, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 39.74, "smooth_yaw": 39.74, "pitch": -174.81, "eye_ratio": null}}
+{"timestamp": 1776891654.5028687, "frame": 1312, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891654.6210272, "frame": 1313, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 43.76, "smooth_yaw": 43.76, "pitch": -166.02, "eye_ratio": null}}
+{"timestamp": 1776891654.7521892, "frame": 1314, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891655.1113987, "frame": 1317, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 54.49, "smooth_yaw": 54.49, "pitch": -173.62, "eye_ratio": null}}
+{"timestamp": 1776891656.349735, "frame": 1327, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891657.4368641, "frame": 1336, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 54.67, "smooth_yaw": 54.67, "pitch": -165.22, "eye_ratio": null}}
+{"timestamp": 1776891658.5507116, "frame": 1345, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891658.6729627, "frame": 1346, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 52.92, "smooth_yaw": 52.92, "pitch": -167.43, "eye_ratio": null}}
+{"timestamp": 1776891659.772998, "frame": 1355, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891659.8905425, "frame": 1356, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 45.12, "smooth_yaw": 45.12, "pitch": -176.18, "eye_ratio": null}}
+{"timestamp": 1776891660.0091238, "frame": 1357, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891660.6120868, "frame": 1362, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 48.24, "smooth_yaw": 48.24, "pitch": -168.46, "eye_ratio": null}}
+{"timestamp": 1776891660.985055, "frame": 1365, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891661.1016152, "frame": 1366, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 51.03, "smooth_yaw": 51.03, "pitch": -163.68, "eye_ratio": null}}
+{"timestamp": 1776891661.339412, "frame": 1368, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891661.4733531, "frame": 1369, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 54.16, "smooth_yaw": 54.16, "pitch": -164.49, "eye_ratio": null}}
+{"timestamp": 1776891661.596568, "frame": 1370, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891665.978758, "frame": 1406, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -12.1, "smooth_yaw": -17.36, "pitch": -161.14, "eye_ratio": null}}
+{"timestamp": 1776891667.3808415, "frame": 1417, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -12.3, "smooth_yaw": -12.66, "pitch": -160.54, "eye_ratio": null}}
+{"timestamp": 1776891667.6395698, "frame": 1419, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -10.48, "smooth_yaw": -11.89, "pitch": -161.97, "eye_ratio": null}}
+{"timestamp": 1776891669.864556, "frame": 1437, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776891670.1050453, "frame": 1439, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 50.13, "smooth_yaw": 50.13, "pitch": -170.77, "eye_ratio": null}}
+{"timestamp": 1776891673.7485623, "frame": 1454, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 1454}}

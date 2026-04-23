@@ -12,9 +12,9 @@ Sistema de estações de prova presencial baseadas em Intel NUC, com reconhecime
 | 1 — Face recognition | Enrollment via S3 + identificação dlib | ✅ Completo |
 | 2 — Proctoring engine | Gaze estimation + FSM + event log | ✅ Completo |
 | 3 — Gravação e upload | FFmpeg + upload incremental S3 | ✅ Completo |
-| 4 — Browser lockdown | Chromium kiosk + extensão + overlay | 🔲 Pendente |
-| 5 — Session manager | Orquestrador E2E + FastAPI local | 🔲 Pendente |
-| 6 — Dashboard | Interface do professor | 🔲 Pendente |
+| 4 — Browser lockdown | Chromium kiosk + bloqueio/reidentificação | ✅ Completo |
+| 5 — Session manager | Orquestrador E2E + FastAPI local | ✅ Completo |
+| 6 — Dashboard | Interface do professor | ✅ Completo |
 | 7 — Testes e hardening | Suite completa + segurança | 🔲 Pendente |
 | 8 — Terraform + Ansible | IaC completo | 🔲 Pendente |
 | 9 — Deploy | Go-live | 🔲 Pendente |
@@ -85,8 +85,8 @@ proctor-station/
 │   ├── recorder/
 │   │   ├── capture.py           # Gerencia processos FFmpeg (webcam + tela)
 │   │   └── uploader.py          # Upload incremental S3 com retry
-│   ├── kiosk/                   # (pendente — Fase 4)
-│   ├── api/                     # (pendente — Fase 5)
+│   ├── kiosk/                   # Chromium kiosk + re-identificação (Fase 4)
+│   ├── api/                     # FastAPI local da NUC (Fase 5)
 │   └── dashboard/               # (pendente — Fase 6)
 ├── scripts/
 │   ├── bootstrap.sh             # Setup completo de uma NUC do zero
@@ -98,7 +98,8 @@ proctor-station/
 ├── tests/
 │   ├── test_face_recognition.py # Testes Fase 1 (39 casos)
 │   ├── test_proctor_engine.py   # Testes Fase 2 (23 casos)
-│   └── test_recorder.py         # Testes Fase 3 (14 casos)
+│   ├── test_recorder.py         # Testes Fase 3 (14 casos)
+│   └── test_kiosk.py            # Testes Fase 4
 ├── .env.example                 # Referência de todas as variáveis
 ├── pyproject.toml
 └── README.md
@@ -297,7 +298,7 @@ Layout no S3:
 
 ---
 
-## Fase 4 — Browser lockdown 🔲
+## Fase 4 — Browser lockdown ✅
 
 ### Chromium kiosk
 
@@ -306,8 +307,6 @@ chromium-browser \
     --kiosk \
     --no-first-run \
     --disable-translate \
-    --disable-extensions-except=/opt/proctor/extension \
-    --load-extension=/opt/proctor/extension \
     --disable-dev-tools \
     --disable-default-apps \
     --disable-background-networking \
@@ -316,15 +315,6 @@ chromium-browser \
     --start-fullscreen \
     "https://prairielearn.exemplo.edu.br"
 ```
-
-### Chrome extension — allowlist enforcer
-
-Bloqueia todo tráfego exceto domínios explicitamente permitidos via `declarativeNetRequest`.
-
-**Domínios no allowlist:**
-- `prairielearn.exemplo.edu.br`
-- `*.prairielearn.org`
-- CDNs necessários (MathJax, etc.)
 
 ### Lockdown do SO
 
@@ -338,22 +328,23 @@ Bloqueia todo tráfego exceto domínios explicitamente permitidos via `declarati
 
 Quando o proctoring engine emite `BLOCKED`:
 1. SIGSTOP no processo Chromium (congela a prova)
-2. Overlay fullscreen X11 (GTK): *"Sessão pausada — olhe para a câmera"*
+2. Mensagem de bloqueio + re-identificação facial no terminal
 3. Aguarda `engine.unblock()` após face re-match
-4. SIGCONT no Chromium, remove overlay
+4. SIGCONT no Chromium e retoma a sessão
 
 ### Entregáveis
 
-- [ ] `src/kiosk/chromium.py` — launcher + lifecycle
-- [ ] `src/kiosk/extension/` — Chrome extension com allowlist
-- [ ] `src/kiosk/allowlist.json` — domínios permitidos configurável
-- [ ] Xorg lockdown config
-- [ ] Overlay de bloqueio funcional
-- [ ] Teste E2E: bloqueio → re-match → desbloqueio
+- [x] `src/kiosk/chromium.py` — launcher + lifecycle
+- [x] `src/kiosk/reidentify.py` — loop de re-identificação durante bloqueio
+- [x] `src/kiosk/lockdown.py` — interface placeholder para M7
+- [x] Fullscreen via `wmctrl` buscando janela pelo PID
+- [x] BLOCKED → `SIGSTOP` → re-match → `SIGCONT`
+- [x] Limpeza garantida com restauração das extensões do Gnome no encerramento
+- [x] Cobertura unitária do fluxo de kiosk e re-identificação
 
 ---
 
-## Fase 5 — Session manager 🔲
+## Fase 5 — Session manager ✅
 
 ### Fluxo completo de uma sessão
 
@@ -397,15 +388,16 @@ POST /config              # Atualiza config da próxima sessão
 
 ### Entregáveis
 
-- [ ] `src/core/session.py` com FSM completa
-- [ ] `src/api/server.py` + `src/api/routes.py`
-- [ ] Integração com face, proctor, recorder e kiosk
-- [ ] `systemd` unit para autostart na NUC
-- [ ] Teste E2E do fluxo completo
+- [x] `src/core/session.py` com FSM completa
+- [x] `src/api/server.py` + `src/api/routes.py`
+- [x] Integração com face, proctor, recorder e kiosk
+- [x] `systemd/proctor.service` para autostart na NUC
+- [x] Testes automatizados da FSM e da API local
+- [ ] Teste E2E do fluxo completo em hardware real
 
 ---
 
-## Fase 6 — Dashboard do professor 🔲
+## Fase 6 — Dashboard do professor ✅
 
 ### Funcionalidades
 
@@ -424,10 +416,10 @@ Hosting:  EC2 t3.small na mesma região do S3
 
 ### Entregáveis
 
-- [ ] `src/dashboard/app.py` com FastAPI central
-- [ ] Templates Jinja2 + HTMX
-- [ ] Player de vídeo com timeline de eventos
-- [ ] API para comunicação NUC → dashboard
+- [x] `src/dashboard/app.py` com FastAPI central
+- [x] Templates Jinja2 + HTMX
+- [x] Player de vídeo com timeline de eventos
+- [x] API para comunicação NUC → dashboard
 
 ---
 

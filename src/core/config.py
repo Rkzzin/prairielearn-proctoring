@@ -186,6 +186,42 @@ class S3Config(BaseSettings):
     )
 
 
+class DashboardConfig(BaseSettings):
+    """Configuração da integração NUC → dashboard do professor."""
+
+    enabled: bool = Field(
+        default=False,
+        description="Ativa heartbeat periódico e consumo de comandos do dashboard.",
+    )
+    base_url: str = Field(
+        default="http://127.0.0.1:8010",
+        description="URL base do dashboard central.",
+    )
+    heartbeat_interval_sec: float = Field(
+        default=5.0,
+        description="Intervalo entre heartbeats enviados ao dashboard.",
+    )
+    timeout_sec: float = Field(
+        default=5.0,
+        description="Timeout HTTP das chamadas ao dashboard.",
+    )
+    station_id: str = Field(
+        default="nuc-local",
+        description="Identificador estável da estação.",
+    )
+    station_name: str = Field(
+        default="NUC Local",
+        description="Nome amigável exibido no dashboard.",
+    )
+
+    model_config = SettingsConfigDict(
+        env_prefix="PROCTOR_DASHBOARD_",
+        env_file=str(_ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+
 class AppConfig(BaseSettings):
     """Configuração geral da aplicação."""
 
@@ -193,6 +229,7 @@ class AppConfig(BaseSettings):
     proctor: ProctorConfig = Field(default_factory=ProctorConfig)
     recorder: RecorderConfig = Field(default_factory=RecorderConfig)
     s3: S3Config = Field(default_factory=S3Config)
+    dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
 
     api_port: int = 8000
     log_level: str = "INFO"

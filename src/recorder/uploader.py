@@ -72,6 +72,7 @@ class Uploader:
         self._queue: queue.Queue[SegmentInfo | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._failed: list[SegmentInfo] = []  # segmentos que falharam após retries
+        self._uploaded: list[tuple[SegmentInfo, str]] = []
 
         self._s3 = boto3.client("s3", region_name=self._cfg.region)
 
@@ -119,6 +120,10 @@ class Uploader:
     @property
     def queue_size(self) -> int:
         return self._queue.qsize()
+
+    @property
+    def uploaded_segments(self) -> list[tuple[SegmentInfo, str]]:
+        return list(self._uploaded)
 
     # ──────────────────────────────────────────────
     #  Worker
@@ -177,6 +182,7 @@ class Uploader:
         )
 
         logger.info("Upload OK: %s", segment.path.name)
+        self._uploaded.append((segment, s3_key))
 
         if self._delete:
             segment.path.unlink()

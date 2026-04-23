@@ -33,7 +33,7 @@
 <section class="panel">
   <div class="panel-header">
     <h2>Sessões recentes</h2>
-    <p>Use a revisão para abrir a timeline de eventos e links de vídeo.</p>
+    <p>Use a revisão para abrir a timeline de eventos, vídeos e exportação CSV.</p>
   </div>
   <div
     id="sessions-panel"
@@ -44,5 +44,18 @@
     {% include "_sessions.html" %}
   </div>
 </section>
-{% endblock %}
 
+<script>
+async function issueStationCommand(stationId, action) {
+  const endpoint = action === 'unblock'
+    ? `/api/stations/${stationId}/session/unblock`
+    : `/api/stations/${stationId}/session/stop`;
+  const response = await fetch(endpoint, {method: 'POST'});
+  if (response.ok) {
+    if (window.htmx) {
+      htmx.ajax('GET', '/partials/stations', '#stations-panel');
+    }
+  }
+}
+</script>
+{% endblock %}

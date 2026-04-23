@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 import json
+from datetime import timezone
+from io import StringIO
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -25,7 +28,10 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     app_config = config or AppConfig()
     dashboard_dir = Path(__file__).parent
     templates = Jinja2Templates(directory=str(dashboard_dir / "templates"))
-    dashboard_store = store or DashboardStore(app_config.data_dir / "dashboard")
+    dashboard_store = store or DashboardStore(
+        app_config.data_dir / "dashboard",
+        app_config=app_config,
+    )
 
     app = FastAPI(title="Proctor Station Dashboard")
     app.mount(
@@ -83,6 +89,7 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             "session_detail.html",
             title=f"Sessão {session_id}",
             session=session,
+            timeline=_build_timeline(session),
         )
 
     @app.get("/partials/stations", response_class=HTMLResponse)
@@ -146,6 +153,16 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     async def unblock_session(station_id: str) -> JSONResponse:
         command = dashboard_store.enqueue_command(station_id, CommandType.UNBLOCK_SESSION)
         return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.get("/api/reports/events.csv")
+    async def export_events_csv(turma: str | None = None) -> StreamingResponse:
+        csv_body = _build_events_csv(dashboard_store.list_sessions(), turma=turma)
+        filename = f"eventos_{turma or 'todas_as_turmas'}.csv"
+        return StreamingResponse(
+            iter([csv_body]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
 
     @app.post("/api/sessions")
     async def register_session(payload: SessionRecord) -> JSONResponse:
@@ -223,6 +240,79 @@ def _json_ready_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
         return items
 
     return {key: dump_items(value) for key, value in snapshot.items()}
+
+
+def _build_timeline(session: SessionRecord) -> list[dict[str, object]]:
+    entries: list[dict[str, object]] = []
+    started_at = session.started_at.astimezone(timezone.utc)
+    for event in session.events:
+        event_time = event.timestamp.astimezone(timezone.utc)
+        offset_seconds = max(0, int((event_time - started_at).total_seconds()))
+        entries.append(
+            {
+                "timestamp": event.timestamp.isoformat(),
+                "event_type": event.event_type,
+                "severity": event.severity.value,
+                "details": event.details,
+                "offset_seconds": offset_seconds,
+            }
+        )
+    return entries
+
+
+def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -> str:
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        [
+            "session_id",
+            "station_id",
+            "turma",
+            "assessment",
+            "student_id",
+            "student_name",
+            "timestamp",
+            "offset_seconds",
+            "event_type",
+            "severity",
+            "frame_number",
+            "details_json",
+        ]
+    )
+
+    for session in sessions:
+        if turma and session.turma != turma:
+            continue
+        student_id = session.student.student_id if session.student else ""
+        student_name = session.student.student_name if session.student else ""
+        for event in session.events:
+            offset_seconds = max(
+                0,
+                int(
+                    (
+                        event.timestamp.astimezone(timezone.utc)
+                        - session.started_at.astimezone(timezone.utc)
+                    ).total_seconds()
+                ),
+            )
+            writer.writerow(
+                [
+                    session.session_id,
+                    session.station_id,
+                    session.turma,
+                    session.assessment,
+                    student_id,
+                    student_name,
+                    event.timestamp.isoformat(),
+                    offset_seconds,
+                    event.event_type,
+                    event.severity.value,
+                    event.frame_number,
+                    json.dumps(event.details, ensure_ascii=True, sort_keys=True),
+                ]
+            )
+
+    return buffer.getvalue()
 
 
 app = create_app()

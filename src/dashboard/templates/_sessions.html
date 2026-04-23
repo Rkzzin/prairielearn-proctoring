@@ -19,7 +19,11 @@
         <td>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</td>
         <td>{{ session.status.value }}</td>
         <td>{{ session.flags_count }}</td>
-        <td><a href="/sessions/{{ session.session_id }}">Revisar</a></td>
+        <td>
+          <a href="/sessions/{{ session.session_id }}">Revisar</a>
+          <span class="link-sep">·</span>
+          <a href="/api/reports/events.csv?turma={{ session.turma }}">CSV</a>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
@@ -28,4 +32,3 @@
 {% else %}
 <p class="empty">Nenhuma sessão registrada.</p>
 {% endif %}
-

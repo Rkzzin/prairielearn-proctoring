@@ -102,6 +102,8 @@ class Capture:
         self._procs: dict[str, subprocess.Popen] = {}
         self._monitor_threads: dict[str, threading.Thread] = {}
         self._running = False
+        self._stop_event = threading.Event()
+        self._notified_segments: set[Path] = set()
 
         # Processo FFmpeg de webcam — lê frames BGR do stdin
         self._webcam_proc: subprocess.Popen | None = None
@@ -117,6 +119,8 @@ class Capture:
             logger.warning("Capture já está rodando — sessão '%s'", self.session_id)
             return
 
+        self._stop_event.clear()
+        self._notified_segments.clear()
         self._running = True
         self._start_webcam_stream()
         self._start_screen_stream()
@@ -134,7 +138,7 @@ class Capture:
         if not self._running:
             return
 
-        self._running = False
+        self._stop_event.set()
 
         # 1. Webcam: fechar stdin → EOF → FFmpeg finaliza arquivo limpo
         if self._webcam_proc and self._webcam_proc.poll() is None:
@@ -161,8 +165,14 @@ class Capture:
                 screen_proc.kill()
                 screen_proc.wait()
 
-        for thread in self._monitor_threads.values():
-            thread.join(timeout=5)
+        self._flush_pending_segments("webcam")
+        self._flush_pending_segments("screen")
+        self._running = False
+
+        for name, thread in self._monitor_threads.items():
+            thread.join(timeout=10)
+            if thread.is_alive():
+                logger.warning("Thread de monitoramento '%s' não encerrou em 10s", name)
 
         self._procs.clear()
         self._monitor_threads.clear()
@@ -325,31 +335,26 @@ class Capture:
         Um segmento é considerado pronto quando um arquivo mais novo
         aparece — o FFmpeg só fecha um segmento ao abrir o próximo.
         """
-        seen: set[Path] = set()
         last_ready: Path | None = None
 
-        while self._running:
+        while not self._stop_event.is_set():
             files = sorted(self._rec_dir.glob(f"{stream}_*.mp4"))
-            for f in files:
-                seen.add(f)
-
             if len(files) >= 2:
                 ready = files[-2]
                 if ready != last_ready:
                     last_ready = ready
                     self._notify_segment(stream, ready)
 
-            time.sleep(5)
-
-        # Ao parar, notificar o último segmento
-        files = sorted(self._rec_dir.glob(f"{stream}_*.mp4"))
-        if files:
-            last = files[-1]
-            if last != last_ready and last.stat().st_size > 0:
-                self._notify_segment(stream, last)
+            if self._stop_event.wait(5):
+                break
 
     def _notify_segment(self, stream: str, path: Path) -> None:
         """Monta SegmentInfo e chama o callback."""
+        if path in self._notified_segments:
+            return
+        if not path.exists() or path.stat().st_size <= 0:
+            return
+
         try:
             idx = int(path.stem.split("_")[-1])
         except (ValueError, IndexError):
@@ -362,9 +367,15 @@ class Capture:
             index=idx,
         )
         logger.info("Segmento pronto: %s", path.name)
+        self._notified_segments.add(path)
 
         if self._on_segment_ready:
             try:
                 self._on_segment_ready(seg_info)
             except Exception as e:
                 logger.error("Erro no callback de segmento '%s': %s", path.name, e)
+
+    def _flush_pending_segments(self, stream: str) -> None:
+        """Notifica segmentos já finalizados que ainda não foram enfileirados."""
+        for path in sorted(self._rec_dir.glob(f"{stream}_*.mp4")):
+            self._notify_segment(stream, path)

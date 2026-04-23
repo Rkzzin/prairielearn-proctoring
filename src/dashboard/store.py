@@ -1,14 +1,17 @@
-"""Armazenamento em memória para o dashboard."""
+"""Armazenamento do dashboard com cache em memória e persistência SQLite."""
 
 from __future__ import annotations
 
 import asyncio
 import os
+import sqlite3
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
 from uuid import uuid4
+
+import boto3
 
 from src.dashboard.models import (
     CommandRecord,
@@ -25,16 +28,23 @@ from src.dashboard.models import (
 
 
 class DashboardStore:
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, app_config=None, s3_client=None):
         self.data_dir = self._prepare_data_dir(data_dir)
         self.upload_dir = self.data_dir / "enrollment_uploads"
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+        self.db_path = self.data_dir / "dashboard.sqlite3"
+        self._db = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
+        self._app_cfg = app_config
+        self._s3 = s3_client or self._default_s3_client()
         self._stations: dict[str, StationRecord] = {}
         self._sessions: dict[str, SessionRecord] = {}
         self._enrollments: dict[str, EnrollmentRecord] = {}
         self._configs: list[ExamConfigPayload] = []
         self._subscribers: set[asyncio.Queue[dict[str, object]]] = set()
         self._lock = Lock()
+        self._init_db()
+        self._load_from_db()
 
     @staticmethod
     def _prepare_data_dir(data_dir: Path) -> Path:
@@ -54,7 +64,7 @@ class DashboardStore:
                 for station in sorted(self._stations.values(), key=lambda item: item.station_id)
             ]
             sessions = sorted(
-                self._sessions.values(),
+                (self._hydrate_session(session) for session in self._sessions.values()),
                 key=lambda item: item.started_at,
                 reverse=True,
             )
@@ -84,7 +94,7 @@ class DashboardStore:
     def get_session(self, session_id: str) -> SessionRecord | None:
         with self._lock:
             session = self._sessions.get(session_id)
-            return session.model_copy(deep=True) if session else None
+            return self._hydrate_session(session) if session else None
 
     def get_station(self, station_id: str) -> StationRecord | None:
         with self._lock:
@@ -136,6 +146,9 @@ class DashboardStore:
                     self._merge_events(session, payload.recent_events)
 
             result = station.model_copy(deep=True)
+            self._save_station(station)
+            if payload.active_session_id:
+                self._save_session(self._sessions[payload.active_session_id])
 
         self._broadcast()
         return result
@@ -151,6 +164,9 @@ class DashboardStore:
                 station.turma = payload.turma
                 station.status = payload.status
             result = payload.model_copy(deep=True)
+            self._save_session(self._sessions[payload.session_id])
+            if station:
+                self._save_station(station)
 
         self._broadcast()
         return result
@@ -168,6 +184,9 @@ class DashboardStore:
                 station.active_session_id = None
                 station.student = None
             result = session.model_copy(deep=True)
+            self._save_session(session)
+            if station:
+                self._save_station(station)
 
         self._broadcast()
         return result
@@ -179,6 +198,7 @@ class DashboardStore:
                 return None
             self._merge_events(session, events)
             result = session.model_copy(deep=True)
+            self._save_session(session)
 
         self._broadcast()
         return result
@@ -203,6 +223,9 @@ class DashboardStore:
                     )
                 )
             result = stored.model_copy(deep=True)
+            self._insert_config(stored)
+            for station_id in payload.target_station_ids:
+                self._save_station(self._stations[station_id])
 
         self._broadcast()
         return result
@@ -221,6 +244,7 @@ class DashboardStore:
             )
             station.pending_commands.append(command)
             result = command.model_copy(deep=True)
+            self._save_station(station)
 
         self._broadcast()
         return result
@@ -232,6 +256,7 @@ class DashboardStore:
                 return []
             commands = [command.model_copy(deep=True) for command in station.pending_commands]
             station.pending_commands.clear()
+            self._save_station(station)
 
         self._broadcast()
         return commands
@@ -256,6 +281,7 @@ class DashboardStore:
             )
             self._enrollments[record.enrollment_id] = record
             result = record.model_copy(deep=True)
+            self._save_enrollment(record)
 
         self._broadcast()
         return result
@@ -276,6 +302,101 @@ class DashboardStore:
                 queue.put_nowait(deepcopy(payload))
             except asyncio.QueueFull:
                 pass
+
+    def _init_db(self) -> None:
+        self._db.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS stations (
+              station_id TEXT PRIMARY KEY,
+              payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS sessions (
+              session_id TEXT PRIMARY KEY,
+              payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS enrollments (
+              enrollment_id TEXT PRIMARY KEY,
+              payload TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS configs (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              payload TEXT NOT NULL
+            );
+            """
+        )
+        self._db.commit()
+
+    def _load_from_db(self) -> None:
+        self._stations = {
+            row["station_id"]: StationRecord.model_validate_json(row["payload"])
+            for row in self._db.execute("SELECT station_id, payload FROM stations")
+        }
+        self._sessions = {
+            row["session_id"]: SessionRecord.model_validate_json(row["payload"])
+            for row in self._db.execute("SELECT session_id, payload FROM sessions")
+        }
+        self._enrollments = {
+            row["enrollment_id"]: EnrollmentRecord.model_validate_json(row["payload"])
+            for row in self._db.execute("SELECT enrollment_id, payload FROM enrollments")
+        }
+        self._configs = [
+            ExamConfigPayload.model_validate_json(row["payload"])
+            for row in self._db.execute("SELECT payload FROM configs ORDER BY id DESC")
+        ]
+
+    def _default_s3_client(self):
+        if self._app_cfg is None:
+            return None
+        try:
+            return boto3.client("s3", region_name=self._app_cfg.s3.region)
+        except Exception:
+            return None
+
+    def _save_station(self, station: StationRecord) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO stations (station_id, payload) VALUES (?, ?)",
+            (station.station_id, station.model_dump_json()),
+        )
+        self._db.commit()
+
+    def _save_session(self, session: SessionRecord) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO sessions (session_id, payload) VALUES (?, ?)",
+            (session.session_id, session.model_dump_json()),
+        )
+        self._db.commit()
+
+    def _save_enrollment(self, enrollment: EnrollmentRecord) -> None:
+        self._db.execute(
+            "INSERT OR REPLACE INTO enrollments (enrollment_id, payload) VALUES (?, ?)",
+            (enrollment.enrollment_id, enrollment.model_dump_json()),
+        )
+        self._db.commit()
+
+    def _insert_config(self, config: ExamConfigPayload) -> None:
+        self._db.execute(
+            "INSERT INTO configs (payload) VALUES (?)",
+            (config.model_dump_json(),),
+        )
+        self._db.commit()
+
+    def _hydrate_session(self, session: SessionRecord) -> SessionRecord:
+        hydrated = session.model_copy(deep=True)
+        hydrated.recordings = [self._hydrate_asset(asset) for asset in hydrated.recordings]
+        return hydrated
+
+    def _hydrate_asset(self, asset):
+        if asset.url or not asset.s3_bucket or not asset.s3_key or self._s3 is None:
+            return asset
+        try:
+            signed = self._s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": asset.s3_bucket, "Key": asset.s3_key},
+                ExpiresIn=3600,
+            )
+            return asset.model_copy(update={"url": signed})
+        except Exception:
+            return asset
 
     @staticmethod
     def _merge_events(session: SessionRecord, events: list[SessionEventPayload]) -> None:

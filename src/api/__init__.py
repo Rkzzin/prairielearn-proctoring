@@ -1,0 +1,1 @@
+"""API local da NUC."""

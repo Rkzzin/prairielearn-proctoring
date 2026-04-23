@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import os
 import signal
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -42,7 +43,6 @@ _GNOME_EXTENSIONS_TO_DISABLE = [
 
 
 def _find_chromium() -> str:
-    import shutil
     for bin_name in _CHROMIUM_BINS:
         path = shutil.which(bin_name)
         if path:
@@ -89,6 +89,8 @@ class ChromiumKiosk:
 
         cmd = [
             chromium,
+            "--kiosk",
+            "--start-fullscreen",
             "--no-first-run",
             "--disable-translate",
             "--disable-extensions",
@@ -170,7 +172,6 @@ class ChromiumKiosk:
         Buscar pelo PID evita pegar janelas de outros aplicativos que
         possam ter "Chromium" no nome (ex: abas do VSCode ou Firefox).
         """
-        import shutil
         if not shutil.which("wmctrl"):
             logger.warning(
                 "wmctrl não encontrado — fullscreen não será aplicado. "
@@ -223,34 +224,73 @@ class ChromiumKiosk:
 
     def _disable_gnome_extensions(self) -> None:
         """Desabilita extensões do Gnome que interferem no fullscreen."""
+        if not shutil.which("gnome-extensions"):
+            logger.warning(
+                "gnome-extensions não encontrado — extensões do Gnome não serão alteradas"
+            )
+            return
+
         env = os.environ.copy()
         env["DISPLAY"] = self._display
 
-        result = subprocess.run(
-            ["gnome-extensions", "list", "--enabled"],
-            env=env, capture_output=True, timeout=3,
-        )
+        try:
+            result = subprocess.run(
+                ["gnome-extensions", "list", "--enabled"],
+                env=env,
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+        except (subprocess.SubprocessError, OSError) as exc:
+            logger.warning("Falha ao listar extensões do Gnome: %s", exc)
+            return
+
         enabled = result.stdout.decode().strip().splitlines()
 
         for ext in _GNOME_EXTENSIONS_TO_DISABLE:
             if ext in enabled:
-                subprocess.run(
-                    ["gnome-extensions", "disable", ext],
-                    env=env, capture_output=True, timeout=3,
-                )
+                try:
+                    subprocess.run(
+                        ["gnome-extensions", "disable", ext],
+                        env=env,
+                        capture_output=True,
+                        timeout=3,
+                        check=False,
+                    )
+                except (subprocess.SubprocessError, OSError) as exc:
+                    logger.warning("Falha ao desabilitar extensão %s: %s", ext, exc)
+                    continue
+
                 self._disabled_extensions.append(ext)
                 logger.info("Extensão desabilitada: %s", ext)
 
     def _restore_gnome_extensions(self) -> None:
         """Restaura extensões do Gnome desabilitadas pelo kiosk."""
+        if not self._disabled_extensions:
+            return
+
+        if not shutil.which("gnome-extensions"):
+            logger.warning(
+                "gnome-extensions não encontrado — não foi possível restaurar extensões"
+            )
+            self._disabled_extensions.clear()
+            return
+
         env = os.environ.copy()
         env["DISPLAY"] = self._display
 
         for ext in self._disabled_extensions:
-            subprocess.run(
-                ["gnome-extensions", "enable", ext],
-                env=env, capture_output=True, timeout=3,
-            )
+            try:
+                subprocess.run(
+                    ["gnome-extensions", "enable", ext],
+                    env=env,
+                    capture_output=True,
+                    timeout=3,
+                    check=False,
+                )
+            except (subprocess.SubprocessError, OSError) as exc:
+                logger.warning("Falha ao restaurar extensão %s: %s", ext, exc)
+                continue
             logger.info("Extensão restaurada: %s", ext)
 
         self._disabled_extensions.clear()

@@ -21,10 +21,25 @@
       <span>{{ station.last_event.severity.value }}</span>
     </p>
     {% endif %}
+    <div class="actions">
+      <button
+        type="button"
+        class="button-secondary"
+        onclick="issueStationCommand('{{ station.station_id }}', 'stop')"
+      >
+        Encerrar
+      </button>
+      <button
+        type="button"
+        class="button-secondary"
+        onclick="issueStationCommand('{{ station.station_id }}', 'unblock')"
+      >
+        Desbloquear
+      </button>
+    </div>
   </article>
   {% endfor %}
 </div>
 {% else %}
 <p class="empty">Nenhuma estação reportou heartbeat ainda.</p>
 {% endif %}
-

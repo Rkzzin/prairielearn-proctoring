@@ -16,7 +16,11 @@
       {% for asset in session.recordings %}
       <div>
         <h3>{{ asset.label }}</h3>
+        {% if asset.url %}
         <video controls preload="metadata" src="{{ asset.url }}"></video>
+        {% else %}
+        <p class="empty">Arquivo enviado, aguardando URL assinada do S3.</p>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
@@ -27,13 +31,27 @@
 
   <article class="panel inset">
     <h2>Timeline de eventos</h2>
-    {% if session.events %}
+    {% if timeline %}
     <ol class="timeline">
-      {% for event in session.events %}
+      {% for event in timeline %}
       <li>
-        <strong>{{ event.event_type }}</strong>
-        <span>{{ event.timestamp.isoformat() }}</span>
-        <span>{{ event.severity.value }}</span>
+        <div class="timeline-row">
+          <strong>{{ event.event_type }}</strong>
+          <span>{{ event.timestamp }}</span>
+          <span>{{ event.severity }}</span>
+        </div>
+        <div class="timeline-row">
+          <button
+            type="button"
+            class="button-secondary"
+            onclick="seekTimeline({{ event.offset_seconds }})"
+          >
+            Ir para {{ event.offset_seconds }}s
+          </button>
+          {% if event.details %}
+          <code>{{ event.details }}</code>
+          {% endif %}
+        </div>
       </li>
       {% endfor %}
     </ol>
@@ -42,5 +60,13 @@
     {% endif %}
   </article>
 </section>
+<script>
+function seekTimeline(offsetSeconds) {
+  const player = document.querySelector('video');
+  if (!player) return;
+  player.currentTime = offsetSeconds;
+  player.play().catch(() => {});
+  player.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+</script>
 {% endblock %}
-

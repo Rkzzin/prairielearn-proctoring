@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import cv2
 
-from src.face.recognizer import FaceRecognizer
+if TYPE_CHECKING:
+    from src.face.recognizer import FaceRecognizer
 
 logger = logging.getLogger(__name__)
 

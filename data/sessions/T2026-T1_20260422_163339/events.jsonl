@@ -1,0 +1,17 @@
+{"timestamp": 1776886428.1967762, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_20260422_163339"}}
+{"timestamp": 1776886432.01668, "frame": 33, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 51.37, "smooth_yaw": 27.43, "pitch": -174.77, "eye_ratio": null}}
+{"timestamp": 1776886435.9850867, "frame": 68, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776886438.1678257, "frame": 68, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776886438.9264522, "frame": 74, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 52.33, "smooth_yaw": 31.11, "pitch": -170.33, "eye_ratio": null}}
+{"timestamp": 1776886458.373206, "frame": 243, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776886461.2386262, "frame": 243, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776886465.5964403, "frame": 281, "type": "MULTI_FACE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "MULTI_FACE"}}
+{"timestamp": 1776886471.2121055, "frame": 281, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "MULTI_FACE"}}
+{"timestamp": 1776886471.3790343, "frame": 282, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -39.49, "smooth_yaw": -39.49, "pitch": -151.55, "eye_ratio": null}}
+{"timestamp": 1776886471.9438517, "frame": 287, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 3.21, "smooth_yaw": -19.71, "pitch": -152.14, "eye_ratio": null}}
+{"timestamp": 1776886472.6251001, "frame": 293, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -18.21, "smooth_yaw": -16.11, "pitch": -160.79, "eye_ratio": null}}
+{"timestamp": 1776886473.6400914, "frame": 302, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776886474.4023108, "frame": 309, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 48.3, "smooth_yaw": 48.3, "pitch": -171.92, "eye_ratio": null}}
+{"timestamp": 1776886476.0604672, "frame": 324, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1776886476.6085865, "frame": 329, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 51.15, "smooth_yaw": 51.15, "pitch": -171.05, "eye_ratio": null}}
+{"timestamp": 1776886478.0419977, "frame": 339, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 339}}

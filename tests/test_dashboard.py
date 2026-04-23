@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 from src.core.config import AppConfig
 from src.dashboard.app import create_app
 from src.dashboard.models import (
+    ExamConfigPayload,
     EventSeverity,
     RecordingAsset,
     SessionEventPayload,
@@ -15,6 +16,7 @@ from src.dashboard.models import (
     StationStatus,
     StudentInfo,
 )
+from src.dashboard.store import DashboardStore
 
 
 def _make_app(tmp_path):
@@ -109,6 +111,15 @@ async def test_register_session_and_append_events(tmp_path):
         assert review_response.status_code == 200
         assert "Timeline de eventos" in review_response.text
         assert "Webcam" in review_response.text
+        assert "Ir para 600s" in review_response.text
+
+        csv_response = await client.get("/api/reports/events.csv?turma=ES2025-T1")
+        assert csv_response.status_code == 200
+        assert "text/csv" in csv_response.headers["content-type"]
+        csv_text = csv_response.text
+        assert "session_id,station_id,turma,assessment,student_id,student_name" in csv_text
+        assert "sess-1,nuc-01,ES2025-T1,Quiz-03,123,Alice" in csv_text
+        assert "GAZE_LEFT" in csv_text
 
 
 @pytest.mark.asyncio
@@ -128,3 +139,99 @@ async def test_enrollment_form_updates_partial(tmp_path):
     assert response.status_code == 200
     assert "Alice Silva" in response.text
     assert "alice.jpg" in response.text
+
+
+@pytest.mark.asyncio
+async def test_station_command_endpoints_enqueue_commands(tmp_path):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+        stop_response = await client.post("/api/stations/nuc-01/session/stop")
+        unblock_response = await client.post("/api/stations/nuc-01/session/unblock")
+        heartbeat_response = await client.post(
+            "/api/heartbeats",
+            json={
+                "station_id": "nuc-01",
+                "station_name": "NUC Sala 1",
+                "status": "BLOCKED",
+                "student": None,
+                "active_session_id": None,
+                "assessment": None,
+                "turma": None,
+                "seconds_remaining": None,
+                "recent_events": [],
+            },
+        )
+
+    assert stop_response.status_code == 202
+    assert unblock_response.status_code == 202
+    commands = heartbeat_response.json()["commands"]
+    assert [item["command_type"] for item in commands] == ["STOP_SESSION", "UNBLOCK_SESSION"]
+
+
+def test_dashboard_store_persists_across_restarts(tmp_path):
+    store = DashboardStore(tmp_path / "dashboard")
+    store.create_config(
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            timer_minutes=45,
+            prairielearn_url="https://pl.exemplo.edu.br/quiz-03",
+            allowlist=["pl.exemplo.edu.br"],
+            target_station_ids=["nuc-01"],
+            s3_prefix="ES2025-T1/quiz-03",
+        )
+    )
+    store.add_enrollment(
+        turma="ES2025-T1",
+        student_id="123",
+        student_name="Alice Silva",
+        source="upload",
+        file_names=["alice.jpg"],
+    )
+    store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="123", student_name="Alice Silva"),
+            status=StationStatus.SESSION,
+        )
+    )
+
+    reloaded = DashboardStore(tmp_path / "dashboard")
+    snapshot = reloaded.snapshot()
+
+    assert snapshot["configs"][0].assessment == "Quiz-03"
+    assert snapshot["enrollments"][0].student_name == "Alice Silva"
+    assert snapshot["sessions"][0].session_id == "sess-1"
+
+
+def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path):
+    class FakeS3:
+        def generate_presigned_url(self, _operation, Params, ExpiresIn):
+            return f"https://signed.example/{Params['Bucket']}/{Params['Key']}?exp={ExpiresIn}"
+
+    store = DashboardStore(tmp_path / "dashboard", app_config=AppConfig(data_dir=tmp_path), s3_client=FakeS3())
+    store.register_session(
+        SessionRecord(
+            session_id="sess-s3",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="123", student_name="Alice Silva"),
+            status=StationStatus.SESSION,
+            recordings=[
+                RecordingAsset(
+                    label="Webcam",
+                    s3_bucket="proctor-station",
+                    s3_key="gravacoes/sess-s3/webcam_000.mp4",
+                )
+            ],
+        )
+    )
+
+    session = store.get_session("sess-s3")
+    assert session is not None
+    assert session.recordings[0].url == "https://signed.example/proctor-station/gravacoes/sess-s3/webcam_000.mp4?exp=3600"

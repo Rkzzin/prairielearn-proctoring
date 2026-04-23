@@ -43,7 +43,9 @@ class SessionEventPayload(BaseModel):
 
 class RecordingAsset(BaseModel):
     label: str
-    url: str
+    url: str | None = None
+    s3_bucket: str | None = None
+    s3_key: str | None = None
     kind: str = "video"
 
 
@@ -135,4 +137,3 @@ class EnrollmentRecord(BaseModel):
     created_at: datetime
     source: str
     file_names: list[str] = Field(default_factory=list)
-

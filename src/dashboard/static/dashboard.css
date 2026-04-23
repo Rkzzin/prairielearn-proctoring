@@ -105,6 +105,12 @@ button {
   color: white;
   border: none;
 }
+.button-secondary {
+  width: auto;
+  background: var(--surface-strong);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
 .checkbox {
   grid-template-columns: auto 1fr;
   align-items: center;
@@ -121,6 +127,11 @@ button {
   padding: 18px;
   display: grid;
   gap: 12px;
+}
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 .station-head {
   display: flex;
@@ -181,6 +192,16 @@ th, td {
   border-radius: 12px;
   padding: 12px;
 }
+.timeline-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.link-sep {
+  color: var(--muted);
+  margin: 0 6px;
+}
 .video-stack {
   display: grid;
   gap: 16px;
@@ -203,4 +224,3 @@ video {
     grid-template-columns: 1fr;
   }
 }
-
