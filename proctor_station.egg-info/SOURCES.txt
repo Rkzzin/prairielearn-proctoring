@@ -6,10 +6,15 @@ proctor_station.egg-info/dependency_links.txt
 proctor_station.egg-info/requires.txt
 proctor_station.egg-info/top_level.txt
 src/__init__.py
+src/api/__init__.py
+src/api/routes.py
+src/api/server.py
 src/core/__init__.py
 src/core/config.py
+src/core/dashboard_sync.py
 src/core/models.py
 src/core/s3_client.py
+src/core/session.py
 src/dashboard/__init__.py
 src/dashboard/app.py
 src/dashboard/models.py
@@ -29,6 +34,8 @@ src/face/recognizer.py
 src/kiosk/__init__.py
 src/kiosk/chromium.py
 src/kiosk/lockdown.py
+src/kiosk/overlay.py
+src/kiosk/overlay_app.py
 src/kiosk/reidentify.py
 src/proctor/engine.py
 src/proctor/events.py
@@ -36,6 +43,9 @@ src/proctor/gaze.py
 src/recorder/capture.py
 src/recorder/uploader.py
 tests/test_dashboard.py
+tests/test_dashboard_sync.py
 tests/test_face_recognition.py
 tests/test_kiosk.py
 tests/test_proctor_engine.py
+tests/test_recorder.py
+tests/test_session_manager.py

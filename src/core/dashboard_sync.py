@@ -83,6 +83,11 @@ class DashboardHeartbeatWorker:
             logger.info("Configuração aplicada a partir do dashboard")
             return
 
+        if command_type == "SET_AUTOSTART":
+            self._session_manager.update_config(auto_start=bool(payload.get("auto_start")))
+            logger.info("SET_AUTOSTART processado: %s", bool(payload.get("auto_start")))
+            return
+
         if command_type == "STOP_SESSION":
             self._session_manager.stop_session(reason="dashboard_command")
             logger.info("STOP_SESSION processado")

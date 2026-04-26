@@ -7,6 +7,7 @@ __pycache__*
 .codex
 .python-version
 tmp-*
+*.mp4
 
 
 # Students information

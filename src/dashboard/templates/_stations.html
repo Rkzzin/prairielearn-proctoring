@@ -13,6 +13,7 @@
       <div><dt>Aluno</dt><dd>{% if station.student %}{{ station.student.student_name }}{% else %}vazio{% endif %}</dd></div>
       <div><dt>Turma</dt><dd>{{ station.turma or "—" }}</dd></div>
       <div><dt>Assessment</dt><dd>{{ station.assessment or "—" }}</dd></div>
+      <div><dt>Auto-start</dt><dd>{{ "ativo" if station.auto_start_enabled else "inativo" }}</dd></div>
       <div><dt>Tempo</dt><dd>{% if station.seconds_remaining is not none %}{{ station.seconds_remaining }} s{% else %}—{% endif %}</dd></div>
     </dl>
     {% if station.last_event %}
@@ -22,6 +23,13 @@
     </p>
     {% endif %}
     <div class="actions">
+      <button
+        type="button"
+        class="button-secondary"
+        onclick="issueAutoStartCommand('{{ station.station_id }}', {{ 'false' if station.auto_start_enabled else 'true' }})"
+      >
+        {{ "Desativar auto-start" if station.auto_start_enabled else "Ativar auto-start" }}
+      </button>
       <button
         type="button"
         class="button-secondary"

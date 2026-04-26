@@ -45,7 +45,7 @@ Browser:      Chromium em modo kiosk + extensão custom
 Orquestrador: FastAPI (API local na NUC)
 Upload:       boto3 → AWS S3 (sa-east-1)
 IaC:          Terraform + Ansible (pendente)
-Dashboard:    FastAPI + HTMX (pendente)
+Dashboard:    FastAPI + HTMX
 ```
 
 ### Estrutura do repositório
@@ -87,7 +87,7 @@ proctor-station/
 │   │   └── uploader.py          # Upload incremental S3 com retry
 │   ├── kiosk/                   # Chromium kiosk + re-identificação (Fase 4)
 │   ├── api/                     # FastAPI local da NUC (Fase 5)
-│   └── dashboard/               # (pendente — Fase 6)
+│   └── dashboard/               # Dashboard do professor (Fase 6)
 ├── scripts/
 │   ├── bootstrap.sh             # Setup completo de uma NUC do zero
 │   ├── download_models.sh       # Baixa modelos dlib (~100MB)
@@ -97,9 +97,12 @@ proctor-station/
 │   └── test_integration.py      # Teste manual Fase 1+2+3 ao vivo
 ├── tests/
 │   ├── test_face_recognition.py # Testes Fase 1 (39 casos)
-│   ├── test_proctor_engine.py   # Testes Fase 2 (23 casos)
+│   ├── test_proctor_engine.py   # Testes Fase 2
 │   ├── test_recorder.py         # Testes Fase 3 (14 casos)
-│   └── test_kiosk.py            # Testes Fase 4
+│   ├── test_kiosk.py            # Testes Fase 4
+│   ├── test_session_manager.py  # Testes Fase 5
+│   ├── test_dashboard.py        # Testes Fase 6
+│   └── test_dashboard_sync.py   # Sync NUC → dashboard
 ├── .env.example                 # Referência de todas as variáveis
 ├── pyproject.toml
 └── README.md
@@ -183,8 +186,7 @@ Normalização:
 |---|---|---|
 | `PROCTOR_GAZE_H_THRESHOLD` | 0.35 | Limiar horizontal do olhar (ratio 0–1) |
 | `PROCTOR_GAZE_V_THRESHOLD` | 0.30 | Limiar vertical do olhar (ratio 0–1) |
-| `PROCTOR_GAZE_DURATION_SEC` | 5.0 | Segundos de desvio antes de GAZE_WARN |
-| `PROCTOR_GAZE_BLOCK_SEC` | 10.0 | Segundos de desvio antes de BLOCKED |
+| `PROCTOR_GAZE_DURATION_SEC` | 5.0 | Segundos de desvio antes de BLOCKED |
 | `PROCTOR_ABSENCE_TIMEOUT_SEC` | 5.0 | Segundos sem rosto antes de BLOCKED |
 | `PROCTOR_MULTI_FACE_BLOCK` | true | Bloquear imediatamente se >1 rosto |
 
@@ -244,25 +246,58 @@ Tipos de evento: `SESSION_STARTED`, `SESSION_ENDED`, `GAZE_WARNING`, `GAZE_BLOCK
 
 ### Streams FFmpeg
 
-Dois processos FFmpeg simultâneos, iniciados junto com o proctoring:
+Durante a sessão ativa, a webcam física fica com **um único dono**: o FFmpeg.
+O OpenCV só usa `/dev/video0` na identificação inicial; depois disso, a câmera
+é liberada e o proctoring passa a ler um preview local gerado pelo próprio FFmpeg.
+
+Fluxo real:
+
+1. `SessionManager` abre `/dev/video0` por OpenCV só para identificar o aluno.
+2. Após o match, a câmera física é liberada.
+3. O FFmpeg abre `/dev/video0` via `v4l2` e divide o vídeo em dois ramos.
+4. O ramo `record` grava `webcam_%03d.mp4`; o ramo `preview` publica um stream local `udp://127.0.0.1:18181`.
+5. O OpenCV reconecta nesse preview local para gaze, ausência e reidentificação.
+6. A tela continua sendo gravada em processo separado via `x11grab`.
+
+Comandos equivalentes:
 
 ```bash
-# Stream webcam (rosto + áudio)
-ffmpeg -f v4l2 -video_size 1280x720 -framerate 30 -i /dev/video0 \
-       -f pulse -i default \
-       -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k \
-       -f segment -segment_time 300 -reset_timestamps 1 \
-       data/sessions/{id}/recordings/webcam_%03d.mp4
+# Stream webcam
+ffmpeg -f v4l2 -thread_queue_size 512 -input_format mjpeg \
+       -use_wallclock_as_timestamps 1 \
+       -framerate 30 -video_size 1280x720 -i /dev/video0 \
+       -filter_complex "[0:v]split=2[record][preview];[preview]fps=10,scale=640:360[preview_out]" \
+       -map "[record]" \
+       -c:v libx264 -preset veryfast -crf 23 -profile:v high -pix_fmt yuv420p \
+       -threads 2 -fps_mode passthrough \
+       -f segment -segment_time 300 -segment_format_options movflags=+faststart \
+       -reset_timestamps 1 \
+       data/sessions/{id}/recordings/webcam_%03d.mp4 \
+       -map "[preview_out]" \
+       -c:v libx264 -preset ultrafast -tune zerolatency -crf 35 -pix_fmt yuv420p \
+       -g 10 -keyint_min 10 -sc_threshold 0 -x264-params repeat-headers=1:aud=1 \
+       -threads 1 -f mpegts "udp://127.0.0.1:18181?pkt_size=1316"
 
 # Stream tela
-ffmpeg -f x11grab -video_size 1920x1080 -framerate 15 -i :1 \
-       -c:v libx264 -preset fast -crf 28 \
-       -f segment -segment_time 300 -reset_timestamps 1 \
+ffmpeg -f x11grab -thread_queue_size 512 \
+       -use_wallclock_as_timestamps 1 \
+       -video_size 1920x1080 -framerate 15 -i :1 \
+       -vf "scale=1280:720:flags=fast_bilinear,setsar=1" \
+       -c:v libx264 -preset veryfast -crf 28 -profile:v high -pix_fmt yuv420p \
+       -threads 2 -fps_mode passthrough \
+       -f segment -segment_time 300 -segment_format_options movflags=+faststart \
+       -reset_timestamps 1 \
        data/sessions/{id}/recordings/screen_%03d.mp4
 ```
 
 **Decisões:**
+- `/dev/video0` não fica mais aberto em paralelo durante a sessão; o FFmpeg é o dono da webcam
+- O proctoring contínuo lê um preview local de baixa latência, não a câmera física
+- Webcam e tela usam timestamps de relógio real (`use_wallclock_as_timestamps`) e `fps_mode passthrough`
+- Os MP4s finais são gravados em H.264 `High` + `yuv420p` + `faststart` para compatibilidade com navegador/dashboard
+- Afinidade de CPU pode reservar os últimos núcleos para o FFmpeg e dividir webcam/tela entre eles
 - Segmentos de 5 minutos — upload incremental, não espera o fim da prova
+- `stop()` envia `SIGINT`, aguarda o trailer do MP4 e faz flush do último segmento antes do upload
 - CRF 23 para webcam (qualidade facial), CRF 28 para tela (texto legível, arquivo menor)
 - 15fps para tela é suficiente para capturar interação com mouse/teclado
 
@@ -328,7 +363,7 @@ chromium-browser \
 
 Quando o proctoring engine emite `BLOCKED`:
 1. SIGSTOP no processo Chromium (congela a prova)
-2. Mensagem de bloqueio + re-identificação facial no terminal
+2. Overlay fullscreen local informa claramente que a sessão foi bloqueada
 3. Aguarda `engine.unblock()` após face re-match
 4. SIGCONT no Chromium e retoma a sessão
 
@@ -382,7 +417,7 @@ GET  /status              # Estado: IDLE | IDENTIFYING | SESSION | BLOCKED | UPL
 GET  /session             # Dados da sessão ativa
 POST /session/start       # Início manual (admin)
 POST /session/stop        # Fim forçado (professor)
-POST /session/unblock     # Desbloqueio manual (professor com auth)
+POST /session/unblock     # Desbloqueio manual
 POST /config              # Atualiza config da próxima sessão
 ```
 
@@ -393,7 +428,7 @@ POST /config              # Atualiza config da próxima sessão
 - [x] Integração com face, proctor, recorder e kiosk
 - [x] `systemd/proctor.service` para autostart na NUC
 - [x] Testes automatizados da FSM e da API local
-- [ ] Teste E2E do fluxo completo em hardware real
+- [x] Teste E2E do fluxo completo em hardware real
 
 ---
 
@@ -405,6 +440,7 @@ POST /config              # Atualiza config da próxima sessão
 - **Configuração de prova** — criar sessão (turma, assessment URL, timer, thresholds), distribuir config para as NUCs
 - **Revisão pós-prova** — lista de sessões com player de vídeo e timeline de eventos (clicar no evento pula para o timestamp no vídeo)
 - **Exportar relatório** — CSV com eventos por aluno
+- **Layout responsivo** — telas principais utilizáveis em celular
 
 ### Stack
 
@@ -488,7 +524,7 @@ nano .env  # preencher credenciais
 chmod +x scripts/bootstrap.sh
 ./scripts/bootstrap.sh
 
-source .venv/bin/activate
+source venv/bin/activate
 ```
 
 ### Configuração — variáveis de ambiente
@@ -514,7 +550,11 @@ PROCTOR_GAZE_BLOCK_SEC=10.0
 
 # Gravação
 PROCTOR_REC_DISPLAY=:1         # confirmar com: echo $DISPLAY
-PROCTOR_REC_SCREEN_SIZE=1920x1080
+PROCTOR_REC_SCREEN_SIZE=1280x720
+PROCTOR_REC_WEBCAM_INPUT_FORMAT=mjpeg
+PROCTOR_REC_FFMPEG_THREADS=1
+PROCTOR_REC_FFMPEG_CPU_CORES=3
+PROCTOR_REC_PROCTOR_CPU_CORES=0-2
 ```
 
 ### Desenvolvimento sem AWS

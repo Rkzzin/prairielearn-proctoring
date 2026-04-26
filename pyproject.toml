@@ -6,10 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "proctor-station"
 version = "0.1.0"
 description = "NUC-based proctoring station with face recognition, recording, and browser lockdown"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.13"
 dependencies = [
-    "dlib>=19.24",
-    "opencv-python-headless>=4.9.0",
+    "dlib>=19.24.0",
+    "opencv-python-headless>=4.9.0.80",
     "mediapipe>=0.10.9",
     "numpy>=1.26.0",
     "fastapi>=0.115.0",

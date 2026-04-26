@@ -4,7 +4,7 @@ set -euo pipefail
 SERVICE_NAME="proctor.service"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
-PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
+PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
 PORT="$("$PYTHON_BIN" - <<'PY'
 from src.core.config import AppConfig
 print(AppConfig().api_port)

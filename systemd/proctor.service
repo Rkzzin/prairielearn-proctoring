@@ -8,7 +8,7 @@ Type=simple
 User=proctor
 WorkingDirectory=/opt/proctor
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/proctor/.venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/proctor/venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=3
 

@@ -1,0 +1,4 @@
+{"timestamp": 1777229170.89283, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_20260426_154608"}}
+{"timestamp": 1777229171.2050693, "frame": 2, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 28.79, "smooth_yaw": 27.48, "pitch": -174.89, "eye_ratio": null}}
+{"timestamp": 1777229171.4413965, "frame": 4, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 28.64, "smooth_yaw": 27.29, "pitch": -175.8, "eye_ratio": null}}
+{"timestamp": 1777229196.931541, "frame": 196, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 196}}

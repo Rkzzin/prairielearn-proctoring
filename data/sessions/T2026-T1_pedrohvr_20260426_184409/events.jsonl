@@ -1,0 +1,6 @@
+{"timestamp": 1777239857.6842747, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_pedrohvr_20260426_184409"}}
+{"timestamp": 1777239857.7437098, "frame": 1, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 5.18, "smooth_yaw": 5.18, "pitch": -160.22, "eye_ratio": null}}
+{"timestamp": 1777239857.9318879, "frame": 6, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 6.24, "smooth_yaw": 6.35, "pitch": -155.09, "eye_ratio": null}}
+{"timestamp": 1777239858.2034442, "frame": 14, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -20.03, "smooth_yaw": -8.92, "pitch": -145.27, "eye_ratio": null}}
+{"timestamp": 1777239859.0505626, "frame": 18, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -15.88, "smooth_yaw": -15.03, "pitch": -160.52, "eye_ratio": null}}
+{"timestamp": 1777239874.2443924, "frame": 66, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 66}}

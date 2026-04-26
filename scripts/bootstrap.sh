@@ -52,8 +52,9 @@ sudo apt install -y -qq \
     python3.12 \
     python3.12-venv \
     python3.12-dev \
+    python3-tk \
     > /dev/null 2>&1
-log "Python 3.12 instalado"
+log "Python 3.12 + tkinter instalados"
 
 sudo apt install -y -qq \
     libopenblas-dev \
@@ -72,9 +73,10 @@ log "FFmpeg e v4l-utils instalados"
 sudo apt install -y -qq \
     git \
     curl \
+    xauth \
     bzip2 \
     > /dev/null 2>&1
-log "Git, curl e bzip2 instalados"
+log "Git, curl, xauth e bzip2 instalados"
 
 # ── 2. Python venv ──
 echo ""
@@ -82,14 +84,21 @@ echo "=========================================="
 echo "  2/6  Criando Python virtual environment"
 echo "=========================================="
 
-if [ -d "venv" ]; then
-    warn "venv já existe — recriando..."
+if [ -d ".venv" ] || [ -d "venv" ]; then
+    warn "Ambiente virtual existente encontrado — recriando..."
+    rm -rf .venv
     rm -rf venv
 fi
 
 python3.12 -m venv venv
 source venv/bin/activate
 log "venv criado e ativado: $(which python3)"
+
+python3 - <<'PY'
+import sys
+assert sys.version_info[:2] == (3, 12), sys.version
+PY
+log "Python do venv confirmado em 3.12"
 
 python3 -m pip install --upgrade pip --quiet
 log "pip atualizado: $(pip --version | cut -d' ' -f2)"
@@ -101,7 +110,7 @@ echo "  3/6  Instalando dependências Python"
 echo "=========================================="
 echo "       (dlib compila do source — pode levar 3-5 min)"
 
-pip install -e ".[dev]" 2>&1 | tail -1
+python3 -m pip install -e ".[dev]"
 log "Dependências instaladas"
 
 # ── 4. Baixar modelos dlib ──
@@ -120,8 +129,8 @@ echo "=========================================="
 echo "  5/6  Rodando testes"
 echo "=========================================="
 
-python3 -m pytest tests/ -v --tb=short 2>&1 | tail -20
-PYTEST_EXIT=${PIPESTATUS[0]:-$?}
+python3 -m pytest tests/ -v --tb=short
+PYTEST_EXIT=$?
 
 if [ "$PYTEST_EXIT" -eq 0 ]; then
     log "Todos os testes passaram"

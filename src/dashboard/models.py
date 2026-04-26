@@ -13,11 +13,13 @@ class StationStatus(str, Enum):
     SESSION = "SESSION"
     BLOCKED = "BLOCKED"
     UPLOADING = "UPLOADING"
+    COMPLETED = "COMPLETED"
     OFFLINE = "OFFLINE"
 
 
 class CommandType(str, Enum):
     APPLY_CONFIG = "APPLY_CONFIG"
+    SET_AUTOSTART = "SET_AUTOSTART"
     STOP_SESSION = "STOP_SESSION"
     UNBLOCK_SESSION = "UNBLOCK_SESSION"
 
@@ -77,6 +79,7 @@ class ExamConfigPayload(BaseModel):
     timer_minutes: int = 45
     prairielearn_url: str
     allowlist: list[str] = Field(default_factory=list)
+    auto_start: bool = True
     target_station_ids: list[str] = Field(default_factory=list)
     gaze_h_threshold: float = 0.35
     gaze_duration_sec: float = 3.0
@@ -102,6 +105,7 @@ class StationHeartbeat(BaseModel):
     active_session_id: str | None = None
     assessment: str | None = None
     turma: str | None = None
+    auto_start_enabled: bool | None = None
     seconds_remaining: int | None = None
     last_event: SessionEventPayload | None = None
     recent_events: list[SessionEventPayload] = Field(default_factory=list)
@@ -115,6 +119,7 @@ class StationRecord(BaseModel):
     active_session_id: str | None = None
     assessment: str | None = None
     turma: str | None = None
+    auto_start_enabled: bool = False
     seconds_remaining: int | None = None
     last_seen_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     last_event: SessionEventPayload | None = None

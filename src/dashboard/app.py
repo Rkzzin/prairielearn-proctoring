@@ -66,6 +66,8 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             request,
             "config.html",
             title="Configuração de prova",
+            known_turmas=dashboard_store.list_known_turmas(),
+            station_choices=dashboard_store.list_station_choices(),
             **snapshot,
         )
 
@@ -152,6 +154,16 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     @app.post("/api/stations/{station_id}/session/unblock")
     async def unblock_session(station_id: str) -> JSONResponse:
         command = dashboard_store.enqueue_command(station_id, CommandType.UNBLOCK_SESSION)
+        return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.post("/api/stations/{station_id}/autostart/enable")
+    async def enable_autostart(station_id: str) -> JSONResponse:
+        command = dashboard_store.set_station_autostart(station_id, True)
+        return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.post("/api/stations/{station_id}/autostart/disable")
+    async def disable_autostart(station_id: str) -> JSONResponse:
+        command = dashboard_store.set_station_autostart(station_id, False)
         return JSONResponse(command.model_dump(mode="json"), status_code=202)
 
     @app.get("/api/reports/events.csv")

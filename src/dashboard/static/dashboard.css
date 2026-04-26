@@ -24,6 +24,9 @@ body {
 }
 a { color: var(--accent); }
 h1, h2, h3, p { margin-top: 0; }
+code {
+  overflow-wrap: anywhere;
+}
 .topbar, .layout { width: min(1200px, calc(100% - 32px)); margin: 0 auto; }
 .topbar {
   display: flex;
@@ -222,5 +225,111 @@ video {
   }
   .two-column {
     grid-template-columns: 1fr;
+  }
+  .panel-header {
+    flex-direction: column;
+    align-items: start;
+  }
+  .meta {
+    grid-template-columns: 1fr;
+  }
+  .actions {
+    flex-direction: column;
+  }
+  .actions .button-secondary {
+    width: 100%;
+  }
+}
+@media (max-width: 640px) {
+  .topbar, .layout {
+    width: min(100%, calc(100% - 20px));
+  }
+  .topbar {
+    padding: 20px 0 16px;
+  }
+  .nav {
+    width: 100%;
+    gap: 10px;
+  }
+  .nav a {
+    flex: 1 1 calc(50% - 10px);
+    min-width: 0;
+    text-align: center;
+    background: rgba(255, 253, 248, 0.8);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    text-decoration: none;
+  }
+  .panel,
+  .form-card,
+  .hero-card,
+  .station-card {
+    padding: 16px;
+    border-radius: 16px;
+  }
+  .hero {
+    grid-template-columns: 1fr;
+  }
+  .station-head {
+    flex-direction: column;
+    align-items: start;
+  }
+  .badge {
+    align-self: start;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font-size: 16px;
+  }
+  textarea {
+    min-height: 110px;
+  }
+  select[multiple] {
+    min-height: 144px;
+  }
+  .table-wrap {
+    overflow: visible;
+  }
+  table,
+  thead,
+  tbody,
+  tr,
+  th,
+  td {
+    display: block;
+  }
+  thead {
+    display: none;
+  }
+  tbody {
+    display: grid;
+    gap: 12px;
+  }
+  tr {
+    background: rgba(255, 255, 255, 0.6);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+  }
+  td {
+    border: 0;
+    padding: 6px 0;
+  }
+  td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 2px;
+  }
+  .link-sep {
+    display: none;
+  }
+  .timeline {
+    padding-left: 0;
+    list-style: none;
   }
 }

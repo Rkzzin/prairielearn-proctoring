@@ -1,13 +1,14 @@
 """Gravação de webcam e tela via FFmpeg.
 
 Arquitetura:
-  - Stream webcam: recebe frames do OpenCV via stdin (pipe) — nunca abre
-    /dev/videoN diretamente, eliminando conflito com o proctoring.
-  - Stream tela:   x11grab independente, sem tocar na câmera.
+  - Stream webcam: FFmpeg captura /dev/videoN diretamente e publica
+    um preview local para o proctoring.
+  - Stream tela:   x11grab independente.
 
-O loop principal chama write_frame(frame) a cada frame capturado pelo
-OpenCV. O FFmpeg grava esses frames em segmentos de 5 minutos e o
-Uploader faz o upload ao S3 em background.
+O proctoring consome o preview local, então a câmera física fica
+aberta só no processo do FFmpeg. Isso evita:
+  - FPS degradado no vídeo gravado por causa do detector
+  - conflito de /dev/videoN ocupado por OpenCV e FFmpeg ao mesmo tempo
 
 Layout dos arquivos locais:
     {data_dir}/sessions/{session_id}/recordings/
@@ -19,18 +20,14 @@ Layout dos arquivos locais:
 Uso típico:
     capture = Capture(session_id="ES2025-T1_20240601")
     capture.start()
-
-    while prova_ativa:
-        ret, frame = cap.read()
-        engine.update(frame)
-        capture.write_frame(frame)   # mesmo frame do proctoring
-
+    ...
     capture.stop()
 """
 
 from __future__ import annotations
 
 import logging
+import re
 import signal
 import subprocess
 import threading
@@ -39,11 +36,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-import numpy as np
-
 import os
 
-from src.core.config import AppConfig, FaceConfig, S3Config
+from src.core.config import AppConfig, FaceConfig, RecorderConfig, S3Config
+from src.core.cpu_affinity import parse_cpu_set, split_ffmpeg_stream_cpu_sets
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +55,7 @@ class SegmentInfo:
 
 
 class Capture:
-    """Gerencia gravação de webcam (via pipe) e tela (via x11grab).
+    """Gerencia gravação de webcam e tela via FFmpeg.
 
     Args:
         session_id: ID da sessão — determina o subdiretório de gravação.
@@ -70,7 +66,7 @@ class Capture:
             Assinatura: (segment: SegmentInfo) -> None
             Chamado em thread separada — deve ser thread-safe.
         display: Display X11 para captura de tela (default: ":0.0").
-        screen_size: Resolução da tela (default: "1920x1080").
+        screen_size: Resolução final do vídeo da tela (default: "1280x720").
     """
 
     def __init__(
@@ -79,17 +75,19 @@ class Capture:
         s3_config: S3Config | None = None,
         face_config: FaceConfig | None = None,
         app_config: AppConfig | None = None,
+        recorder_config: RecorderConfig | None = None,
         on_segment_ready: Callable[[SegmentInfo], None] | None = None,
-        display: str = ":0.0",
-        screen_size: str = "1920x1080",
+        display: str | None = None,
+        screen_size: str | None = None,
     ):
         self.session_id = session_id
         self._s3_cfg = s3_config or S3Config()
         self._face_cfg = face_config or FaceConfig()
         self._app_cfg = app_config or AppConfig()
+        self._rec_cfg = recorder_config or self._app_cfg.recorder
         self._on_segment_ready = on_segment_ready
-        self._display = display
-        self._screen_size = screen_size
+        self._display = display or self._rec_cfg.display
+        self._screen_size = screen_size or self._rec_cfg.screen_size
 
         self._rec_dir = (
             Path(self._app_cfg.data_dir)
@@ -104,10 +102,13 @@ class Capture:
         self._running = False
         self._stop_event = threading.Event()
         self._notified_segments: set[Path] = set()
-
-        # Processo FFmpeg de webcam — lê frames BGR do stdin
-        self._webcam_proc: subprocess.Popen | None = None
-        self._write_lock = threading.Lock()
+        self._preview_url = (
+            f"udp://{self._rec_cfg.preview_host}:{self._rec_cfg.preview_port}"
+            "?overrun_nonfatal=1&fifo_size=5000000"
+        )
+        self._stream_cpu_sets = split_ffmpeg_stream_cpu_sets(
+            parse_cpu_set(self._rec_cfg.ffmpeg_cpu_cores)
+        )
 
     # ──────────────────────────────────────────────
     #  Ciclo de vida
@@ -130,40 +131,26 @@ class Capture:
         """Para os dois streams e aguarda os processos finalizarem.
 
         Ordem de encerramento:
-          1. Fecha stdin do pipe → FFmpeg de webcam recebe EOF e finaliza
-             o arquivo limpo (sem SIGINT que corrompe o trailer).
-          2. SIGINT no FFmpeg de tela → finaliza segmento atual.
-          3. Aguarda todos os processos.
+          1. SIGINT nos FFmpeg de webcam/tela → finaliza segmento atual.
+          2. Aguarda todos os processos.
         """
         if not self._running:
             return
 
         self._stop_event.set()
 
-        # 1. Webcam: fechar stdin → EOF → FFmpeg finaliza arquivo limpo
-        if self._webcam_proc and self._webcam_proc.poll() is None:
-            logger.info("Encerrando stream 'webcam' (EOF no pipe)...")
+        for stream in ("webcam", "screen"):
+            proc = self._procs.get(stream)
+            if proc is None or proc.poll() is not None:
+                continue
+            logger.info("Encerrando stream '%s' (SIGINT)...", stream)
             try:
-                self._webcam_proc.stdin.close()
-            except OSError:
-                pass
-            try:
-                self._webcam_proc.wait(timeout=15)
+                proc.send_signal(signal.SIGINT)
+                proc.wait(timeout=15)
             except subprocess.TimeoutExpired:
-                logger.warning("FFmpeg webcam não encerrou — forçando kill")
-                self._webcam_proc.kill()
-                self._webcam_proc.wait()
-
-        # 2. Tela: SIGINT para encerrar segmento atual
-        screen_proc = self._procs.get("screen")
-        if screen_proc and screen_proc.poll() is None:
-            logger.info("Encerrando stream 'screen' (SIGINT)...")
-            try:
-                screen_proc.send_signal(signal.SIGINT)
-                screen_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                screen_proc.kill()
-                screen_proc.wait()
+                logger.warning("FFmpeg %s não encerrou — forçando kill", stream)
+                proc.kill()
+                proc.wait()
 
         self._flush_pending_segments("webcam")
         self._flush_pending_segments("screen")
@@ -176,109 +163,123 @@ class Capture:
 
         self._procs.clear()
         self._monitor_threads.clear()
-        self._webcam_proc = None
         logger.info("Gravação encerrada — sessão '%s'", self.session_id)
 
     @property
     def is_running(self) -> bool:
         return self._running
 
-    # ──────────────────────────────────────────────
-    #  API pública — escrita de frames
-    # ──────────────────────────────────────────────
-
-    def write_frame(self, frame: np.ndarray) -> None:
-        """Envia um frame BGR para o FFmpeg de webcam via pipe.
-
-        Deve ser chamado a cada frame no loop de proctoring.
-        Thread-safe.
-
-        Args:
-            frame: Imagem BGR (OpenCV), mesma resolução de FaceConfig.
-        """
-        if not self._running or self._webcam_proc is None:
-            return
-        if self._webcam_proc.poll() is not None:
-            logger.warning("Processo webcam FFmpeg encerrou inesperadamente")
-            return
-
-        try:
-            with self._write_lock:
-                self._webcam_proc.stdin.write(frame.tobytes())
-        except (BrokenPipeError, OSError):
-            pass  # FFmpeg encerrou — stop() já cuida da limpeza
+    @property
+    def preview_url(self) -> str:
+        return self._preview_url
 
     # ──────────────────────────────────────────────
     #  Streams FFmpeg
     # ──────────────────────────────────────────────
 
     def _start_webcam_stream(self) -> None:
-        """Inicia FFmpeg de webcam lendo frames BGR do stdin.
-
-        O framerate declarado ao FFmpeg deve refletir o FPS real entregue
-        pelo OpenCV com o dlib rodando — tipicamente 8-10fps, não os 30fps
-        nominais da câmera. Usar o FPS errado acelera o vídeo.
-        """
+        """Inicia FFmpeg de webcam capturando /dev/videoN diretamente."""
         w = self._face_cfg.camera_width
         h = self._face_cfg.camera_height
         fps = self._face_cfg.camera_fps
         seg = self._s3_cfg.segment_duration_sec
         pattern = str(self._rec_dir / "webcam_%03d.mp4")
-
-        # FPS real do pipe — deve refletir quantos frames/s o OpenCV
-        # realmente entrega com o dlib rodando. Configurável via
-        # PROCTOR_FACE_PIPE_FPS no .env (default: fps/3 ≈ 10fps).
-        # Medir com: python3 scripts/measure_fps.py
-        pipe_fps = int(os.getenv("PROCTOR_FACE_PIPE_FPS", str(max(1, round(fps / 3)))))
+        video_device = f"/dev/video{self._face_cfg.camera_index}"
+        input_format = self._rec_cfg.webcam_input_format.strip()
+        ffmpeg_threads = max(1, self._rec_cfg.ffmpeg_threads)
+        preview_fps = max(1, self._rec_cfg.preview_fps)
+        preview_width = max(160, self._rec_cfg.preview_width)
+        preview_height = max(120, self._rec_cfg.preview_height)
+        preview_sink = (
+            f"udp://{self._rec_cfg.preview_host}:{self._rec_cfg.preview_port}"
+            "?pkt_size=1316"
+        )
 
         cmd = [
             "ffmpeg",
-            # Entrada: rawvideo BGR via stdin (pipe do OpenCV)
-            "-f", "rawvideo",
-            "-pix_fmt", "bgr24",
+            "-f", "v4l2",
+            "-thread_queue_size", "512",
+        ]
+        if input_format:
+            cmd.extend(["-input_format", input_format])
+        cmd.extend([
+            "-use_wallclock_as_timestamps", "1",
+            "-framerate", str(fps),
             "-video_size", f"{w}x{h}",
-            "-framerate", str(pipe_fps),
-            "-i", "pipe:0",
-            # Codec — qualidade reduzida (frames são do proctoring, não da câmera nativa)
+            "-i", video_device,
+            "-filter_complex",
+            (
+                "[0:v]split=2[record][preview];"
+                f"[preview]fps={preview_fps},scale={preview_width}:{preview_height}[preview_out]"
+            ),
+            "-map", "[record]",
             "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "28",
-            # Segmentação
+            "-preset", "veryfast",
+            "-crf", "23",
+            "-profile:v", "high",
+            "-pix_fmt", "yuv420p",
+            "-threads", str(ffmpeg_threads),
+            "-fps_mode", "passthrough",
             "-f", "segment",
             "-segment_time", str(seg),
+            "-segment_format_options", "movflags=+faststart",
             "-reset_timestamps", "1",
             "-strftime", "0",
             "-y",
             pattern,
-        ]
+            "-map", "[preview_out]",
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-crf", "35",
+            "-pix_fmt", "yuv420p",
+            "-g", str(preview_fps),
+            "-keyint_min", str(preview_fps),
+            "-sc_threshold", "0",
+            "-x264-params", "repeat-headers=1:aud=1",
+            "-threads", "1",
+            "-f", "mpegts",
+            preview_sink,
+        ])
 
         proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            preexec_fn=self._build_affinity_preexec_fn("webcam"),
         )
-        self._webcam_proc = proc
         self._procs["webcam"] = proc
         self._start_monitor_threads("webcam", proc)
-        logger.info("Stream webcam iniciado (pipe stdin → %s)", pattern)
+        self._ensure_process_started("webcam", proc)
+        logger.info("Stream webcam iniciado (v4l2 %s → %s)", video_device, pattern)
 
     def _start_screen_stream(self) -> None:
-        """Inicia captura de tela em segmentos via x11grab."""
+        """Inicia captura da tela inteira e gera saída em resolução configurada."""
         seg = self._s3_cfg.segment_duration_sec
         pattern = str(self._rec_dir / "screen_%03d.mp4")
+        capture_size = self._resolve_screen_capture_size()
+        output_width, output_height = self._parse_size(self._screen_size)
+        scale_filter = f"scale={output_width}:{output_height}:flags=fast_bilinear,setsar=1"
 
         cmd = [
             "ffmpeg",
             "-f", "x11grab",
-            "-video_size", self._screen_size,
+            "-thread_queue_size", "512",
+            "-use_wallclock_as_timestamps", "1",
+            "-video_size", capture_size,
             "-framerate", "15",
             "-i", self._display,
+            "-vf", scale_filter,
             "-c:v", "libx264",
-            "-preset", "fast",
+            "-preset", "veryfast",
             "-crf", "28",
+            "-profile:v", "high",
+            "-pix_fmt", "yuv420p",
+            "-threads", str(max(1, self._rec_cfg.ffmpeg_threads)),
+            "-fps_mode", "passthrough",
             "-f", "segment",
             "-segment_time", str(seg),
+            "-segment_format_options", "movflags=+faststart",
             "-reset_timestamps", "1",
             "-strftime", "0",
             "-y",
@@ -289,10 +290,66 @@ class Capture:
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            preexec_fn=self._build_affinity_preexec_fn("screen"),
         )
         self._procs["screen"] = proc
         self._start_monitor_threads("screen", proc)
+        self._ensure_process_started("screen", proc)
         logger.info("Stream tela iniciado (x11grab → %s)", pattern)
+
+    def _resolve_screen_capture_size(self) -> str:
+        display_size = self._detect_display_size()
+        if display_size:
+            return display_size
+        logger.warning(
+            "Não foi possível detectar a resolução real do display %s; usando '%s' como fallback",
+            self._display,
+            self._screen_size,
+        )
+        return self._screen_size
+
+    def _detect_display_size(self) -> str | None:
+        env = dict(os.environ)
+        env["DISPLAY"] = self._display
+        try:
+            result = subprocess.run(
+                ["xrandr", "--current"],
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
+        except FileNotFoundError:
+            logger.warning("xrandr não encontrado; não foi possível detectar a resolução real do display")
+            return None
+
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            logger.warning("xrandr falhou ao detectar display %s: %s", self._display, stderr or result.returncode)
+            return None
+
+        match = re.search(r"current\s+(\d+)\s+x\s+(\d+)", result.stdout)
+        if match is None:
+            logger.warning("xrandr não retornou resolução reconhecível para %s", self._display)
+            return None
+        return f"{match.group(1)}x{match.group(2)}"
+
+    @staticmethod
+    def _parse_size(size: str) -> tuple[int, int]:
+        match = re.fullmatch(r"(\d+)x(\d+)", size.strip())
+        if match is None:
+            raise ValueError(f"Resolução inválida: '{size}'")
+        return int(match.group(1)), int(match.group(2))
+
+    def _build_affinity_preexec_fn(self, stream: str):
+        cpus = self._stream_cpu_sets.get(stream)
+        if not cpus or not hasattr(os, "sched_setaffinity"):
+            return None
+
+        def _set_affinity() -> None:
+            os.sched_setaffinity(0, cpus)
+
+        return _set_affinity
 
     def _start_monitor_threads(self, name: str, proc: subprocess.Popen) -> None:
         """Inicia threads de monitoramento de stderr e de segmentos."""
@@ -311,6 +368,14 @@ class Capture:
         )
         t_seg.start()
         self._monitor_threads[f"{name}_segments"] = t_seg
+
+    def _ensure_process_started(self, name: str, proc: subprocess.Popen, timeout_sec: float = 0.5) -> None:
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            ret = proc.poll()
+            if ret is not None:
+                raise RuntimeError(f"FFmpeg do stream '{name}' encerrou no start (código {ret})")
+            time.sleep(0.05)
 
     # ──────────────────────────────────────────────
     #  Monitoramento

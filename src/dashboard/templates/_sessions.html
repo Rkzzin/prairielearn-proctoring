@@ -14,12 +14,12 @@
     <tbody>
       {% for session in sessions %}
       <tr>
-        <td>{{ session.assessment }}</td>
-        <td>{{ session.station_id }}</td>
-        <td>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</td>
-        <td>{{ session.status.value }}</td>
-        <td>{{ session.flags_count }}</td>
-        <td>
+        <td data-label="Sessão">{{ session.assessment }}</td>
+        <td data-label="Estação">{{ session.station_id }}</td>
+        <td data-label="Aluno">{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</td>
+        <td data-label="Status">{{ session.status.value }}</td>
+        <td data-label="Flags">{{ session.flags_count }}</td>
+        <td data-label="Ações">
           <a href="/sessions/{{ session.session_id }}">Revisar</a>
           <span class="link-sep">·</span>
           <a href="/api/reports/events.csv?turma={{ session.turma }}">CSV</a>

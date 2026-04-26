@@ -7,44 +7,164 @@ import urllib.error
 import urllib.request
 
 
-def _send_stop_request(stop_url: str) -> bool:
-    request = urllib.request.Request(stop_url, method="POST")
+def _send_stop_request(stop_url: str) -> tuple[bool, str | None]:
+    request = urllib.request.Request(
+        stop_url,
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
     try:
-        with urllib.request.urlopen(request, timeout=5):
-            return True
-    except (urllib.error.URLError, TimeoutError):
-        return False
+        with urllib.request.urlopen(request, timeout=5) as response:
+            if 200 <= response.status < 300:
+                return True, None
+            return False, f"HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        return False, f"HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return False, str(exc)
 
 
 def _controls_mode(stop_url: str) -> int:
     import tkinter as tk
-    from tkinter import messagebox
 
     root = tk.Tk()
     root.title("Proctor Controls")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
     root.configure(bg="#1d2a33")
-    root.geometry("+40+40")
 
     frame = tk.Frame(root, bg="#1d2a33", padx=10, pady=10)
     frame.pack()
 
+    def place_controls() -> None:
+        root.update_idletasks()
+        button_width = max(root.winfo_reqwidth(), root.winfo_width())
+        button_height = max(root.winfo_reqheight(), root.winfo_height())
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        inset = 4
+        x = max(screen_width - button_width - inset, 0)
+        y = max(screen_height - button_height - inset, 0)
+        root.geometry(f"{button_width}x{button_height}+{x}+{y}")
+
+    root.after(0, place_controls)
+
+    def show_dialog(title: str, message: str, *, confirm: bool = False) -> bool:
+        dialog = tk.Toplevel(root)
+        dialog.title(title)
+        dialog.transient(root)
+        dialog.attributes("-topmost", True)
+        dialog.configure(bg="#1d1f21")
+        dialog.resizable(False, False)
+
+        result = {"value": False}
+
+        container = tk.Frame(dialog, bg="#1d1f21", padx=28, pady=24)
+        container.pack()
+
+        title_label = tk.Label(
+            container,
+            text=title,
+            fg="white",
+            bg="#1d1f21",
+            font=("Helvetica", 16, "bold"),
+        )
+        title_label.pack(pady=(0, 12))
+
+        message_label = tk.Label(
+            container,
+            text=message,
+            fg="#f0e4d3",
+            bg="#1d1f21",
+            justify="center",
+            font=("Helvetica", 12),
+        )
+        message_label.pack(pady=(0, 20))
+
+        buttons = tk.Frame(container, bg="#1d1f21")
+        buttons.pack()
+
+        def close(value: bool) -> None:
+            result["value"] = value
+            dialog.destroy()
+
+        if confirm:
+            cancel_button = tk.Button(
+                buttons,
+                text="Cancelar",
+                command=lambda: close(False),
+                bg="#3b4348",
+                fg="white",
+                activebackground="#4a5459",
+                activeforeground="white",
+                relief="flat",
+                padx=16,
+                pady=8,
+                font=("Helvetica", 11, "bold"),
+            )
+            cancel_button.pack(side="left", padx=(0, 10))
+
+            confirm_button = tk.Button(
+                buttons,
+                text="Encerrar agora",
+                command=lambda: close(True),
+                bg="#bb5a2a",
+                fg="white",
+                activebackground="#9b471e",
+                activeforeground="white",
+                relief="flat",
+                padx=16,
+                pady=8,
+                font=("Helvetica", 11, "bold"),
+            )
+            confirm_button.pack(side="left")
+        else:
+            ok_button = tk.Button(
+                buttons,
+                text="Fechar",
+                command=lambda: close(False),
+                bg="#3b4348",
+                fg="white",
+                activebackground="#4a5459",
+                activeforeground="white",
+                relief="flat",
+                padx=16,
+                pady=8,
+                font=("Helvetica", 11, "bold"),
+            )
+            ok_button.pack()
+
+        dialog.update_idletasks()
+        dialog_width = dialog.winfo_reqwidth()
+        dialog_height = dialog.winfo_reqheight()
+        screen_width = root.winfo_screenwidth()
+        screen_height = root.winfo_screenheight()
+        dialog_x = max((screen_width - dialog_width) // 2, 0)
+        dialog_y = max((screen_height - dialog_height) // 2, 0)
+        dialog.geometry(f"+{dialog_x}+{dialog_y}")
+        dialog.grab_set()
+        dialog.focus_force()
+        dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
+        root.wait_window(dialog)
+        return result["value"]
+
     def on_stop() -> None:
-        confirmed = messagebox.askyesno(
+        confirmed = show_dialog(
             "Encerrar prova",
             "Deseja realmente encerrar a prova?",
-            parent=root,
+            confirm=True,
         )
         if not confirmed:
             return
-        if _send_stop_request(stop_url):
+        ok, error = _send_stop_request(stop_url)
+        if ok:
             root.destroy()
         else:
-            messagebox.showerror(
+            show_dialog(
                 "Falha ao encerrar",
-                "Não foi possível encerrar a prova pela API local.",
-                parent=root,
+                "Não foi possível encerrar a prova pela API local."
+                + (f"\n\nDetalhe: {error}" if error else ""),
             )
 
     button = tk.Button(

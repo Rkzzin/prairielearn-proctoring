@@ -1,0 +1,11 @@
+{"timestamp": 1777233897.692258, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_pedrohvr_20260426_170455"}}
+{"timestamp": 1777233939.7398682, "frame": 314, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 3.23, "smooth_yaw": 20.12, "pitch": -151.02, "eye_ratio": null}}
+{"timestamp": 1777233940.1117978, "frame": 317, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1777233941.010436, "frame": 324, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -2.32, "smooth_yaw": -2.32, "pitch": -138.18, "eye_ratio": null}}
+{"timestamp": 1777233946.6809812, "frame": 369, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 5.54, "smooth_yaw": -10.14, "pitch": -139.95, "eye_ratio": null}}
+{"timestamp": 1777233946.9464924, "frame": 371, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1777233947.453735, "frame": 375, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 4.39, "smooth_yaw": 4.39, "pitch": -134.36, "eye_ratio": null}}
+{"timestamp": 1777233948.9562893, "frame": 387, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 0.3, "smooth_yaw": 1.97, "pitch": -153.79, "eye_ratio": null}}
+{"timestamp": 1777233953.4707248, "frame": 422, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -27.32, "smooth_yaw": -27.29, "pitch": -174.67, "eye_ratio": null}}
+{"timestamp": 1777233963.6191812, "frame": 500, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 30.07, "smooth_yaw": 28.38, "pitch": -174.3, "eye_ratio": null}}
+{"timestamp": 1777233965.5664835, "frame": 510, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 510}}

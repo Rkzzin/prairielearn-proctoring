@@ -121,17 +121,53 @@ class ProctorConfig(BaseSettings):
 class RecorderConfig(BaseSettings):
     """Parâmetros do módulo de gravação."""
 
+    webcam_input_format: str = Field(
+        default="mjpeg",
+        description="Formato de entrada V4L2 da webcam para o ffmpeg (ex: mjpeg, yuyv422).",
+    )
     display: str = Field(
         default=":0.0",
         description="Display X11 para captura de tela",
     )
     screen_size: str = Field(
-        default="1920x1080",
-        description="Resolução da tela para captura",
+        default="1280x720",
+        description="Resolução final do vídeo de tela; a captura usa a resolução real do display e faz downscale se necessário.",
     )
     delete_after_upload: bool = Field(
         default=True,
         description="Remover arquivo local após upload S3 bem-sucedido",
+    )
+    ffmpeg_threads: int = Field(
+        default=1,
+        description="Número de threads do ffmpeg/x264 por stream.",
+    )
+    preview_host: str = Field(
+        default="127.0.0.1",
+        description="Host local usado pelo relay de preview da webcam para o proctoring.",
+    )
+    preview_port: int = Field(
+        default=18181,
+        description="Porta UDP local usada pelo relay de preview da webcam.",
+    )
+    preview_width: int = Field(
+        default=640,
+        description="Largura do preview local consumido pelo proctoring.",
+    )
+    preview_height: int = Field(
+        default=360,
+        description="Altura do preview local consumido pelo proctoring.",
+    )
+    preview_fps: int = Field(
+        default=10,
+        description="FPS do preview local consumido pelo proctoring.",
+    )
+    ffmpeg_cpu_cores: str | None = Field(
+        default=None,
+        description="Afinidade de CPU para processos ffmpeg, ex: '3' ou '2-3'.",
+    )
+    proctor_cpu_cores: str | None = Field(
+        default=None,
+        description="Afinidade de CPU para o processo principal/proctoring, ex: '0-2'.",
     )
 
     model_config = SettingsConfigDict(
@@ -234,6 +270,8 @@ class AppConfig(BaseSettings):
     api_port: int = 8000
     log_level: str = "INFO"
     data_dir: Path = Path("/opt/proctor/data")
+    auto_start_poll_sec: float = 2.0
+    auto_start_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="PROCTOR_APP_",

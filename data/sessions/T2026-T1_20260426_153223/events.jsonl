@@ -1,0 +1,3 @@
+{"timestamp": 1777228347.419145, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_20260426_153223"}}
+{"timestamp": 1777228378.8898485, "frame": 237, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 29.39, "smooth_yaw": 27.45, "pitch": -171.93, "eye_ratio": null}}
+{"timestamp": 1777228401.5843313, "frame": 407, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 407}}

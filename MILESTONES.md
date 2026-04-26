@@ -130,46 +130,51 @@ proctor-station/
 ## M3 — Gravação, Upload e Loop Unificado ✅
 
 **Objetivo:** Gravação de webcam + tela via FFmpeg com upload incremental ao S3,
-integrada ao proctoring em um loop de câmera único e estável.
+mantendo o proctoring separado da gravação para preservar FPS e reduzir contenção de CPU.
 
 ### Arquitetura definida
 
-**OpenCV é o único dono da câmera.** FFmpeg recebe frames via stdin (pipe),
-nunca abre `/dev/video0` diretamente.
+**A câmera física não fica mais aberta em paralelo durante a sessão.**
+O OpenCV usa `/dev/video0` só na identificação inicial. Depois disso, a câmera
+é liberada e o FFmpeg vira o único dono da webcam.
 
 ```
-/dev/video0
-     │
-     ▼
-  OpenCV (cap)  ←── único leitor, aberto UMA vez
-     │
-     ├──► frames ──► FaceRecognizer   (identificação)
-     ├──► frames ──► GazeEstimator    (proctoring)
-     └──► frames ──► FFmpeg stdin     (gravação webcam)
-                           │
-                           ▼
-                     webcam_%03d.mp4 ──► S3
+/dev/video0 ──► OpenCV (identificação inicial)
+                  │
+                  └── aluno identificado → libera /dev/video0
+
+/dev/video0 ──► FFmpeg v4l2 ──► split=2
+                                ├──► [record]  ──► webcam_%03d.mp4 ──► S3
+                                └──► [preview] ──► udp://127.0.0.1:18181 ──► OpenCV (gaze + reidentify)
 
 FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 ```
 
 ### Decisões técnicas
 
-- Gravação de webcam: mesmos frames do proctoring via pipe — sem segundo acesso à câmera
+- O FFmpeg é o único dono de `/dev/video0` durante a sessão ativa
+- O proctoring contínuo lê um preview local de baixa latência, não a câmera física
+- Gravação de webcam via `v4l2` direto no FFmpeg — não depende do FPS do proctoring
 - Sem áudio — simplifica o pipeline e reduz CPU
 - Captura de tela via x11grab — requer sessão X11 (Wayland desabilitado)
-- `PROCTOR_FACE_PIPE_FPS` — FPS real medido com dlib rodando (~8fps na NUC i5). Declarar FPS errado no pipe acelera o vídeo
+- Webcam e tela usam `use_wallclock_as_timestamps` + `fps_mode passthrough`
+- MP4s finais saem em H.264 `High` + `yuv420p` + `faststart` para compatibilidade com browser/dashboard
 - Segmentação de 5min com upload incremental ao S3
-- `stop()` encerra webcam via EOF no stdin (não SIGINT) — garante arquivo válido
+- Afinidade de CPU configurável — últimos núcleos podem ser reservados para o FFmpeg e divididos entre webcam/tela
+- `stop()` encerra webcam/tela por SIGINT e flush do segmento final — garante arquivo válido
 
 ### Bugs corrigidos nesta milestone
 
-- `capture.py`: `_start_webcam_stream` removeu abertura direta de `/dev/video0`, passa a usar `pipe:0`
-- `capture.py`: `stop()` corrigido — fecha stdin antes de SIGINT para garantir trailer válido
+- `capture.py`: identificação inicial separada do proctoring contínuo — evita disputa permanente por `/dev/video0`
+- `capture.py`: gravação da webcam desacoplada do loop do proctoring, evitando vídeo acelerado/degradado
+- `capture.py`: preview local de webcam adicionado para gaze/re-identificação sem reabrir a câmera física
+- `capture.py`: timestamps de relógio real e `fps_mode passthrough` adicionados para reduzir drift entre webcam e tela
+- `capture.py`: saída MP4 padronizada em `yuv420p` + `faststart` para reprodução confiável no dashboard
+- `capture.py`: afinidade opcional de CPU adicionada aos processos FFmpeg, com divisão entre webcam e tela
 - `capture.py`: áudio removido de todos os comandos FFmpeg
 - `test_integration.py`: câmera aberta uma única vez, nunca fechada entre fases
 - `test_integration.py`: janela OpenCV removida — output no terminal, encerramento via Ctrl+C
-- `.env`: `PROCTOR_REC_DISPLAY=:1` (X11), `PROCTOR_FACE_PIPE_FPS=8` adicionados
+- `.env`: `PROCTOR_REC_DISPLAY=:1`, `PROCTOR_REC_WEBCAM_INPUT_FORMAT`, `PROCTOR_REC_FFMPEG_THREADS` e afinidade de CPU adicionados
 
 ### Critério de conclusão
 
@@ -178,7 +183,8 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 - [x] Ctrl+C encerra limpo — sem traceback, `finally` executa
 - [x] `webcam_000.mp4` e `screen_000.mp4` gerados corretamente
 - [x] Upload confirmado em `s3://proctor-station/gravacoes/`
-- [x] Vídeo webcam em velocidade correta (PROCTOR_FACE_PIPE_FPS calibrado)
+- [x] Arquivos de webcam e tela reproduzíveis no browser/dashboard (`H.264 High`, `yuv420p`)
+- [x] Vídeo webcam gravado com duração próxima da tela sem depender do FPS do proctoring
 - [x] `pytest tests/` — todos os testes passando
 
 ---
@@ -198,7 +204,7 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 - Fullscreen via `wmctrl -i -r <win_id> -b add,fullscreen` pelo PID — evita pegar janela errada por nome
 - Extensões do Gnome (`ubuntu-dock`, `tiling-assistant`) desabilitadas durante sessão e restauradas no `finally`
 - Lockdown de teclas (Alt+F4, Super, Ctrl+Alt+T) movido para M7 — hardening de produção
-- Allowlist de domínios movida para M5 — depende do session manager definir URLs por prova
+- Allowlist de domínios deixada para a próxima etapa
 - Encerramento em produção (timer, submit, professor) definido na M5 — por ora Ctrl+C
 
 ### Bugs corrigidos nesta milestone
@@ -215,7 +221,7 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 - [x] Ctrl+C encerra limpo — extensões do Gnome restauradas
 - [x] `pytest tests/` — todos passando
 - [ ] Lockdown de teclas — M7
-- [ ] Allowlist de domínios — M5
+- [ ] Allowlist de domínios — próxima etapa
 
 ---
 
@@ -244,7 +250,7 @@ GET  /status          → estado atual da FSM
 GET  /session         → dados da sessão ativa
 POST /session/start   → início manual
 POST /session/stop    → fim forçado
-POST /session/unblock → desbloqueio manual (com auth)
+POST /session/unblock → desbloqueio manual
 POST /config          → atualiza config da próxima sessão
 ```
 
@@ -275,6 +281,7 @@ e revisar gravações pós-prova.
 - Configuração de prova (turma, URL, timer, thresholds)
 - Revisão pós-prova: player de vídeo + timeline de eventos
 - Exportar relatório CSV por turma
+- Layout responsivo para uso em celular
 
 ### Stack
 
@@ -289,6 +296,7 @@ Frontend: HTMX + Jinja2
 - [x] Status de todas as NUCs atualiza em tempo real (polling ou SSE)
 - [x] Player de vídeo sincronizado com timeline de eventos JSONL
 - [x] Exportar CSV com eventos por aluno funciona
+- [x] Páginas principais utilizáveis em tela de celular
 
 ---
 
@@ -334,10 +342,10 @@ Frontend: HTMX + Jinja2
 | M1 | Threshold 0.45 em vez do default 0.6 do dlib | Reduz falsos positivos em ambiente controlado |
 | M1 | `student_id` = identificador institucional | Gerado pela faculdade, único, não precisa de mapeamento |
 | M2 | `gaze_duration_sec` como único timer warn→block | `gaze_block_sec` era redundante e causava bug |
-| M3 | OpenCV como único leitor da câmera | Elimina conflito V4L2 entre OpenCV e FFmpeg |
-| M3 | Webcam via pipe stdin em vez de v4l2 direto | FFmpeg nunca compete com OpenCV pelo dispositivo |
+| M3 | FFmpeg grava a webcam direto via v4l2 | A gravação não herda o FPS reduzido do proctoring |
+| M3 | Afinidade de CPU separa FFmpeg e proctoring | Reduz contenção no mesmo núcleo durante a prova |
 | M3 | Sem áudio na gravação | Reduz CPU e simplifica o pipeline |
 | M3 | `PROCTOR_FACE_PIPE_FPS` configurável | FPS real com dlib (~8fps) difere do nominal (30fps) — declarar errado acelera o vídeo |
 | M4 | wmctrl por PID em vez de nome | Evita fullscreen na janela errada (VSCode, Firefox) |
 | M4 | Lockdown de teclas movido para M7 | Em desenvolvimento sempre precisa de saída de emergência |
-| M4 | Allowlist de domínios movida para M5 | URLs por prova são responsabilidade do session manager |
+| M4 | Allowlist de domínios deixada para a próxima etapa | Ainda depende de definir a estratégia final de navegação |

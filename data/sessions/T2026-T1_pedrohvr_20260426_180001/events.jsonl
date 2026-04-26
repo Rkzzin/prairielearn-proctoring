@@ -1,0 +1,7 @@
+{"timestamp": 1777237203.751161, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_pedrohvr_20260426_180001"}}
+{"timestamp": 1777237211.3414295, "frame": 61, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -40.24, "smooth_yaw": 7.64, "pitch": -161.59, "eye_ratio": null}}
+{"timestamp": 1777237212.069713, "frame": 67, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": -44.23, "smooth_yaw": -33.2, "pitch": -166.23, "eye_ratio": null}}
+{"timestamp": 1777237240.153606, "frame": 294, "type": "GAZE_WARNING", "severity": "WARNING", "details": {"yaw": 39.76, "smooth_yaw": 35.54, "pitch": -169.0, "eye_ratio": null}}
+{"timestamp": 1777237243.2114654, "frame": 319, "type": "GAZE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "GAZE"}}
+{"timestamp": 1777237245.857628, "frame": 319, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "GAZE"}}
+{"timestamp": 1777237257.3208766, "frame": 406, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 406}}

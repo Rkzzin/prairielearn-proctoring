@@ -98,7 +98,7 @@ def phase_proctor(
         uploader.start()
     if capture:
         capture.start()
-        print("  Gravação iniciada (webcam via pipe + tela via x11grab)\n")
+        print("  Gravação iniciada (webcam via v4l2 + tela via x11grab)\n")
 
     last_state  = None
     frame_count = 0
@@ -112,9 +112,6 @@ def phase_proctor(
 
             frame_count += 1
             state = engine.update(frame)
-
-            if capture:
-                capture.write_frame(frame)
 
             # Mudança de estado
             if state != last_state:

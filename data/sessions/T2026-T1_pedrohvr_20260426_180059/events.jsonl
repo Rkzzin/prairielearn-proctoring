@@ -1,0 +1,3 @@
+{"timestamp": 1777237262.230125, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_pedrohvr_20260426_180059"}}
+{"timestamp": 1777237266.14723, "frame": 32, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1777237268.207769, "frame": 43, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 43}}

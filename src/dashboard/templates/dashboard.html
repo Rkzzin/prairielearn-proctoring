@@ -57,5 +57,15 @@ async function issueStationCommand(stationId, action) {
     }
   }
 }
+
+async function issueAutoStartCommand(stationId, enabled) {
+  const endpoint = enabled
+    ? `/api/stations/${stationId}/autostart/enable`
+    : `/api/stations/${stationId}/autostart/disable`;
+  const response = await fetch(endpoint, {method: 'POST'});
+  if (response.ok && window.htmx) {
+    htmx.ajax('GET', '/partials/stations', '#stations-panel');
+  }
+}
 </script>
 {% endblock %}

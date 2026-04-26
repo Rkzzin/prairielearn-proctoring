@@ -91,6 +91,23 @@ class DashboardStore:
     def list_enrollments(self) -> list[EnrollmentRecord]:
         return self.snapshot()["enrollments"]  # type: ignore[return-value]
 
+    def list_known_turmas(self) -> list[str]:
+        with self._lock:
+            turmas = {
+                enrollment.turma
+                for enrollment in self._enrollments.values()
+                if enrollment.turma
+            }
+            turmas.update(config.turma for config in self._configs if config.turma)
+            turmas.update(session.turma for session in self._sessions.values() if session.turma)
+            turmas.update(station.turma for station in self._stations.values() if station.turma)
+        return sorted(turmas)
+
+    def list_station_choices(self) -> list[StationRecord]:
+        with self._lock:
+            stations = sorted(self._stations.values(), key=lambda item: item.station_name.lower())
+            return [station.model_copy(deep=True) for station in stations]
+
     def get_session(self, session_id: str) -> SessionRecord | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -118,6 +135,8 @@ class DashboardStore:
             station.active_session_id = payload.active_session_id
             station.assessment = payload.assessment
             station.turma = payload.turma
+            if payload.auto_start_enabled is not None:
+                station.auto_start_enabled = payload.auto_start_enabled
             station.seconds_remaining = payload.seconds_remaining
             station.last_seen_at = datetime.now(timezone.utc)
             station.last_event = payload.last_event
@@ -177,12 +196,13 @@ class DashboardStore:
             if session is None:
                 return None
             session.ended_at = ended_at or datetime.now(timezone.utc)
-            session.status = StationStatus.UPLOADING
+            session.status = StationStatus.COMPLETED
             station = self._stations.get(session.station_id)
             if station:
-                station.status = StationStatus.UPLOADING
+                station.status = StationStatus.IDLE
                 station.active_session_id = None
                 station.student = None
+                station.seconds_remaining = None
             result = session.model_copy(deep=True)
             self._save_session(session)
             if station:
@@ -241,6 +261,31 @@ class DashboardStore:
                 station_id=station_id,
                 command_type=command_type,
                 issued_at=datetime.now(timezone.utc),
+            )
+            station.pending_commands.append(command)
+            result = command.model_copy(deep=True)
+            self._save_station(station)
+
+        self._broadcast()
+        return result
+
+    def set_station_autostart(self, station_id: str, enabled: bool) -> CommandRecord:
+        with self._lock:
+            station = self._stations.get(station_id)
+            if station is None:
+                station = StationRecord(station_id=station_id, station_name=station_id)
+                self._stations[station_id] = station
+            station.auto_start_enabled = enabled
+            if station.assigned_config is not None:
+                station.assigned_config = station.assigned_config.model_copy(
+                    update={"auto_start": enabled}
+                )
+            command = CommandRecord(
+                command_id=str(uuid4()),
+                station_id=station_id,
+                command_type=CommandType.SET_AUTOSTART,
+                issued_at=datetime.now(timezone.utc),
+                payload={"auto_start": enabled},
             )
             station.pending_commands.append(command)
             result = command.model_copy(deep=True)

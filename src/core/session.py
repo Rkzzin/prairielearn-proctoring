@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -27,6 +28,7 @@ import cv2
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
+from src.core.cpu_affinity import auto_split_cpu_sets, get_process_cpu_set, parse_cpu_set, set_process_cpu_set
 from src.face.recognizer import FaceRecognizer
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
@@ -161,6 +163,9 @@ class SessionManager:
         self._overlay = None
         self._lockdown = None
         self._block_handled = False
+        self._original_cpu_set: set[int] | None = None
+        self._runtime_ffmpeg_cpu_cores: str | None = None
+        self._runtime_proctor_cpu_set: set[int] | None = None
 
     @property
     def state(self) -> SessionState:
@@ -218,6 +223,7 @@ class SessionManager:
             allowlist=payload.get("allowlist"),
             s3_prefix=payload.get("s3_prefix"),
             prairielearn_url=payload.get("prairielearn_url"),
+            auto_start=payload.get("auto_start"),
         )
 
         if payload.get("gaze_h_threshold") is not None:
@@ -248,6 +254,7 @@ class SessionManager:
             "active_session_id": status["session_id"],
             "assessment": status["assessment"],
             "turma": status["turma_id"],
+            "auto_start_enabled": self._next_config.auto_start,
             "seconds_remaining": status["seconds_remaining"],
             "recent_events": [],
         }
@@ -293,72 +300,97 @@ class SessionManager:
             if self._state != SessionState.IDLE:
                 raise SessionError(f"Sessão já está em andamento: {self._state.value}")
 
-            cfg = self._merged_config(
-                turma_id=turma_id,
-                prairielearn_url=prairielearn_url,
-                session_id=session_id,
-                no_record=no_record,
-                no_kiosk=no_kiosk,
-            )
-            if not cfg.turma_id:
-                raise SessionError("turma_id é obrigatório para iniciar a sessão")
+            try:
+                cfg = self._merged_config(
+                    turma_id=turma_id,
+                    prairielearn_url=prairielearn_url,
+                    session_id=session_id,
+                    no_record=no_record,
+                    no_kiosk=no_kiosk,
+                )
+                if not cfg.turma_id:
+                    raise SessionError("turma_id é obrigatório para iniciar a sessão")
 
-            self._set_state(SessionState.IDENTIFYING)
-            self._recognizer = self._recognizer_factory()
-            self._recognizer.load_turma(cfg.turma_id)
-            self._camera = self._open_camera()
+                self._set_state(SessionState.IDENTIFYING)
+                self._recognizer = self._recognizer_factory()
+                self._recognizer.load_turma(cfg.turma_id)
+                self._camera = self._open_camera()
 
-            identified_id, identified_name = self._identify_student(student_id, student_name)
-            runtime_session_id = cfg.session_id or self._make_session_id(cfg.turma_id)
+                identified_id, identified_name = self._identify_student(student_id, student_name)
+                if self._is_repeated_autostart_student(
+                    turma_id=cfg.turma_id,
+                    assessment=cfg.assessment,
+                    student_id=identified_id,
+                    auto_start=cfg.auto_start,
+                ):
+                    raise SessionError(
+                        "Aluno já concluiu esta prova nesta estação; aguardando outro aluno ou nova configuração"
+                    )
+                runtime_session_id = cfg.session_id or self._make_session_id(
+                    cfg.turma_id,
+                    identified_name,
+                )
 
-            self._runtime = SessionRuntime(
-                session_id=runtime_session_id,
-                turma_id=cfg.turma_id,
-                assessment=cfg.assessment,
-                timer_minutes=cfg.timer_minutes,
-                student_id=identified_id,
-                student_name=identified_name,
-                started_at=datetime.now(timezone.utc),
-                state=SessionState.SESSION,
-                prairielearn_url=cfg.prairielearn_url,
-            )
+                self._runtime = SessionRuntime(
+                    session_id=runtime_session_id,
+                    turma_id=cfg.turma_id,
+                    assessment=cfg.assessment,
+                    timer_minutes=cfg.timer_minutes,
+                    student_id=identified_id,
+                    student_name=identified_name,
+                    started_at=datetime.now(timezone.utc),
+                    state=SessionState.SESSION,
+                    prairielearn_url=cfg.prairielearn_url,
+                )
 
-            self._uploader = None if cfg.no_record else self._uploader_factory(runtime_session_id)
-            self._capture = None if cfg.no_record else self._capture_factory(runtime_session_id)
-            self._kiosk = None if cfg.no_kiosk else self._kiosk_factory()
-            self._overlay = self._overlay_factory()
-            self._lockdown = self._lockdown_factory()
-            self._engine = self._engine_factory(runtime_session_id)
+                self._uploader = None if cfg.no_record else self._uploader_factory(runtime_session_id)
+                self._prepare_runtime_cpu_affinity()
+                self._capture = None if cfg.no_record else self._capture_factory(runtime_session_id)
+                self._kiosk = None if cfg.no_kiosk else self._kiosk_factory()
+                self._overlay = self._overlay_factory()
+                self._lockdown = self._lockdown_factory()
+                self._engine = self._engine_factory(runtime_session_id)
 
-            if self._uploader is not None:
-                self._uploader.start()
-            if self._capture is not None:
-                self._capture.start()
-            if self._kiosk is not None:
-                self._kiosk.start(cfg.prairielearn_url)
-            if self._overlay is not None:
-                self._overlay.start_controls()
+                if self._uploader is not None:
+                    self._uploader.start()
+                if self._capture is not None:
+                    self._release_camera()
+                    self._capture.start()
+                    self._camera = self._open_preview_camera(self._capture.preview_url)
+                    self._apply_runtime_cpu_affinity()
+                if self._kiosk is not None:
+                    self._kiosk.start(cfg.prairielearn_url)
+                if self._overlay is not None:
+                    self._overlay.start_controls()
 
-            self._lockdown.enable()
-            self._engine.start()
+                self._lockdown.enable()
+                self._engine.start()
 
-            self._stop_event.clear()
-            self._block_handled = False
-            self._set_state(SessionState.SESSION)
-            self._thread = threading.Thread(
-                target=self._session_loop,
-                name=f"session-{runtime_session_id}",
-                daemon=True,
-            )
-            self._thread.start()
+                self._stop_event.clear()
+                self._block_handled = False
+                self._set_state(SessionState.SESSION)
+                self._thread = threading.Thread(
+                    target=self._session_loop,
+                    name=f"session-{runtime_session_id}",
+                    daemon=True,
+                )
+                self._thread.start()
 
-            logger.info(
-                "Sessão iniciada: %s (%s / %s)",
-                runtime_session_id,
-                identified_id,
-                identified_name,
-            )
-            return self.get_status()
+                logger.info(
+                    "Sessão iniciada: %s (%s / %s)",
+                    runtime_session_id,
+                    identified_id,
+                    identified_name,
+                )
+                return self.get_status()
+            except Exception:
+                self._shutdown_components()
+                self._restore_runtime_cpu_affinity()
+                self._runtime = None
+                self._thread = None
+                self._block_handled = False
+                self._set_state(SessionState.IDLE)
+                raise
 
     def stop_session(self, *, reason: str = "manual") -> dict[str, Any]:
         with self._lock:
@@ -377,6 +409,7 @@ class SessionManager:
             runtime = self._runtime
             uploader = self._uploader
             self._shutdown_components()
+            self._restore_runtime_cpu_affinity()
             if runtime is not None:
                 runtime.notes["dashboard_events"] = self._collect_dashboard_events(runtime.session_id)
                 runtime.notes["dashboard_recordings"] = self._collect_dashboard_recordings(uploader)
@@ -415,9 +448,6 @@ class SessionManager:
             if not ret or frame is None:
                 self._sleep(0.01)
                 continue
-
-            if self._capture is not None:
-                self._capture.write_frame(frame)
 
             state = self._engine.update(frame)
             if state == ProctorState.BLOCKED:
@@ -487,16 +517,47 @@ class SessionManager:
             f"Aluno não identificado após {max_attempts} tentativas"
         )
 
-    def _open_camera(self):
-        cap = self._video_capture_factory(self._face_cfg.camera_index)
-        if hasattr(cap, "set"):
+    def _open_camera(self, source: int | str | None = None):
+        source = self._face_cfg.camera_index if source is None else source
+        cap = self._video_capture_factory(source)
+        if isinstance(source, int) and hasattr(cap, "set"):
+            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._face_cfg.camera_width)
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._face_cfg.camera_height)
             cap.set(cv2.CAP_PROP_FPS, self._face_cfg.camera_fps)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         is_opened = cap.isOpened() if hasattr(cap, "isOpened") else True
         if not is_opened:
-            raise SessionError(f"Não foi possível abrir a câmera {self._face_cfg.camera_index}")
+            raise SessionError(f"Não foi possível abrir a câmera {source}")
         return cap
+
+    def _open_preview_camera(self, source: str, timeout_sec: float = 5.0):
+        deadline = time.monotonic() + timeout_sec
+        last_error: SessionError | None = None
+        while time.monotonic() < deadline:
+            try:
+                cap = self._open_camera(source)
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    return cap
+                if hasattr(cap, "release"):
+                    cap.release()
+            except SessionError as exc:
+                last_error = exc
+            self._sleep(0.1)
+        raise SessionError(
+            f"Não foi possível abrir o preview local da webcam em {source}"
+        ) from last_error
+
+    def _release_camera(self) -> None:
+        if self._camera is None or not hasattr(self._camera, "release"):
+            self._camera = None
+            return
+        try:
+            self._camera.release()
+        except Exception:
+            pass
+        self._camera = None
 
     def _camera_ok(self) -> bool:
         try:
@@ -526,11 +587,17 @@ class SessionManager:
         )
 
     def _default_capture_factory(self, session_id: str):
+        recorder_cfg = self._rec_cfg
+        if self._runtime_ffmpeg_cpu_cores is not None:
+            recorder_cfg = recorder_cfg.model_copy(
+                update={"ffmpeg_cpu_cores": self._runtime_ffmpeg_cpu_cores}
+            )
         return Capture(
             session_id=session_id,
             s3_config=self._s3_cfg,
             face_config=self._face_cfg,
             app_config=self._app_cfg,
+            recorder_config=recorder_cfg,
             on_segment_ready=None if self._uploader is None else self._uploader.enqueue,
             display=self._rec_cfg.display,
             screen_size=self._rec_cfg.screen_size,
@@ -554,6 +621,7 @@ class SessionManager:
         s3_prefix: str | None = None,
         prairielearn_url: str | None,
         session_id: str | None,
+        auto_start: bool | None = None,
         no_record: bool | None,
         no_kiosk: bool | None,
     ) -> SessionConfig:
@@ -572,14 +640,41 @@ class SessionManager:
             base["prairielearn_url"] = prairielearn_url
         if session_id is not None:
             base["session_id"] = session_id
+        if auto_start is not None:
+            base["auto_start"] = auto_start
         if no_record is not None:
             base["no_record"] = no_record
         if no_kiosk is not None:
             base["no_kiosk"] = no_kiosk
         return SessionConfig(**base)
 
-    def _make_session_id(self, turma_id: str) -> str:
-        return f"{turma_id}_{time.strftime('%Y%m%d_%H%M%S')}"
+    def _make_session_id(self, turma_id: str, student_name: str) -> str:
+        student_slug = self._slugify_student_name(student_name)
+        return f"{turma_id}_{student_slug}_{time.strftime('%Y%m%d_%H%M%S')}"
+
+    def _is_repeated_autostart_student(
+        self,
+        *,
+        turma_id: str,
+        assessment: str,
+        student_id: str,
+        auto_start: bool,
+    ) -> bool:
+        if not auto_start or self._last_session is None:
+            return False
+        return (
+            self._last_session.student_id == student_id
+            and self._last_session.turma_id == turma_id
+            and self._last_session.assessment == assessment
+        )
+
+    @staticmethod
+    def _slugify_student_name(student_name: str) -> str:
+        normalized = unicodedata.normalize("NFKD", student_name)
+        ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
+        cleaned = "".join(ch.lower() if ch.isalnum() else "_" for ch in ascii_only)
+        collapsed = "_".join(part for part in cleaned.split("_") if part)
+        return collapsed or "aluno"
 
     def _set_state(self, state: SessionState) -> None:
         self._state = state
@@ -592,6 +687,48 @@ class SessionManager:
         elapsed = int((datetime.now(timezone.utc) - self._runtime.started_at).total_seconds())
         total = max(1, self._runtime.timer_minutes) * 60
         return max(0, total - elapsed)
+
+    def _prepare_runtime_cpu_affinity(self) -> None:
+        self._runtime_ffmpeg_cpu_cores = None
+        self._runtime_proctor_cpu_set = None
+
+        current = get_process_cpu_set()
+        if current is None:
+            return
+
+        ffmpeg_cpus, proctor_cpus = auto_split_cpu_sets(
+            available=current,
+            ffmpeg_override=parse_cpu_set(self._rec_cfg.ffmpeg_cpu_cores),
+            proctor_override=parse_cpu_set(self._rec_cfg.proctor_cpu_cores),
+        )
+        if ffmpeg_cpus:
+            self._runtime_ffmpeg_cpu_cores = ",".join(str(cpu) for cpu in sorted(ffmpeg_cpus))
+        self._runtime_proctor_cpu_set = proctor_cpus
+
+    def _apply_runtime_cpu_affinity(self) -> None:
+        current = get_process_cpu_set()
+        if current is None or self._original_cpu_set is not None:
+            return
+        if not self._runtime_proctor_cpu_set or self._runtime_proctor_cpu_set == current:
+            return
+        if set_process_cpu_set(self._runtime_proctor_cpu_set):
+            self._original_cpu_set = current
+            logger.info(
+                "Afinidade de CPU aplicada ao processo principal: %s (ffmpeg reservado em %s)",
+                sorted(self._runtime_proctor_cpu_set),
+                self._runtime_ffmpeg_cpu_cores or "default",
+            )
+
+    def _restore_runtime_cpu_affinity(self) -> None:
+        if self._original_cpu_set is None:
+            self._runtime_ffmpeg_cpu_cores = None
+            self._runtime_proctor_cpu_set = None
+            return
+        if set_process_cpu_set(self._original_cpu_set):
+            logger.info("Afinidade de CPU restaurada: %s", sorted(self._original_cpu_set))
+        self._original_cpu_set = None
+        self._runtime_ffmpeg_cpu_cores = None
+        self._runtime_proctor_cpu_set = None
 
     def _shutdown_components(self) -> None:
         components = [
@@ -613,13 +750,7 @@ class SessionManager:
             except Exception as exc:  # pragma: no cover - cleanup best effort
                 logger.warning("Falha ao encerrar componente %s: %s", type(component).__name__, exc)
 
-        if self._camera is not None and hasattr(self._camera, "release"):
-            try:
-                self._camera.release()
-            except Exception:
-                pass
-
-        self._camera = None
+        self._release_camera()
         self._recognizer = None
         self._engine = None
         self._capture = None

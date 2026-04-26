@@ -15,6 +15,7 @@ class FakeSessionManager:
     def __init__(self):
         self.state = SessionState.IDLE
         self.applied_payloads: list[dict] = []
+        self.updated_payloads: list[dict] = []
         self.stop_reasons: list[str] = []
         self.unblock_calls = 0
         self._app_cfg = AppConfig(data_dir=Path("/tmp/proctor-dashboard-sync"))
@@ -29,6 +30,7 @@ class FakeSessionManager:
             "active_session_id": None,
             "assessment": "Quiz-03",
             "turma": "T2026-T1",
+            "auto_start_enabled": True,
             "seconds_remaining": None,
             "recent_events": [],
         }
@@ -38,6 +40,9 @@ class FakeSessionManager:
 
     def apply_dashboard_config(self, payload):
         self.applied_payloads.append(payload)
+
+    def update_config(self, **kwargs):
+        self.updated_payloads.append(kwargs)
 
     def stop_session(self, *, reason: str):
         self.stop_reasons.append(reason)
@@ -62,8 +67,9 @@ def test_dashboard_worker_applies_config_and_stop_command():
                             "turma": "T2026-T1",
                             "assessment": "Quiz-03",
                             "timer_minutes": 45,
-                            "prairielearn_url": "https://pl.exemplo.edu.br/quiz-03",
-                            "allowlist": ["pl.exemplo.edu.br"],
+                            "prairielearn_url": "https://prairielearn.org/pl",
+                            "allowlist": ["prairielearn.org"],
+                            "auto_start": True,
                             "gaze_h_threshold": 0.4,
                             "gaze_duration_sec": 4.0,
                             "absence_timeout_sec": 6.0,
@@ -122,6 +128,31 @@ def test_dashboard_worker_unblocks_only_when_station_is_blocked():
     manager.state = SessionState.BLOCKED
     worker.run_once()
     assert manager.unblock_calls == 1
+
+
+def test_dashboard_worker_updates_autostart_flag():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "station": {"station_id": "nuc-01"},
+                "commands": [{"command_type": "SET_AUTOSTART", "payload": {"auto_start": False}}],
+            },
+        )
+
+    manager = FakeSessionManager()
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://dashboard.test",
+        ),
+    )
+
+    worker.run_once()
+
+    assert manager.updated_payloads == [{"auto_start": False}]
 
 
 def test_dashboard_worker_registers_and_finalizes_completed_session():

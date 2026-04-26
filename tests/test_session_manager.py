@@ -7,9 +7,10 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.api.server import create_app
+from src.core.autostart import SessionAutoStartWorker
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.models import IdentifyResult, IdentifyStatus
-from src.core.session import SessionManager, SessionState
+from src.core.session import SessionError, SessionManager, SessionState
 from src.proctor.engine import ProctorState
 
 
@@ -75,6 +76,7 @@ class FakeCapture:
         self.started = False
         self.stopped = False
         self.frames = 0
+        self.preview_url = "udp://127.0.0.1:18181?overrun_nonfatal=1&fifo_size=5000000"
 
     def start(self):
         self.started = True
@@ -246,6 +248,67 @@ def test_session_manager_start_and_stop_manual_session():
     assert camera.released is True
 
 
+def test_session_manager_switches_from_device_camera_to_capture_preview():
+    direct_camera = FakeCamera(["identify-frame"])
+    preview_camera = FakeCamera(["loop-frame"])
+    opened_sources = []
+
+    def video_capture_factory(source):
+        opened_sources.append(source)
+        if isinstance(source, str):
+            return preview_camera
+        return direct_camera
+
+    manager, recognizer, engine, capture, uploader, kiosk, overlay, lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=[],
+    )
+    manager._video_capture_factory = video_capture_factory
+
+    manager.update_config(turma_id="ES2025-T1", prairielearn_url="https://pl.test/exam")
+    manager.start_session()
+
+    assert opened_sources[0] == manager._face_cfg.camera_index
+    assert opened_sources[1] == capture.preview_url
+    assert direct_camera.released is True
+    assert preview_camera.released is False
+
+    manager.stop_session(reason="test")
+    assert preview_camera.released is True
+
+
+def test_session_manager_generated_session_id_includes_student_name(monkeypatch):
+    monkeypatch.setattr("src.core.session.time.strftime", lambda _fmt: "20260426_160000")
+
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, _overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice da Silva",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame", "loop-frame"],
+    )
+
+    manager.update_config(turma_id="ES2025-T1")
+    started = manager.start_session()
+
+    assert started["session_id"] == "ES2025-T1_alice_da_silva_20260426_160000"
+
+    manager.stop_session(reason="done")
+
+
 def test_session_manager_transitions_to_blocked_and_auto_unblocks():
     reidentify = EventReidentify()
     manager, _recognizer, engine, _capture, _uploader, kiosk, overlay, _lockdown, _camera = _make_manager(
@@ -305,6 +368,182 @@ def test_session_manager_manual_unblock():
     assert kiosk.unblocked is True
     assert overlay.hide_calls == 1
     manager.stop_session(reason="done")
+
+
+def test_session_manager_resets_to_idle_after_identification_failure():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, _overlay, _lockdown, camera = _make_manager(
+        identify_results=[
+            IdentifyResult(status=IdentifyStatus.NO_FACE),
+            IdentifyResult(status=IdentifyStatus.NO_FACE),
+            IdentifyResult(status=IdentifyStatus.NO_FACE),
+        ],
+        engine_states=[],
+        frames=["frame-1", "frame-2", "frame-3"],
+    )
+
+    manager.update_config(turma_id="ES2025-T1")
+
+    with pytest.raises(SessionError):
+        manager.start_session()
+
+    assert manager.state == SessionState.IDLE
+    assert manager.get_session() is None
+    assert camera.released is True
+
+
+def test_session_manager_resets_to_idle_if_capture_start_fails():
+    class FailingCapture(FakeCapture):
+        def start(self):
+            self.started = True
+            raise RuntimeError("FFmpeg do stream 'webcam' encerrou no start (código 234)")
+
+    manager, _recognizer, _engine, _capture, uploader, _kiosk, _overlay, _lockdown, camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[],
+        frames=["identify-frame"],
+    )
+    failing_capture = FailingCapture()
+    manager._capture_factory = lambda _session_id: failing_capture
+
+    manager.update_config(turma_id="ES2025-T1")
+
+    with pytest.raises(RuntimeError, match="webcam"):
+        manager.start_session()
+
+    assert manager.state == SessionState.IDLE
+    assert manager.get_session() is None
+    assert failing_capture.started is True
+    assert failing_capture.stopped is True
+    assert uploader.started is True
+    assert uploader.stopped is True
+    assert camera.released is True
+
+
+def test_session_manager_resets_to_idle_if_preview_camera_cannot_open():
+    direct_camera = FakeCamera(["identify-frame"])
+
+    class ClosedPreviewCamera:
+        released = False
+
+        def isOpened(self):
+            return False
+
+        def read(self):
+            return False, None
+
+        def release(self):
+            self.released = True
+
+    def video_capture_factory(source):
+        if isinstance(source, str):
+            return ClosedPreviewCamera()
+        return direct_camera
+
+    manager, _recognizer, _engine, capture, uploader, _kiosk, _overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[],
+        frames=[],
+    )
+    manager._video_capture_factory = video_capture_factory
+
+    manager.update_config(turma_id="ES2025-T1")
+
+    with pytest.raises(SessionError, match="preview local"):
+        manager.start_session()
+
+    assert manager.state == SessionState.IDLE
+    assert manager.get_session() is None
+    assert capture.started is True
+    assert capture.stopped is True
+    assert uploader.started is True
+    assert uploader.stopped is True
+    assert direct_camera.released is True
+
+
+def test_autostart_worker_starts_session_when_enabled_and_idle():
+    class FakeManager:
+        def __init__(self):
+            self.state = SessionState.IDLE
+            self.next_config = type("Cfg", (), {"auto_start": True, "turma_id": "ES2025-T1"})()
+            self.calls = 0
+
+        def start_session(self):
+            self.calls += 1
+
+    manager = FakeManager()
+    worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
+    worker.run_once()
+
+    assert manager.calls == 1
+
+
+def test_autostart_worker_ignores_disabled_or_busy_states():
+    class FakeManager:
+        def __init__(self, *, auto_start: bool, state: SessionState):
+            self.state = state
+            self.next_config = type("Cfg", (), {"auto_start": auto_start, "turma_id": "ES2025-T1"})()
+            self.calls = 0
+
+        def start_session(self):
+            self.calls += 1
+
+    disabled = FakeManager(auto_start=False, state=SessionState.IDLE)
+    busy = FakeManager(auto_start=True, state=SessionState.SESSION)
+
+    SessionAutoStartWorker(session_manager=disabled, enabled=True).run_once()
+    SessionAutoStartWorker(session_manager=busy, enabled=True).run_once()
+
+    assert disabled.calls == 0
+    assert busy.calls == 0
+
+
+def test_autostart_worker_does_not_restart_same_student_after_completion():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, _overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            ),
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            ),
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame-1", "loop-frame-1", "identify-frame-2"],
+    )
+
+    manager.update_config(
+        turma_id="ES2025-T1",
+        assessment="Quiz-03",
+        auto_start=True,
+    )
+    manager.start_session()
+    manager.stop_session(reason="student_finished")
+
+    worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
+    worker.run_once()
+
+    assert manager.state == SessionState.IDLE
+    assert manager.get_session()["student_id"] == "123"
 
 
 @pytest.mark.asyncio

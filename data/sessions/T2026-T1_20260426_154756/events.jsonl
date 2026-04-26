@@ -1,0 +1,2 @@
+{"timestamp": 1777229279.389044, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_20260426_154756"}}
+{"timestamp": 1777229284.3708692, "frame": 33, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 33}}

@@ -1,0 +1,5 @@
+{"timestamp": 1777228512.994462, "frame": 0, "type": "SESSION_STARTED", "severity": "INFO", "details": {"session_id": "T2026-T1_20260426_153510"}}
+{"timestamp": 1777228516.7282872, "frame": 29, "type": "ABSENCE_WARNING", "severity": "WARNING", "details": {"timeout_sec": 5.0}}
+{"timestamp": 1777228521.7983851, "frame": 68, "type": "ABSENCE_BLOCKED", "severity": "CRITICAL", "details": {"reason": "ABSENCE"}}
+{"timestamp": 1777228526.622045, "frame": 68, "type": "SESSION_RESUMED", "severity": "INFO", "details": {"unblocked_after": "ABSENCE"}}
+{"timestamp": 1777228533.9870172, "frame": 118, "type": "SESSION_ENDED", "severity": "INFO", "details": {"total_frames": 118}}
