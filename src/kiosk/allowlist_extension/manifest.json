@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "Proctor Station Allowlist",
+  "version": "1.0.0",
+  "description": "Bloqueia navegacao fora dos sites autorizados durante a prova.",
+  "permissions": [
+    "declarativeNetRequest",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "service_worker.js"
+  },
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "blocked.html",
+        "styles.css"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
+    }
+  ]
+}

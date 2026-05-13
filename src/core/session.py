@@ -8,7 +8,7 @@ Integra:
   - reconhecimento facial inicial
   - proctoring contínuo
   - gravação + upload
-  - Chromium kiosk
+  - Chromium controlado
   - desbloqueio por re-identificação ou via API
 """
 
@@ -31,6 +31,7 @@ from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig
 from src.core.cpu_affinity import auto_split_cpu_sets, get_process_cpu_set, parse_cpu_set, set_process_cpu_set
 from src.face.recognizer import FaceRecognizer
 from src.kiosk.chromium import ChromiumKiosk
+from src.kiosk.allowlist import build_allowlist_config, write_extension_config
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.reidentify import run_reidentify
@@ -48,6 +49,13 @@ class SessionState(str, Enum):
     SESSION = "SESSION"
     BLOCKED = "BLOCKED"
     UPLOADING = "UPLOADING"
+
+
+class StationMode(str, Enum):
+    MAINTENANCE = "MAINTENANCE"
+    EXAM_READY = "EXAM_READY"
+    WAITING_STUDENT = "WAITING_STUDENT"
+    SESSION = "SESSION"
 
 
 @dataclass
@@ -132,11 +140,15 @@ class SessionManager:
         self._engine_factory = engine_factory or self._default_engine_factory
         self._capture_factory = capture_factory or self._default_capture_factory
         self._uploader_factory = uploader_factory or self._default_uploader_factory
-        self._kiosk_factory = kiosk_factory or (lambda: ChromiumKiosk(display=self._rec_cfg.display))
+        self._kiosk_factory = kiosk_factory or (
+            lambda: ChromiumKiosk(display=self._rec_cfg.display, manage_gnome_extensions=True)
+        )
         self._overlay_factory = overlay_factory or (
             lambda: SessionOverlay(display=self._rec_cfg.display, api_port=self._app_cfg.api_port)
         )
-        self._lockdown_factory = lockdown_factory or (lambda: Lockdown(display=self._rec_cfg.display))
+        self._lockdown_factory = lockdown_factory or (
+            lambda: Lockdown(display=self._rec_cfg.display, allow_browser_shortcuts=True)
+        )
         self._video_capture_factory = video_capture_factory or cv2.VideoCapture
         self._reidentify_fn = reidentify_fn or run_reidentify
         self._s3_probe = s3_probe or self._default_s3_probe
@@ -147,6 +159,7 @@ class SessionManager:
         self._thread: threading.Thread | None = None
 
         self._state = SessionState.IDLE
+        self._mode = StationMode.MAINTENANCE
         self._next_config = SessionConfig(
             station_id=self._app_cfg.dashboard.station_id,
             station_name=self._app_cfg.dashboard.station_name,
@@ -161,6 +174,7 @@ class SessionManager:
         self._uploader = None
         self._kiosk = None
         self._overlay = None
+        self._waiting_overlay = None
         self._lockdown = None
         self._block_handled = False
         self._original_cpu_set: set[int] | None = None
@@ -171,6 +185,11 @@ class SessionManager:
     def state(self) -> SessionState:
         with self._lock:
             return self._state
+
+    @property
+    def mode(self) -> StationMode:
+        with self._lock:
+            return self._mode
 
     @property
     def next_config(self) -> SessionConfig:
@@ -190,6 +209,8 @@ class SessionManager:
         with self._lock:
             return {
                 "state": self._state.value,
+                "mode": self._mode.value,
+                "station_status": self._station_status(),
                 "session_id": self._runtime.session_id if self._runtime else None,
                 "assessment": self._runtime.assessment if self._runtime else self._next_config.assessment,
                 "turma_id": self._runtime.turma_id if self._runtime else self._next_config.turma_id,
@@ -211,6 +232,7 @@ class SessionManager:
         return {
             "status": "ok" if self._camera_ok() and self._s3_probe() else "degraded",
             "state": self.state.value,
+            "mode": self.mode.value,
             "camera_ok": self._camera_ok(),
             "s3_ok": self._s3_probe(),
         }
@@ -235,6 +257,7 @@ class SessionManager:
         if payload.get("multi_face_block") is not None:
             self._proctor_cfg.multi_face_block = bool(payload["multi_face_block"])
 
+        self._write_browser_allowlist_config(config)
         return config
 
     def dashboard_snapshot(self) -> dict[str, Any]:
@@ -249,7 +272,8 @@ class SessionManager:
         return {
             "station_id": self._next_config.station_id,
             "station_name": self._next_config.station_name,
-            "status": status["state"],
+            "status": status["station_status"],
+            "mode": status["mode"],
             "student": student,
             "active_session_id": status["session_id"],
             "assessment": status["assessment"],
@@ -258,6 +282,64 @@ class SessionManager:
             "seconds_remaining": status["seconds_remaining"],
             "recent_events": [],
         }
+
+    def prepare_exam_mode(self) -> dict[str, Any]:
+        with self._lock:
+            if self._state != SessionState.IDLE:
+                raise SessionError(f"Não é possível preparar modo prova em {self._state.value}")
+            self._mode = StationMode.EXAM_READY
+            return self.get_status()
+
+    def enter_exam_mode(self) -> dict[str, Any]:
+        with self._lock:
+            if self._state != SessionState.IDLE:
+                raise SessionError(f"Não é possível entrar em modo prova em {self._state.value}")
+            self._write_browser_allowlist_config(self._next_config)
+            self._ensure_exam_lockdown_enabled()
+            if self._next_config.auto_start and self._next_config.turma_id:
+                self._ensure_identification_camera_open()
+            self._mode = StationMode.WAITING_STUDENT
+            self._show_waiting_overlay()
+            return self.get_status()
+
+    def exit_exam_mode(self) -> dict[str, Any]:
+        stop_error: Exception | None = None
+        if self.state != SessionState.IDLE:
+            try:
+                self.stop_session(reason="exit_exam_mode")
+            except Exception as exc:
+                logger.warning("Falha ao parar sessão durante saída do modo prova: %s", exc)
+                stop_error = exc
+        with self._lock:
+            self._hide_waiting_overlay()
+            self._disable_exam_lockdown()
+            self._release_camera()
+            self._mode = StationMode.MAINTENANCE
+            status = self.get_status()
+        if stop_error is not None:
+            raise SessionError("Modo prova restaurado, mas houve erro ao encerrar a sessão") from stop_error
+        return status
+
+    def recover_exam_mode(self) -> dict[str, Any]:
+        """Recuperação manual: encerra componentes e restaura o GNOME para manutenção."""
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=3)
+
+        with self._lock:
+            if self._runtime is not None:
+                self._runtime.notes["stop_reason"] = "recover_exam_mode"
+                self._runtime.stopped_at = datetime.now(timezone.utc)
+                self._last_session = self._runtime
+            self._shutdown_components()
+            self._restore_runtime_cpu_affinity()
+            self._runtime = None
+            self._thread = None
+            self._block_handled = False
+            self._set_state(SessionState.IDLE)
+            self._mode = StationMode.MAINTENANCE
+            return self.get_status()
 
     def dashboard_session_payload(self, *, include_completed: bool = True) -> dict[str, Any] | None:
         target = self._runtime if self._runtime is not None else (self._last_session if include_completed else None)
@@ -314,7 +396,7 @@ class SessionManager:
                 self._set_state(SessionState.IDENTIFYING)
                 self._recognizer = self._recognizer_factory()
                 self._recognizer.load_turma(cfg.turma_id)
-                self._camera = self._open_camera()
+                self._ensure_identification_camera_open()
 
                 identified_id, identified_name = self._identify_student(student_id, student_name)
                 if self._is_repeated_autostart_student(
@@ -326,6 +408,7 @@ class SessionManager:
                     raise SessionError(
                         "Aluno já concluiu esta prova nesta estação; aguardando outro aluno ou nova configuração"
                     )
+                self._hide_waiting_overlay()
                 runtime_session_id = cfg.session_id or self._make_session_id(
                     cfg.turma_id,
                     identified_name,
@@ -348,7 +431,8 @@ class SessionManager:
                 self._capture = None if cfg.no_record else self._capture_factory(runtime_session_id)
                 self._kiosk = None if cfg.no_kiosk else self._kiosk_factory()
                 self._overlay = self._overlay_factory()
-                self._lockdown = self._lockdown_factory()
+                if self._lockdown is None:
+                    self._lockdown = self._lockdown_factory()
                 self._engine = self._engine_factory(runtime_session_id)
 
                 if self._uploader is not None:
@@ -358,17 +442,18 @@ class SessionManager:
                     self._capture.start()
                     self._camera = self._open_preview_camera(self._capture.preview_url)
                     self._apply_runtime_cpu_affinity()
+                self._lockdown.enable()
                 if self._kiosk is not None:
-                    self._kiosk.start(cfg.prairielearn_url)
+                    self._kiosk.start(cfg.prairielearn_url, allowlist=cfg.allowlist)
                 if self._overlay is not None:
                     self._overlay.start_controls()
 
-                self._lockdown.enable()
                 self._engine.start()
 
                 self._stop_event.clear()
                 self._block_handled = False
                 self._set_state(SessionState.SESSION)
+                self._mode = StationMode.SESSION
                 self._thread = threading.Thread(
                     target=self._session_loop,
                     name=f"session-{runtime_session_id}",
@@ -384,12 +469,21 @@ class SessionManager:
                 )
                 return self.get_status()
             except Exception:
-                self._shutdown_components()
+                preserve_waiting_resources = self._mode == StationMode.WAITING_STUDENT and self._runtime is None
+                self._shutdown_components(
+                    preserve_exam_lockdown=self._mode == StationMode.WAITING_STUDENT,
+                    preserve_waiting_overlay=preserve_waiting_resources,
+                    preserve_camera=preserve_waiting_resources,
+                )
                 self._restore_runtime_cpu_affinity()
                 self._runtime = None
                 self._thread = None
                 self._block_handled = False
                 self._set_state(SessionState.IDLE)
+                if self._mode == StationMode.SESSION:
+                    self._mode = StationMode.EXAM_READY
+                elif self._mode == StationMode.WAITING_STUDENT:
+                    self._show_waiting_overlay()
                 raise
 
     def stop_session(self, *, reason: str = "manual") -> dict[str, Any]:
@@ -408,7 +502,12 @@ class SessionManager:
         with self._lock:
             runtime = self._runtime
             uploader = self._uploader
-            self._shutdown_components()
+            keep_waiting = (
+                self._mode == StationMode.SESSION
+                and self._next_config.auto_start
+                and reason != "exit_exam_mode"
+            )
+            self._shutdown_components(preserve_exam_lockdown=keep_waiting)
             self._restore_runtime_cpu_affinity()
             if runtime is not None:
                 runtime.notes["dashboard_events"] = self._collect_dashboard_events(runtime.session_id)
@@ -419,6 +518,11 @@ class SessionManager:
             self._thread = None
             self._block_handled = False
             self._set_state(SessionState.IDLE)
+            if self._mode == StationMode.SESSION:
+                self._mode = StationMode.WAITING_STUDENT if keep_waiting else StationMode.EXAM_READY
+                if self._mode == StationMode.WAITING_STUDENT:
+                    self._ensure_identification_camera_open()
+                    self._show_waiting_overlay()
             return self.get_status()
 
     def unblock_session(self) -> dict[str, Any]:
@@ -439,6 +543,8 @@ class SessionManager:
 
     def _session_loop(self) -> None:
         while not self._stop_event.is_set():
+            if not self._ensure_browser_running():
+                break
             try:
                 ret, frame = self._camera.read()
             except Exception as exc:  # pragma: no cover - hardware/driver path
@@ -531,6 +637,14 @@ class SessionManager:
             raise SessionError(f"Não foi possível abrir a câmera {source}")
         return cap
 
+    def _ensure_identification_camera_open(self) -> None:
+        if self._camera is not None:
+            is_opened = self._camera.isOpened() if hasattr(self._camera, "isOpened") else True
+            if is_opened:
+                return
+            self._release_camera()
+        self._camera = self._open_camera()
+
     def _open_preview_camera(self, source: str, timeout_sec: float = 5.0):
         deadline = time.monotonic() + timeout_sec
         last_error: SessionError | None = None
@@ -560,6 +674,11 @@ class SessionManager:
         self._camera = None
 
     def _camera_ok(self) -> bool:
+        if self._camera is not None:
+            try:
+                return bool(self._camera.isOpened()) if hasattr(self._camera, "isOpened") else True
+            except Exception:
+                return False
         try:
             cap = self._video_capture_factory(self._face_cfg.camera_index)
             ok = cap.isOpened() if hasattr(cap, "isOpened") else True
@@ -681,6 +800,70 @@ class SessionManager:
         if self._runtime is not None:
             self._runtime.state = state
 
+    def _station_status(self) -> str:
+        if self._state != SessionState.IDLE:
+            return self._state.value
+        if self._mode in {StationMode.EXAM_READY, StationMode.WAITING_STUDENT}:
+            return self._mode.value
+        return SessionState.IDLE.value
+
+    def _hide_waiting_overlay(self) -> None:
+        if self._waiting_overlay is None:
+            return
+        try:
+            self._waiting_overlay.hide_waiting()
+            self._waiting_overlay.stop()
+        except Exception as exc:
+            logger.warning("Falha ao fechar overlay de espera: %s", exc)
+        self._waiting_overlay = None
+
+    def _show_waiting_overlay(self, message: str | None = None) -> None:
+        if self._waiting_overlay is None:
+            self._waiting_overlay = self._overlay_factory()
+        else:
+            if message is None:
+                return
+        self._waiting_overlay.show_waiting(message)
+
+    def _write_browser_allowlist_config(self, config: SessionConfig) -> None:
+        allowlist_config = build_allowlist_config(
+            start_url=config.prairielearn_url,
+            allowlist=config.allowlist,
+        )
+        write_extension_config(allowlist_config)
+
+    def _ensure_exam_lockdown_enabled(self) -> None:
+        if self._lockdown is None:
+            self._lockdown = self._lockdown_factory()
+        self._lockdown.enable()
+        is_enabled = getattr(self._lockdown, "is_enabled", None)
+        if is_enabled is False:
+            self._lockdown = None
+            raise SessionError("Lockdown do modo prova não foi ativado")
+
+    def _disable_exam_lockdown(self) -> None:
+        if self._lockdown is None:
+            return
+        try:
+            self._lockdown.disable()
+        finally:
+            self._lockdown = None
+
+    @staticmethod
+    def _waiting_message_for_error(exc: Exception) -> str:
+        text = str(exc)
+        if "já concluiu" in text or "ja concluiu" in text:
+            return (
+                "Este aluno ja concluiu esta prova nesta estacao. "
+                "Chame o fiscal ou aguarde outro aluno."
+            )
+        if "Aluno não identificado" in text or "Aluno nao identificado" in text:
+            return (
+                "Aluno nao reconhecido. Sente-se de frente para a camera, "
+                "mantenha o rosto visivel e aguarde."
+            )
+        return "Aguardando condicao operacional para iniciar a prova. Chame o fiscal se persistir."
+
     def _seconds_remaining(self) -> int | None:
         if self._runtime is None:
             return None
@@ -730,15 +913,60 @@ class SessionManager:
         self._runtime_ffmpeg_cpu_cores = None
         self._runtime_proctor_cpu_set = None
 
-    def _shutdown_components(self) -> None:
+    def _ensure_browser_running(self) -> bool:
+        kiosk = self._kiosk
+        if kiosk is None:
+            return True
+        is_running = getattr(kiosk, "is_running", True)
+        if is_running:
+            return True
+        relaunch = getattr(kiosk, "relaunch", None)
+        if callable(relaunch):
+            try:
+                if relaunch():
+                    if self._runtime is not None:
+                        self._runtime.notes.setdefault("operational_events", []).append(
+                            {
+                                "type": "browser_relaunch",
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            }
+                        )
+                    return True
+            except Exception as exc:
+                logger.warning("Falha ao relançar Chromium: %s", exc)
+
+        with self._lock:
+            if self._runtime is not None:
+                self._runtime.block_reason = "BROWSER_EXIT"
+                self._runtime.notes.setdefault("operational_events", []).append(
+                    {
+                        "type": "browser_exit",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                )
+            if self._overlay is not None:
+                self._overlay.show_blocked("BROWSER_EXIT")
+            if self._state != SessionState.UPLOADING:
+                self._set_state(SessionState.BLOCKED)
+        self._stop_event.set()
+        return False
+
+    def _shutdown_components(
+        self,
+        *,
+        preserve_exam_lockdown: bool = False,
+        preserve_waiting_overlay: bool = False,
+        preserve_camera: bool = False,
+    ) -> None:
         components = [
             self._kiosk,
             self._overlay,
             self._capture,
             self._engine,
             self._uploader,
-            self._lockdown,
         ]
+        if not preserve_exam_lockdown:
+            components.append(self._lockdown)
         for component in components:
             if component is None:
                 continue
@@ -750,14 +978,20 @@ class SessionManager:
             except Exception as exc:  # pragma: no cover - cleanup best effort
                 logger.warning("Falha ao encerrar componente %s: %s", type(component).__name__, exc)
 
-        self._release_camera()
+        if not preserve_camera:
+            self._release_camera()
+        if not preserve_waiting_overlay:
+            self._hide_waiting_overlay()
         self._recognizer = None
         self._engine = None
         self._capture = None
         self._uploader = None
         self._kiosk = None
         self._overlay = None
-        self._lockdown = None
+        if not preserve_waiting_overlay:
+            self._waiting_overlay = None
+        if not preserve_exam_lockdown:
+            self._lockdown = None
 
     def _collect_dashboard_events(self, session_id: str) -> list[dict[str, Any]]:
         log_path = self._app_cfg.data_dir / "sessions" / session_id / "events.jsonl"

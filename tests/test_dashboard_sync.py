@@ -8,16 +8,20 @@ from src.core.config import AppConfig
 
 from src.core.config import DashboardConfig
 from src.core.dashboard_sync import DashboardHeartbeatWorker
-from src.core.session import SessionState
+from src.core.session import SessionConfig, SessionState, StationMode
 
 
 class FakeSessionManager:
     def __init__(self):
         self.state = SessionState.IDLE
+        self.mode = StationMode.MAINTENANCE
         self.applied_payloads: list[dict] = []
         self.updated_payloads: list[dict] = []
         self.stop_reasons: list[str] = []
         self.unblock_calls = 0
+        self.prepare_mode_calls = 0
+        self.enter_mode_calls = 0
+        self.exit_mode_calls = 0
         self._app_cfg = AppConfig(data_dir=Path("/tmp/proctor-dashboard-sync"))
         self.session_payload = None
 
@@ -26,6 +30,7 @@ class FakeSessionManager:
             "station_id": "nuc-01",
             "station_name": "NUC Sala 1",
             "status": "IDLE",
+            "mode": "MAINTENANCE",
             "student": None,
             "active_session_id": None,
             "assessment": "Quiz-03",
@@ -40,6 +45,7 @@ class FakeSessionManager:
 
     def apply_dashboard_config(self, payload):
         self.applied_payloads.append(payload)
+        return SessionConfig(auto_start=bool(payload.get("auto_start")))
 
     def update_config(self, **kwargs):
         self.updated_payloads.append(kwargs)
@@ -49,6 +55,17 @@ class FakeSessionManager:
 
     def unblock_session(self):
         self.unblock_calls += 1
+
+    def prepare_exam_mode(self):
+        self.prepare_mode_calls += 1
+
+    def enter_exam_mode(self):
+        self.enter_mode_calls += 1
+        self.mode = StationMode.WAITING_STUDENT
+
+    def exit_exam_mode(self):
+        self.exit_mode_calls += 1
+        self.mode = StationMode.MAINTENANCE
 
 
 def test_dashboard_worker_applies_config_and_stop_command():
@@ -99,6 +116,7 @@ def test_dashboard_worker_applies_config_and_stop_command():
 
     assert seen_payloads
     assert manager.applied_payloads[0]["assessment"] == "Quiz-03"
+    assert manager.enter_mode_calls == 1
     assert manager.stop_reasons == ["dashboard_command"]
 
 
@@ -130,7 +148,7 @@ def test_dashboard_worker_unblocks_only_when_station_is_blocked():
     assert manager.unblock_calls == 1
 
 
-def test_dashboard_worker_updates_autostart_flag():
+def test_dashboard_worker_updates_autostart_flag_and_exits_exam_mode():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
@@ -153,6 +171,64 @@ def test_dashboard_worker_updates_autostart_flag():
     worker.run_once()
 
     assert manager.updated_payloads == [{"auto_start": False}]
+    assert manager.exit_mode_calls == 1
+
+
+def test_dashboard_worker_enabling_autostart_enters_exam_mode():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "station": {"station_id": "nuc-01"},
+                "commands": [{"command_type": "SET_AUTOSTART", "payload": {"auto_start": True}}],
+            },
+        )
+
+    manager = FakeSessionManager()
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://dashboard.test",
+        ),
+    )
+
+    worker.run_once()
+
+    assert manager.updated_payloads == [{"auto_start": True}]
+    assert manager.enter_mode_calls == 1
+
+
+def test_dashboard_worker_applies_exam_mode_commands():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "station": {"station_id": "nuc-01"},
+                "commands": [
+                    {"command_type": "PREPARE_EXAM_MODE", "payload": {}},
+                    {"command_type": "ENTER_EXAM_MODE", "payload": {}},
+                    {"command_type": "EXIT_EXAM_MODE", "payload": {}},
+                ],
+            },
+        )
+
+    manager = FakeSessionManager()
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://dashboard.test",
+        ),
+    )
+
+    worker.run_once()
+
+    assert manager.prepare_mode_calls == 1
+    assert manager.enter_mode_calls == 1
+    assert manager.exit_mode_calls == 1
 
 
 def test_dashboard_worker_registers_and_finalizes_completed_session():

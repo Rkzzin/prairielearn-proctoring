@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sites permitidos</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Proctor Station</p>
+        <h1>Sites permitidos para esta prova</h1>
+        <p>
+          Use as abas normalmente, mas navegue apenas nos domínios autorizados.
+          Tentativas fora da allowlist serão bloqueadas.
+        </p>
+      </section>
+
+      <form id="go-form" class="search">
+        <label for="target">Abrir site autorizado</label>
+        <div>
+          <input id="target" name="target" type="text" autocomplete="off" placeholder="ex: prairielearn.org">
+          <button type="submit">Abrir</button>
+        </div>
+        <p id="message" class="message" role="status"></p>
+      </form>
+
+      <section>
+        <h2>Lista de sites</h2>
+        <div id="sites" class="sites"></div>
+      </section>
+    </main>
+    <script src="newtab.js"></script>
+  </body>
+</html>

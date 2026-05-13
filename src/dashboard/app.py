@@ -156,6 +156,21 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         command = dashboard_store.enqueue_command(station_id, CommandType.UNBLOCK_SESSION)
         return JSONResponse(command.model_dump(mode="json"), status_code=202)
 
+    @app.post("/api/stations/{station_id}/exam/prepare")
+    async def prepare_exam_mode(station_id: str) -> JSONResponse:
+        command = dashboard_store.set_station_exam_mode(station_id, CommandType.PREPARE_EXAM_MODE)
+        return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.post("/api/stations/{station_id}/exam/enter")
+    async def enter_exam_mode(station_id: str) -> JSONResponse:
+        command = dashboard_store.set_station_exam_mode(station_id, CommandType.ENTER_EXAM_MODE)
+        return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.post("/api/stations/{station_id}/exam/exit")
+    async def exit_exam_mode(station_id: str) -> JSONResponse:
+        command = dashboard_store.set_station_exam_mode(station_id, CommandType.EXIT_EXAM_MODE)
+        return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
     @app.post("/api/stations/{station_id}/autostart/enable")
     async def enable_autostart(station_id: str) -> JSONResponse:
         command = dashboard_store.set_station_autostart(station_id, True)

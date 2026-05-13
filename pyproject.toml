@@ -41,4 +41,11 @@ include-package-data = true
 include = ["src*"]
 
 [tool.setuptools.package-data]
-src = ["dashboard/templates/*.html", "dashboard/static/*.css"]
+src = [
+    "dashboard/templates/*.html",
+    "dashboard/static/*.css",
+    "kiosk/allowlist_extension/*.html",
+    "kiosk/allowlist_extension/*.js",
+    "kiosk/allowlist_extension/*.json",
+    "kiosk/allowlist_extension/*.css",
+]

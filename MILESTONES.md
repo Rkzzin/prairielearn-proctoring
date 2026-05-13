@@ -23,13 +23,13 @@ Nada avança para a próxima milestone sem os critérios da atual estarem
 ### Decisões tomadas
 
 - **Hardware:** Intel NUC 12/13 (i5), 16GB RAM, SSD 256GB, webcam Logitech C920
-- **OS:** Ubuntu 24.04 LTS Desktop — **sessão X11** (Wayland desabilitado via `/etc/gdm3/custom.conf`)
+- **OS:** Ubuntu 24.04 LTS Desktop — GNOME para manutenção e prova com lockdown temporário
 - **Linguagem:** Python 3.12
 - **CV/ML:** OpenCV 4.x + dlib (HOG detector + ResNet 128-d)
 - **Gaze:** dlib shape_predictor_68 + cv2.solvePnP (sem MediaPipe)
 - **Gravação:** FFmpeg 6.x (H.264/libx264) — sem áudio
 - **Upload:** boto3 → AWS S3 (sa-east-1)
-- **Browser:** Chromium kiosk + extensão custom
+- **Browser:** Chromium controlado no GNOME atual + extensão allowlist custom
 - **Orquestrador:** FastAPI (API local na NUC)
 - **Dashboard:** FastAPI + HTMX (EC2 t3.small)
 - **IaC:** Terraform + Ansible
@@ -47,7 +47,7 @@ proctor-station/
 │   ├── face/                    # recognizer, detector
 │   ├── proctor/                 # engine, gaze, events
 │   ├── recorder/                # capture, uploader
-│   ├── kiosk/                   # (M4)
+│   ├── kiosk/                   # browser controlado, lockdown e overlays (M4/M7)
 │   ├── api/                     # (M5)
 │   └── dashboard/               # (M6)
 ├── scripts/                     # CLIs e utilitários
@@ -88,8 +88,7 @@ proctor-station/
 
 ### Bugs corrigidos nesta milestone
 
-- `local_s3_client.py` removido — mock S3 eliminado, sistema usa AWS real
-- `config.py`: variáveis `PROCTOR_S3_MOCK` e `PROCTOR_S3_MOCK_DIR` removidas
+- `s3_client.py`: fluxo de enrollment consolidado em AWS S3 real via `boto3`
 - `.env`: limpeza de variáveis obsoletas e organização por seções
 
 ### Critério de conclusão
@@ -117,7 +116,7 @@ proctor-station/
 - `engine.py`: `_handle_no_face` ignorava estado `GAZE_WARN` — rosto sumindo em GAZE_WARN ficava preso; corrigido para transitar para `ABSENCE` em qualquer estado não-BLOCKED
 - `test_proctor_engine.py`: helper `_gaze()` usava `pitch=0.0` como neutro, mas solvePnP retorna pitch ≈ 180° com cabeça ereta — corrigido para `pitch=180.0`
 - `config.py`: campo morto `gaze_block_sec` removido do `ProctorConfig`
-- `README.md`: `PROCTOR_GAZE_BLOCK_SEC` removido da tabela de parâmetros
+- `README.md`: tabela de parâmetros alinhada ao timer único `gaze_duration_sec`
 
 ### Critério de conclusão
 
@@ -147,7 +146,7 @@ O OpenCV usa `/dev/video0` só na identificação inicial. Depois disso, a câme
                                 ├──► [record]  ──► webcam_%03d.mp4 ──► S3
                                 └──► [preview] ──► udp://127.0.0.1:18181 ──► OpenCV (gaze + reidentify)
 
-FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
+FFmpeg separado: x11grab + xrandr → scale(PROCTOR_REC_SCREEN_SIZE) → screen_%03d.mp4 ──► S3
 ```
 
 ### Decisões técnicas
@@ -156,7 +155,8 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 - O proctoring contínuo lê um preview local de baixa latência, não a câmera física
 - Gravação de webcam via `v4l2` direto no FFmpeg — não depende do FPS do proctoring
 - Sem áudio — simplifica o pipeline e reduz CPU
-- Captura de tela via x11grab — requer sessão X11 (Wayland desabilitado)
+- Captura de tela via `x11grab` — requer sessão X11 (Wayland desabilitado)
+- Resolução real da tela detectada por `xrandr --current`; `PROCTOR_REC_SCREEN_SIZE` é a resolução final após downscale
 - Webcam e tela usam `use_wallclock_as_timestamps` + `fps_mode passthrough`
 - MP4s finais saem em H.264 `High` + `yuv420p` + `faststart` para compatibilidade com browser/dashboard
 - Segmentação de 5min com upload incremental ao S3
@@ -170,16 +170,17 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 - `capture.py`: preview local de webcam adicionado para gaze/re-identificação sem reabrir a câmera física
 - `capture.py`: timestamps de relógio real e `fps_mode passthrough` adicionados para reduzir drift entre webcam e tela
 - `capture.py`: saída MP4 padronizada em `yuv420p` + `faststart` para reprodução confiável no dashboard
+- `capture.py`: captura de tela agora detecta a resolução real via `xrandr` e faz downscale para a saída configurada
 - `capture.py`: afinidade opcional de CPU adicionada aos processos FFmpeg, com divisão entre webcam e tela
 - `capture.py`: áudio removido de todos os comandos FFmpeg
-- `test_integration.py`: câmera aberta uma única vez, nunca fechada entre fases
+- `session.py`: câmera física liberada após identificação e OpenCV reconectado ao preview local gerado pelo FFmpeg
 - `test_integration.py`: janela OpenCV removida — output no terminal, encerramento via Ctrl+C
-- `.env`: `PROCTOR_REC_DISPLAY=:1`, `PROCTOR_REC_WEBCAM_INPUT_FORMAT`, `PROCTOR_REC_FFMPEG_THREADS` e afinidade de CPU adicionados
+- `.env`: `PROCTOR_REC_DISPLAY`, `PROCTOR_REC_WEBCAM_INPUT_FORMAT`, `PROCTOR_REC_FFMPEG_THREADS`, preview UDP e afinidade de CPU adicionados
 
 ### Critério de conclusão
 
 - [x] Roda sem `Device or resource busy`
-- [x] Identificação → proctoring sem fechar/reabrir câmera
+- [x] Identificação pela câmera física → gravação via FFmpeg → proctoring pelo preview local
 - [x] Ctrl+C encerra limpo — sem traceback, `finally` executa
 - [x] `webcam_000.mp4` e `screen_000.mp4` gerados corretamente
 - [x] Upload confirmado em `s3://proctor-station/gravacoes/`
@@ -191,27 +192,31 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 
 ## M4 — Browser Lockdown ✅
 
-**Objetivo:** Chromium em modo kiosk com bloqueio e re-identificação facial.
+**Objetivo:** Validar a base de browser controlado, bloqueio temporário e
+re-identificação facial. Esta milestone implementou o primeiro envelope em
+fullscreen/kiosk; a arquitetura final de produção será concluída no M7 com
+GNOME atual endurecido, Chromium maximizado e allowlist real.
 
 ### O que foi implementado
 
 - `src/kiosk/chromium.py` — launcher fullscreen via wmctrl (PID), SIGSTOP/SIGCONT
 - `src/kiosk/reidentify.py` — loop de re-identificação facial durante bloqueio
-- `src/kiosk/lockdown.py` — placeholder para M7
+- `src/kiosk/lockdown.py` — bloqueio temporário de atalhos de fuga com restauração
 
 ### Decisões tomadas
 
 - Fullscreen via `wmctrl -i -r <win_id> -b add,fullscreen` pelo PID — evita pegar janela errada por nome
-- Extensões do Gnome (`ubuntu-dock`, `tiling-assistant`) desabilitadas durante sessão e restauradas no `finally`
-- Lockdown de teclas (Alt+F4, Super, Ctrl+Alt+T) movido para M7 — hardening de produção
-- Allowlist de domínios deixada para a próxima etapa
+- Extensões do Gnome (`ubuntu-dock`, `tiling-assistant`) desabilitadas durante sessão e restauradas no `finally`; isso passa a ser parte do lockdown do GNOME atual
+- Lockdown de teclas aplicado dinamicamente na sessão: `gsettings` para GNOME/WM e Super sozinho (`org.gnome.mutter overlay-key`), `xbindkeys` como segunda camada e `setxkbmap -option srvrkeys:none` para teclas especiais do X
+- Allowlist de domínios e UX de abas deixadas para M7
+- O modo final não deve depender de `--incognito`, porque o aluno precisa usar abas normais e a extensão allowlist; limpeza do perfil será responsabilidade explícita do M7
 - Encerramento em produção (timer, submit, professor) definido na M5 — por ora Ctrl+C
 
 ### Bugs corrigidos nesta milestone
 
 - `chromium.py`: `wmctrl` buscava janela por nome e pegava VSCode/Firefox — corrigido para buscar pelo PID
 - `test_integration.py`: extensões do Gnome não eram restauradas se script morria abruptamente — `finally` garante restauração
-- `lockdown.py`: tentativas de xbindkeys e gsettings falhavam silenciosamente — simplificado para placeholder
+- `lockdown.py`: bloqueio leve, sem polling, com restauração explícita no encerramento
 
 ### Critério de conclusão
 
@@ -219,9 +224,9 @@ FFmpeg separado: x11grab → screen_%03d.mp4 ──► S3
 - [x] BLOCKED → Chromium congela (SIGSTOP)
 - [x] Aluno olha para câmera → re-identificado → Chromium retoma (SIGCONT)
 - [x] Ctrl+C encerra limpo — extensões do Gnome restauradas
+- [x] Lockdown de teclas aplicado durante a prova e restaurado no fim
 - [x] `pytest tests/` — todos passando
-- [ ] Lockdown de teclas — M7
-- [ ] Allowlist de domínios — próxima etapa
+- [ ] Substituição do kiosk/incognito por browser maximizado + allowlist no GNOME atual — M7
 
 ---
 
@@ -238,7 +243,7 @@ FSM de sessão de alto nível:
 IDLE → IDENTIFYING → SESSION → BLOCKED → SESSION → UPLOADING → IDLE
 ```
 
-- `src/core/session.py` — FSM principal, integra face + proctor + recorder + kiosk
+- `src/core/session.py` — FSM principal, integra face + proctor + recorder + browser/lockdown
 - `src/api/server.py` + `src/api/routes.py` — FastAPI com os endpoints abaixo
 - `systemd` unit para autostart na NUC
 
@@ -258,7 +263,7 @@ POST /config          → atualiza config da próxima sessão
 
 - [x] `src/core/session.py` implementado com FSM `IDLE → IDENTIFYING → SESSION → BLOCKED → UPLOADING → IDLE`
 - [x] `src/api/server.py` + `src/api/routes.py` expõem `/health`, `/status`, `/session`, `/session/start`, `/session/stop`, `/session/unblock`, `/config`
-- [x] Integração de código com face, proctor, recorder e kiosk
+- [x] Integração de código com face, proctor, recorder e módulo de browser/lockdown
 - [x] `systemd/proctor.service` adicionado ao repositório
 - [x] `/health` retorna 200 com `status`, `state`, `camera_ok`, `s3_ok`
 - [x] `pytest` cobre FSM e endpoints principais
@@ -300,34 +305,212 @@ Frontend: HTMX + Jinja2
 
 ---
 
-## M7 — Testes, Hardening e IaC 🔲
+## M7 — Modo Prova Final, Allowlist e Hardening 🟡
 
-**Objetivo:** Sistema pronto para produção — seguro, reproduzível e monitorado.
+**Objetivo:** Transformar a base atual em um modo de prova de produção no GNOME
+atual do usuário `proctor`. O modo prova usa Chromium maximizado com abas
+normais, allowlist real de sites, perfil descartável, limpeza garantida e
+lockdown forte de GNOME/X11.
 
-### Escopo
+### Arquitetura alvo
+
+```
+GNOME / proctor / manutenção
+  ├── dashboard local ou central distribui config
+  └── operador ativa auto-start, que é o próprio modo prova
+
+WAITING_STUDENT
+  ├── GNOME atual entra em lockdown temporário
+  ├── overlay: "Sente-se e olhe para a câmera para iniciar a prova"
+  └── loop de identificação facial tenta aluno elegível
+
+SESSION
+  ├── FFmpeg grava webcam e tela do display GNOME atual
+  ├── OpenCV lê preview UDP gerado pelo FFmpeg
+  ├── Chromium maximizado com abas normais
+  ├── extensão allowlist local controla UX e navegação
+  ├── policies Chromium bloqueiam rotas internas/perigosas
+  ├── perfil descartável isola cookies/storage/login por prova
+  └── lockdown bloqueia saída do GNOME/OS
+
+FINALIZAÇÃO
+  ├── encerra Chromium
+  ├── limpa perfil/cookies/storage/cache/histórico/senhas
+  ├── encerra gravação/upload
+  ├── registra payload final no dashboard
+  └── restaura atalhos/overlays e retorna ao GNOME de manutenção
+```
+
+### Escopo detalhado
+
+**Controle de modo no GNOME atual**
+- [x] Fundir auto-start e modo prova: `SET_AUTOSTART=true` entra em `WAITING_STUDENT`; `false` retorna à manutenção.
+- [x] Garantir que ativar auto-start aplique lockdown antes de permitir interação do aluno.
+- [x] Garantir que desativar auto-start restaure atalhos/estado visual mesmo em caso de erro.
+- [x] Criar mecanismo de recuperação manual caso o lockdown ou Chromium trave.
+
+**FSM e API**
+- [x] Adicionar estados de modo de estação separados dos estados de sessão, ou expandir a FSM com `MAINTENANCE`, `EXAM_READY` e `WAITING_STUDENT`.
+- [x] Preservar a FSM de sessão `IDENTIFYING → SESSION → BLOCKED → UPLOADING`.
+- [x] Ajustar `SessionAutoStartWorker` para operar somente quando a estação está em `WAITING_STUDENT`.
+- [x] Com auto-start ativo, manter loop de identificação até aluno elegível ser encontrado.
+- [x] Se aluno já concluiu a mesma configuração, manter espera por outro aluno e mostrar mensagem apropriada.
+- [x] Expor status do modo atual no `/status` e no heartbeat do dashboard.
+- [x] Garantir que receber `APPLY_CONFIG` não altera o modo da estação automaticamente.
+- [x] Garantir que `SET_AUTOSTART` é o comando único de entrada/saída do modo prova.
+- [x] Garantir que `STOP_SESSION` encerra prova, limpa browser e devolve a estação ao estado esperado.
+
+**Overlay e experiência do aluno**
+- [x] Adicionar modo `waiting` em `src/kiosk/overlay_app.py`.
+- [x] Mostrar overlay fullscreen/topmost com "Sente-se e olhe para a câmera para iniciar a prova".
+- [x] Manter o overlay `waiting` padrão durante falhas de identificação; detalhes ficam em logs/dashboard.
+- [x] Manter o overlay `waiting` padrão quando o aluno já fez a prova nesta configuração.
+- [x] Evitar flicker do overlay durante tentativas repetidas de auto-start.
+- [x] Manter overlay `blocked` para `ABSENCE`, `GAZE` e múltiplos rostos.
+- [x] Garantir que overlay não capture a câmera; identificação continua pelo `SessionManager`.
+- [x] Garantir que overlay fecha limpo ao iniciar prova, bloquear sessão ou sair do modo prova.
+- [ ] Testar overlay no display real do GNOME da NUC.
+
+**Chromium controlado**
+- [x] Renomear/refatorar `ChromiumKiosk` para refletir browser controlado, ou manter compatibilidade com nome antigo e documentar.
+- [x] Remover `--kiosk` do modo final.
+- [x] Remover `--incognito` do modo final.
+- [x] Remover `--disable-extensions` quando a extensão allowlist for usada.
+- [x] Abrir Chromium maximizado ou fullscreen gerenciado pelo WM, preservando abas, botão `+` e barra de endereço.
+- [x] Usar perfil descartável dedicado por prova, sem usar o perfil pessoal do Chromium do `proctor`.
+- [x] Definir diretório operacional estável e limpo para perfil descartável, por exemplo `/tmp/proctor-chromium-profile` ou `data/runtime/chromium-profile`.
+- [x] Bloquear first-run, translate, sync, default apps, crash dialogs e background networking desnecessário.
+- [x] Impedir DevTools por policy e por atalhos.
+- [x] Impedir incognito por policy.
+- [ ] Impedir instalação ou ativação de extensões não autorizadas por policy.
+- [x] Impedir gerenciador de senhas, autofill e salvamento de credenciais.
+
+**Allowlist e extensão**
+- [x] Criar extensão local estática versionada no repositório, por exemplo `src/kiosk/allowlist_extension/`.
+- [x] A extensão deve ser pré-criada; em runtime só pode ser escrito arquivo pequeno de config por prova.
+- [x] Definir schema do config: URL inicial, domínios permitidos, nomes amigáveis, modo estrito e textos.
+- [x] Implementar normalização de allowlist: domínio raiz, subdomínios, scheme opcional e portas se necessário.
+- [x] Incluir automaticamente hosts obrigatórios da URL inicial do PrairieLearn.
+- [x] Implementar página de nova aba da extensão com links para sites permitidos.
+- [x] Implementar campo de navegação/pesquisa na nova aba que oriente o aluno para sites permitidos.
+- [x] Implementar bloqueio de navegação principal fora da allowlist via `declarativeNetRequest`.
+- [x] Adicionar fallback via `webNavigation`/`tabs.onUpdated` para bloquear navegação principal caso DNR não aplique.
+- [x] Reescrever `config.json` da extensão ao aplicar config/ativar modo prova para evitar allowlist stale.
+- [x] Começar bloqueando `main_frame` e documentar que subresources/CDNs ficam liberados para não quebrar sites permitidos.
+- [x] Adicionar opção futura de modo estrito para `sub_frame`/subresources se necessário.
+- [x] Criar página de bloqueio explicando que o site não é permitido.
+- [x] Bloquear redirects para fora da allowlist.
+- [ ] Testar digitação direta na barra de endereço, links, nova aba, reload, histórico e redirects.
+- [x] Decidir se Google será permitido só quando explicitamente incluído; padrão recomendado: não liberar Google amplo.
+
+**Policies do Chromium**
+- [ ] Definir estratégia de policies para a NUC inteira ou flags/runtime sem quebrar manutenção normal do `proctor`.
+- [ ] Configurar `URLBlocklist` e `URLAllowlist` como barreira adicional à extensão.
+- [x] Bloquear `chrome://settings`, `chrome://extensions`, `chrome://policy`, `chrome://flags`, `devtools://`, `file://` e esquemas não necessários.
+- [x] Configurar `DeveloperToolsAvailability` para bloquear DevTools.
+- [x] Configurar `IncognitoModeAvailability` para desabilitar incognito.
+- [x] Configurar `SyncDisabled` e/ou browser sign-in para impedir sync do aluno.
+- [x] Criar `scripts/install_chromium_hardening.sh` para instalar policy gerenciada que bloqueia páginas internas e esquemas perigosos.
+- [ ] Configurar policies de extensões para permitir apenas a extensão local de allowlist.
+- [x] Configurar `ClearBrowsingDataOnExitList` com cookies, site data, cache, histórico, downloads, senhas, autofill e hosted app data.
+- [ ] Testar `chrome://policy` durante desenvolvimento e bloquear acesso na prova final.
+
+**Limpeza de perfil e privacidade**
+- [x] Implementar cleanup explícito do perfil do Chromium no fim da prova.
+- [x] Limpar cookies e site storage antes da próxima prova.
+- [x] Limpar IndexedDB, Local Storage, Session Storage, Cache Storage e Service Workers.
+- [x] Limpar histórico, downloads, autofill e senhas salvas.
+- [x] Garantir que logout de PrairieLearn e demais sites não dependa do aluno clicar em "sair".
+- [x] Fazer cleanup depois que o browser fecha, não antes de abrir, para não atrasar o início.
+- [ ] Se cleanup falhar, bloquear início de nova prova até resolver ou recriar perfil.
+- [x] Registrar evento/log de cleanup bem-sucedido ou falho.
+- [ ] Testar duas provas consecutivas com alunos diferentes na mesma NUC.
+
+**Lockdown de OS no modo prova**
+- [x] Aplicar lockdown temporário no GNOME atual.
+- [x] Usar `gsettings`, XKB e `xbindkeys` temporário com restauração automática.
+- [x] Manter bloqueios de fuga: `Alt+Tab`, `Alt+F4`, Super, `Ctrl+Alt+Fn`, `Ctrl+Alt+T`, logout, menu do WM, screenshots e terminal.
+- [x] Bloquear hot corner/Activities com `enable-hot-corners=false` e guard overlay no topo do display.
+- [x] Desabilitar temporariamente Ubuntu Dock/Show Apps e esconder o botão de aplicativos durante lockdown.
+- [x] Reavaliar bloqueio de `Ctrl+T` e `Ctrl+L`: devem ser liberados se allowlist/policies estiverem válidas.
+- [x] Bloquear `Ctrl+N`, `Ctrl+Shift+N`, `Ctrl+W`, `Ctrl+Q`, `Alt+Left/Right` se necessário.
+- [ ] Validar que mouse não alcança painel, dock, menu de aplicações ou área de trabalho útil.
+- [ ] Validar comportamento quando Chromium fecha, crasha ou é minimizado.
+- [x] Implementar relaunch controlado ou violação registrada se Chromium sair durante a prova.
+
+**Gravação e display**
+- [x] Confirmar `PROCTOR_REC_DISPLAY=:1` para a sessão GNOME atual da NUC.
+- [ ] Validar `xrandr --current` no display real da NUC.
+- [ ] Validar `x11grab` gravando a tela real vista pelo aluno.
+- [ ] Garantir que o overlay `waiting` aparece na gravação apenas antes da prova, se desejado.
+- [ ] Garantir que overlay `blocked` aparece na gravação durante bloqueio.
+- [ ] Confirmar que FFmpeg continua único dono da webcam durante sessão ativa.
+- [ ] Confirmar que OpenCV consome preview UDP sem disputar `/dev/video0`.
+- [x] Manter a câmera física aberta enquanto a estação está em `WAITING_STUDENT` com auto-start ativo.
+- [x] Liberar a câmera física ao sair do modo prova para manutenção.
+
+**Dashboard e operação**
+- [x] Usar botão único de auto-start como entrada/saída do modo prova por estação.
+- [x] Mostrar modo da estação separado do status da sessão.
+- [x] Mostrar quando a NUC está `WAITING_STUDENT`.
+- [ ] Mostrar erro operacional de câmera, browser, cleanup ou policies.
+- [x] Evitar que config distribuída automaticamente derrube manutenção ativa.
+- [x] Registrar no dashboard quando a NUC entra e sai do modo prova.
+- [ ] Documentar rotina diária: ligar NUC, validar saúde, aplicar config, entrar modo prova, acompanhar, encerrar, voltar manutenção.
+
+**Instalação, hardening e IaC**
+- [x] Atualizar `scripts/bootstrap.sh` com `xbindkeys`, `wmctrl`, Chromium e dependências do lockdown atual.
+- [x] Criar script idempotente para instalar policies do browser controlado compatíveis com o GNOME atual.
+- [ ] Criar script de reversão para remover policies/artefatos de modo prova sem apagar dados de sessões.
+- [x] Manter `systemd/proctor.service` como serviço único da estação.
+- [ ] Definir ownership de arquivos: código, configs, extensão, policies e dados.
+- [ ] Aplicar firewall (`ufw`) com portas mínimas.
+- [ ] Configurar `auditd` para arquivos sensíveis e ações de modo prova.
+- [ ] Bloquear USB mass storage se não necessário.
+- [ ] Desabilitar Bluetooth se não usado.
+- [ ] Aplicar `apt-mark hold` em Chromium, FFmpeg e pacotes críticos depois de validar versão.
+- [ ] Atualizar Ansible com roles `base`, `browser`, `proctor` e `monitoring`.
+- [ ] Atualizar Terraform para S3, lifecycle, IAM mínimo, EC2 dashboard e alarmes.
+- [ ] Configurar métricas/logs com `node_exporter` e `promtail` ou equivalente.
 
 **Testes**
-- Suite E2E com câmera real (pelo menos 1 NUC)
-- Teste de carga: 10 NUCs simultâneas fazendo upload
-
-**Hardening**
-- Firewall (ufw): só portas 22 e 8000 abertas
-- `auditd` para log de acesso a arquivos sensíveis
-- User `proctor` sem sudo
-- `apt-mark hold` nos pacotes críticos (chromium, ffmpeg, dlib)
-
-**IaC**
-- Terraform: S3 bucket + lifecycle rules + IAM user com política mínima + EC2
-- Ansible: roles `base`, `kiosk`, `proctor`, `monitoring`
-- `node_exporter` + `promtail` para métricas e logs
+- [x] Teste unitário para normalização de allowlist.
+- [x] Teste unitário para geração de config da extensão.
+- [x] Teste unitário para flags do Chromium controlado.
+- [x] Teste unitário para cleanup de perfil.
+- [x] Teste unitário para estados `WAITING_STUDENT`/modo de estação.
+- [x] Teste unitário para overlay `waiting`.
+- [x] Teste unitário para auto-start como comando de entrar/sair modo prova.
+- [x] Teste unitário para lockdown aplicado já no `WAITING_STUDENT`.
+- [x] Teste unitário para recuperação manual de modo prova.
+- [x] Teste unitário para relaunch controlado do Chromium.
+- [x] Teste unitário para overlay fixo e câmera persistente no auto-start.
+- [ ] Teste manual em NUC: GNOME manutenção → modo prova no mesmo usuário → waiting overlay.
+- [ ] Teste manual em NUC: identificação → gravação → Chromium maximizado.
+- [ ] Teste manual em NUC: abrir nova aba pelo botão `+`.
+- [ ] Teste manual em NUC: site permitido funciona.
+- [ ] Teste manual em NUC: site não permitido é bloqueado.
+- [ ] Teste manual em NUC: `Alt+Tab`, `Alt+F4`, Super, `Ctrl+Alt+Fn` não escapam.
+- [ ] Teste manual em NUC: bloqueio por ausência/gaze congela prova, mostra overlay e retoma após reidentificação.
+- [ ] Teste manual em NUC: finalização limpa perfil e remove login.
+- [ ] Teste manual em NUC: segunda prova não herda sessão do aluno anterior.
+- [ ] Teste de carga: 10 NUCs simultâneas fazendo upload e heartbeat.
+- [ ] Teste de contingência: internet cai, dashboard cai, câmera trava, Chromium crasha e NUC reinicia.
 
 ### Critério de conclusão
 
-- [ ] `ansible-playbook setup-nuc.yml` configura NUC limpa do zero sem intervenção
-- [ ] `terraform apply` sobe infraestrutura AWS completa
-- [ ] 10 NUCs simultâneas: CPU < 80%, sem drops de upload
-- [ ] Penetration test básico: usuário `proctor` não consegue escalar privilégios
-- [ ] Plano de contingência documentado (NUC falha, internet cai, câmera trava)
+- [ ] GNOME continua utilizável para manutenção sem alterações permanentes indesejadas.
+- [ ] Modo prova só inicia por ação explícita do operador.
+- [ ] Overlay de espera orienta o aluno antes da identificação.
+- [ ] Chromium abre com abas normais e barra de endereço, sem acesso ao OS.
+- [ ] Allowlist bloqueia navegação fora dos sites autorizados.
+- [ ] Páginas internas perigosas do Chromium, DevTools, incognito, sync e extensões não autorizadas estão bloqueadas.
+- [ ] Perfil do Chromium é limpo ao fim e não preserva login/cookies/storage do aluno.
+- [ ] Gravação de webcam e tela continua correta no display GNOME atual.
+- [ ] Bloqueio/reidentificação continua funcionando.
+- [ ] A estação restaura lockdown/overlays e volta ao modo manutenção após prova ou cancelamento.
+- [ ] Teste E2E completo em NUC real aprovado.
+- [ ] Plano de contingência documentado e validado.
 
 ---
 
@@ -338,7 +521,7 @@ Frontend: HTMX + Jinja2
 | M0 | dlib em vez de MediaPipe | Sem dependência de GPU, roda bem no NUC i5 |
 | M0 | solvePnP em vez de eye tracking puro | Mais robusto com óculos e iluminação variável |
 | M0 | FFmpeg segmentado em vez de gravação contínua | Upload incremental sem esperar o fim da prova |
-| M0 | X11 em vez de Wayland | x11grab não funciona com Wayland; kiosk em X11 é mais estável |
+| M0 | X11 em vez de Wayland | x11grab não funciona com Wayland; sessão de prova controlada em X11 é mais previsível |
 | M1 | Threshold 0.45 em vez do default 0.6 do dlib | Reduz falsos positivos em ambiente controlado |
 | M1 | `student_id` = identificador institucional | Gerado pela faculdade, único, não precisa de mapeamento |
 | M2 | `gaze_duration_sec` como único timer warn→block | `gaze_block_sec` era redundante e causava bug |
@@ -347,5 +530,9 @@ Frontend: HTMX + Jinja2
 | M3 | Sem áudio na gravação | Reduz CPU e simplifica o pipeline |
 | M3 | `PROCTOR_FACE_PIPE_FPS` configurável | FPS real com dlib (~8fps) difere do nominal (30fps) — declarar errado acelera o vídeo |
 | M4 | wmctrl por PID em vez de nome | Evita fullscreen na janela errada (VSCode, Firefox) |
-| M4 | Lockdown de teclas movido para M7 | Em desenvolvimento sempre precisa de saída de emergência |
-| M4 | Allowlist de domínios deixada para a próxima etapa | Ainda depende de definir a estratégia final de navegação |
+| M4 | Lockdown de teclas dinâmico em vez de Xorg permanente | Reduz risco de travar a NUC fora da prova e permite restauração automática |
+| M4 | Kiosk/incognito tratado como base temporária | Validou lockdown e reidentificação, mas não atende UX de abas/pesquisa |
+| M7 | Modo prova no GNOME atual do usuário `proctor` | Mantém manutenção simples e permite lockdown temporário com restauração automática |
+| M7 | Chromium maximizado em vez de `--kiosk` | Permite abas normais e barra de endereço para pesquisa em sites autorizados |
+| M7 | Extensão allowlist pré-criada | Evita custo de gerar extensão/perfil inteiro no início da prova |
+| M7 | Limpeza explícita de perfil | `--incognito` será removido; cookies e logins precisam sumir ao final da prova |

@@ -14,8 +14,30 @@ class SessionOverlay:
         self._api_port = api_port
         self._controls_proc: subprocess.Popen | None = None
         self._blocked_proc: subprocess.Popen | None = None
+        self._waiting_proc: subprocess.Popen | None = None
+        self._guard_proc: subprocess.Popen | None = None
+
+    def show_waiting(self, message: str | None = None) -> None:
+        if self._waiting_proc and self._waiting_proc.poll() is None:
+            return
+        self._waiting_proc = self._spawn(
+            [
+                sys.executable,
+                "-m",
+                "src.kiosk.overlay_app",
+                "--mode",
+                "waiting",
+                "--message",
+                message or "Sente-se e olhe para a camera para iniciar a prova.",
+            ]
+        )
+
+    def hide_waiting(self) -> None:
+        self._terminate(self._waiting_proc)
+        self._waiting_proc = None
 
     def start_controls(self) -> None:
+        self.start_guard()
         if self._controls_proc and self._controls_proc.poll() is None:
             return
         stop_url = f"http://127.0.0.1:{self._api_port}/session/stop"
@@ -30,6 +52,23 @@ class SessionOverlay:
                 stop_url,
             ]
         )
+
+    def start_guard(self) -> None:
+        if self._guard_proc and self._guard_proc.poll() is None:
+            return
+        self._guard_proc = self._spawn(
+            [
+                sys.executable,
+                "-m",
+                "src.kiosk.overlay_app",
+                "--mode",
+                "guard",
+            ]
+        )
+
+    def hide_guard(self) -> None:
+        self._terminate(self._guard_proc)
+        self._guard_proc = None
 
     def show_blocked(self, reason: str | None = None) -> None:
         if self._blocked_proc and self._blocked_proc.poll() is None:
@@ -51,7 +90,9 @@ class SessionOverlay:
         self._blocked_proc = None
 
     def stop(self) -> None:
+        self.hide_waiting()
         self.hide_blocked()
+        self.hide_guard()
         self._terminate(self._controls_proc)
         self._controls_proc = None
 

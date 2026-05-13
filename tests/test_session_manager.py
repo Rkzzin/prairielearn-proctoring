@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 from collections import deque
+from datetime import datetime, timezone
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -10,7 +11,7 @@ from src.api.server import create_app
 from src.core.autostart import SessionAutoStartWorker
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.models import IdentifyResult, IdentifyStatus
-from src.core.session import SessionError, SessionManager, SessionState
+from src.core.session import SessionError, SessionManager, SessionRuntime, SessionState, StationMode
 from src.proctor.engine import ProctorState
 
 
@@ -112,10 +113,12 @@ class FakeKiosk:
         self.blocked = False
         self.unblocked = False
         self.url = None
+        self.allowlist = None
 
-    def start(self, url):
+    def start(self, url, *, allowlist=None):
         self.started = True
         self.url = url
+        self.allowlist = allowlist
 
     def stop(self):
         self.stopped = True
@@ -137,17 +140,30 @@ class FakeLockdown:
 
     def disable(self):
         self.disabled = True
+        self.enabled = False
+
+    @property
+    def is_enabled(self):
+        return self.enabled
 
 
 class FakeOverlay:
     def __init__(self):
         self.controls_started = False
         self.blocked_shown: list[str | None] = []
+        self.waiting_shown: list[str | None] = []
+        self.waiting_hidden = 0
         self.hide_calls = 0
         self.stopped = False
 
     def start_controls(self):
         self.controls_started = True
+
+    def show_waiting(self, message=None):
+        self.waiting_shown.append(message)
+
+    def hide_waiting(self):
+        self.waiting_hidden += 1
 
     def show_blocked(self, reason=None):
         self.blocked_shown.append(reason)
@@ -234,6 +250,7 @@ def test_session_manager_start_and_stop_manual_session():
     assert uploader.started is True
     assert kiosk.started is True
     assert kiosk.url == "https://pl.test/exam"
+    assert kiosk.allowlist == []
     assert overlay.controls_started is True
     assert lockdown.enabled is True
 
@@ -474,10 +491,85 @@ def test_session_manager_resets_to_idle_if_preview_camera_cannot_open():
     assert direct_camera.released is True
 
 
+def test_exam_mode_waiting_overlay_and_autostart_flow():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame", "loop-frame"],
+    )
+
+    manager.update_config(turma_id="ES2025-T1", auto_start=True)
+    status = manager.enter_exam_mode()
+
+    assert status["mode"] == StationMode.WAITING_STUDENT.value
+    assert status["station_status"] == StationMode.WAITING_STUDENT.value
+    assert overlay.waiting_shown == [None]
+    assert lockdown.enabled is True
+
+    worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
+    worker.run_once()
+
+    assert manager.state in {SessionState.SESSION, SessionState.BLOCKED}
+    assert overlay.waiting_hidden == 1
+    manager.stop_session(reason="done")
+    assert manager.mode == StationMode.WAITING_STUDENT
+    assert lockdown.enabled is True
+    assert lockdown.disabled is False
+
+
+def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, _camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+
+    prepare_status = manager.prepare_exam_mode()
+
+    assert prepare_status["mode"] == StationMode.EXAM_READY.value
+    assert overlay.waiting_shown == []
+
+    enter_status = manager.enter_exam_mode()
+
+    assert enter_status["mode"] == StationMode.WAITING_STUDENT.value
+    assert overlay.waiting_shown == [None]
+
+    exit_status = manager.exit_exam_mode()
+
+    assert exit_status["mode"] == StationMode.MAINTENANCE.value
+    assert lockdown.disabled is True
+
+
+def test_recover_exam_mode_restores_idle_maintenance_and_lockdown():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, _camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+
+    manager.update_config(turma_id="ES2025-T1")
+    manager.enter_exam_mode()
+
+    status = manager.recover_exam_mode()
+
+    assert status["state"] == SessionState.IDLE.value
+    assert status["mode"] == StationMode.MAINTENANCE.value
+    assert overlay.waiting_hidden == 1
+    assert lockdown.disabled is True
+
+
 def test_autostart_worker_starts_session_when_enabled_and_idle():
     class FakeManager:
         def __init__(self):
             self.state = SessionState.IDLE
+            self.mode = StationMode.WAITING_STUDENT
             self.next_config = type("Cfg", (), {"auto_start": True, "turma_id": "ES2025-T1"})()
             self.calls = 0
 
@@ -493,8 +585,9 @@ def test_autostart_worker_starts_session_when_enabled_and_idle():
 
 def test_autostart_worker_ignores_disabled_or_busy_states():
     class FakeManager:
-        def __init__(self, *, auto_start: bool, state: SessionState):
+        def __init__(self, *, auto_start: bool, state: SessionState, mode: StationMode = StationMode.WAITING_STUDENT):
             self.state = state
+            self.mode = mode
             self.next_config = type("Cfg", (), {"auto_start": auto_start, "turma_id": "ES2025-T1"})()
             self.calls = 0
 
@@ -503,23 +596,24 @@ def test_autostart_worker_ignores_disabled_or_busy_states():
 
     disabled = FakeManager(auto_start=False, state=SessionState.IDLE)
     busy = FakeManager(auto_start=True, state=SessionState.SESSION)
+    maintenance = FakeManager(
+        auto_start=True,
+        state=SessionState.IDLE,
+        mode=StationMode.MAINTENANCE,
+    )
 
     SessionAutoStartWorker(session_manager=disabled, enabled=True).run_once()
     SessionAutoStartWorker(session_manager=busy, enabled=True).run_once()
+    SessionAutoStartWorker(session_manager=maintenance, enabled=True).run_once()
 
     assert disabled.calls == 0
     assert busy.calls == 0
+    assert maintenance.calls == 0
 
 
 def test_autostart_worker_does_not_restart_same_student_after_completion():
-    manager, _recognizer, _engine, _capture, _uploader, _kiosk, _overlay, _lockdown, _camera = _make_manager(
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, _lockdown, _camera = _make_manager(
         identify_results=[
-            IdentifyResult(
-                status=IdentifyStatus.MATCH,
-                student_id="123",
-                student_name="Alice",
-                confidence=0.9,
-            ),
             IdentifyResult(
                 status=IdentifyStatus.MATCH,
                 student_id="123",
@@ -528,7 +622,7 @@ def test_autostart_worker_does_not_restart_same_student_after_completion():
             ),
         ],
         engine_states=[ProctorState.NORMAL],
-        frames=["identify-frame-1", "loop-frame-1", "identify-frame-2"],
+        frames=["identify-frame"],
     )
 
     manager.update_config(
@@ -536,14 +630,53 @@ def test_autostart_worker_does_not_restart_same_student_after_completion():
         assessment="Quiz-03",
         auto_start=True,
     )
-    manager.start_session()
-    manager.stop_session(reason="student_finished")
+    manager._last_session = SessionRuntime(
+        session_id="completed",
+        turma_id="ES2025-T1",
+        assessment="Quiz-03",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        stopped_at=datetime.now(timezone.utc),
+        state=SessionState.IDLE,
+        prairielearn_url="https://prairielearn.org/pl",
+    )
+    manager.enter_exam_mode()
 
     worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
     worker.run_once()
 
     assert manager.state == SessionState.IDLE
     assert manager.get_session()["student_id"] == "123"
+    assert overlay.waiting_shown == [None]
+    assert overlay.waiting_hidden == 0
+    assert _camera.released is False
+
+
+def test_autostart_keeps_waiting_camera_open_between_failed_attempts():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, _lockdown, camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+
+    manager.update_config(
+        turma_id="ES2025-T1",
+        assessment="Quiz-03",
+        auto_start=True,
+    )
+    manager.enter_exam_mode()
+
+    worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
+    worker.run_once()
+    worker.run_once()
+
+    assert manager.state == SessionState.IDLE
+    assert manager.mode == StationMode.WAITING_STUDENT
+    assert overlay.waiting_shown == [None]
+    assert overlay.waiting_hidden == 0
+    assert camera.released is False
 
 
 @pytest.mark.asyncio
@@ -567,6 +700,10 @@ async def test_api_routes_expose_phase5_flow():
         assert response.status_code == 200
         assert response.json()["config"]["turma_id"] == "ES2025-T1"
 
+        enter = await client.post("/exam-mode/enter")
+        assert enter.status_code == 200
+        assert enter.json()["mode"] == StationMode.WAITING_STUDENT.value
+
         health = await client.get("/health")
         assert health.status_code == 200
         assert health.json()["camera_ok"] is True
@@ -587,3 +724,11 @@ async def test_api_routes_expose_phase5_flow():
         stop = await client.post("/session/stop")
         assert stop.status_code == 200
         assert stop.json()["state"] == SessionState.IDLE.value
+
+        exit_mode = await client.post("/exam-mode/exit")
+        assert exit_mode.status_code == 200
+        assert exit_mode.json()["mode"] == StationMode.MAINTENANCE.value
+
+        recover = await client.post("/exam-mode/recover")
+        assert recover.status_code == 200
+        assert recover.json()["mode"] == StationMode.MAINTENANCE.value

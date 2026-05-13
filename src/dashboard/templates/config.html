@@ -14,7 +14,6 @@
     <label>Timer (min)<input type="number" name="timer_minutes" value="45"></label>
     <label>PrairieLearn URL<input type="url" name="prairielearn_url" value="https://prairielearn.org/pl"></label>
     <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org</textarea></label>
-    <label class="checkbox"><input type="checkbox" name="auto_start" checked> Iniciar automaticamente ao identificar aluno</label>
     <label>Estações alvo
       <select name="target_station_ids" multiple size="{{ [station_choices|length, 6]|min }}">
         {% for station in station_choices %}
@@ -56,7 +55,7 @@ async function submitConfig() {
     timer_minutes: Number(data.get('timer_minutes')),
     prairielearn_url: data.get('prairielearn_url'),
     allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
-    auto_start: data.get('auto_start') === 'on',
+    auto_start: false,
     target_station_ids: Array.from(form.querySelector('[name="target_station_ids"]').selectedOptions).map(option => option.value),
     gaze_h_threshold: Number(data.get('gaze_h_threshold')),
     gaze_duration_sec: Number(data.get('gaze_duration_sec')),

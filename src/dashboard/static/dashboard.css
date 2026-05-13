@@ -148,10 +148,15 @@ button {
   font-weight: 700;
   height: fit-content;
 }
-.badge-idle, .badge-session, .badge-uploading, .badge-blocked, .badge-offline {
+.badge-idle, .badge-maintenance, .badge-exam_ready, .badge-waiting_student,
+.badge-identifying, .badge-session, .badge-uploading, .badge-blocked, .badge-offline {
   color: white;
 }
 .badge-idle { background: var(--muted); }
+.badge-maintenance { background: var(--muted); }
+.badge-exam_ready { background: #7d6a26; }
+.badge-waiting_student { background: #1f6f50; }
+.badge-identifying { background: #2f7c9f; }
 .badge-session { background: var(--success); }
 .badge-uploading { background: #4d6fa9; }
 .badge-blocked { background: var(--critical); }

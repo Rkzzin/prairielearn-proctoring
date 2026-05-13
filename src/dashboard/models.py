@@ -10,6 +10,10 @@ from pydantic import BaseModel, Field
 
 class StationStatus(str, Enum):
     IDLE = "IDLE"
+    MAINTENANCE = "MAINTENANCE"
+    EXAM_READY = "EXAM_READY"
+    WAITING_STUDENT = "WAITING_STUDENT"
+    IDENTIFYING = "IDENTIFYING"
     SESSION = "SESSION"
     BLOCKED = "BLOCKED"
     UPLOADING = "UPLOADING"
@@ -20,6 +24,9 @@ class StationStatus(str, Enum):
 class CommandType(str, Enum):
     APPLY_CONFIG = "APPLY_CONFIG"
     SET_AUTOSTART = "SET_AUTOSTART"
+    PREPARE_EXAM_MODE = "PREPARE_EXAM_MODE"
+    ENTER_EXAM_MODE = "ENTER_EXAM_MODE"
+    EXIT_EXAM_MODE = "EXIT_EXAM_MODE"
     STOP_SESSION = "STOP_SESSION"
     UNBLOCK_SESSION = "UNBLOCK_SESSION"
 
@@ -101,6 +108,7 @@ class StationHeartbeat(BaseModel):
     station_id: str
     station_name: str | None = None
     status: StationStatus
+    mode: str | None = None
     student: StudentInfo | None = None
     active_session_id: str | None = None
     assessment: str | None = None
@@ -115,6 +123,7 @@ class StationRecord(BaseModel):
     station_id: str
     station_name: str
     status: StationStatus = StationStatus.IDLE
+    mode: str | None = None
     student: StudentInfo | None = None
     active_session_id: str | None = None
     assessment: str | None = None

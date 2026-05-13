@@ -10,7 +10,11 @@ from src.core.session import SessionError, SessionManager
 
 class ConfigUpdateRequest(BaseModel):
     turma_id: str | None = None
+    assessment: str | None = None
+    timer_minutes: int | None = None
     prairielearn_url: str | None = None
+    allowlist: list[str] | None = None
+    s3_prefix: str | None = None
     session_id: str | None = None
     station_id: str | None = None
     auto_start: bool | None = None
@@ -63,6 +67,31 @@ def build_router(manager: SessionManager) -> APIRouter:
             return manager.unblock_session()
         except SessionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/exam-mode/prepare")
+    def prepare_exam_mode() -> dict[str, Any]:
+        try:
+            return manager.prepare_exam_mode()
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/exam-mode/enter")
+    def enter_exam_mode() -> dict[str, Any]:
+        try:
+            return manager.enter_exam_mode()
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/exam-mode/exit")
+    def exit_exam_mode() -> dict[str, Any]:
+        try:
+            return manager.exit_exam_mode()
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/exam-mode/recover")
+    def recover_exam_mode() -> dict[str, Any]:
+        return manager.recover_exam_mode()
 
     @router.post("/config")
     def update_config(payload: ConfigUpdateRequest) -> dict[str, Any]:

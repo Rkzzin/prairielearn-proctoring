@@ -172,6 +172,40 @@ async def test_station_command_endpoints_enqueue_commands(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_exam_mode_command_endpoints_enqueue_commands(tmp_path):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+        prepare_response = await client.post("/api/stations/nuc-01/exam/prepare")
+        enter_response = await client.post("/api/stations/nuc-01/exam/enter")
+        exit_response = await client.post("/api/stations/nuc-01/exam/exit")
+        heartbeat_response = await client.post(
+            "/api/heartbeats",
+            json={
+                "station_id": "nuc-01",
+                "station_name": "NUC Sala 1",
+                "status": "IDLE",
+                "mode": "MAINTENANCE",
+                "student": None,
+                "active_session_id": None,
+                "assessment": None,
+                "turma": None,
+                "auto_start_enabled": True,
+                "seconds_remaining": None,
+                "recent_events": [],
+            },
+        )
+
+    assert prepare_response.status_code == 202
+    assert enter_response.status_code == 202
+    assert exit_response.status_code == 202
+    commands = heartbeat_response.json()["commands"]
+    assert [item["command_type"] for item in commands] == [
+        "PREPARE_EXAM_MODE",
+        "ENTER_EXAM_MODE",
+        "EXIT_EXAM_MODE",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_autostart_command_endpoints_enqueue_toggle(tmp_path):
     async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
         enable_response = await client.post("/api/stations/nuc-01/autostart/enable")
@@ -237,7 +271,7 @@ async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path):
     assert 'NUC Sala 1 (nuc-01)' in response.text
     assert 'https://prairielearn.org/pl' in response.text
     assert 'prairielearn.org' in response.text
-    assert 'name="auto_start" checked' in response.text
+    assert 'name="auto_start"' not in response.text
 
 
 def test_dashboard_store_persists_across_restarts(tmp_path):

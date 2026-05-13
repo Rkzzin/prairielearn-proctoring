@@ -73,10 +73,23 @@ log "FFmpeg e v4l-utils instalados"
 sudo apt install -y -qq \
     git \
     curl \
+    lsof \
     xauth \
     bzip2 \
     > /dev/null 2>&1
-log "Git, curl, xauth e bzip2 instalados"
+log "Git, curl, lsof, xauth e bzip2 instalados"
+
+sudo apt install -y -qq \
+    x11-xserver-utils \
+    xbindkeys \
+    wmctrl \
+    chromium-browser \
+    > /dev/null 2>&1
+log "Pacotes do browser controlado e lockdown instalados"
+
+chmod +x scripts/install_chromium_hardening.sh
+sudo bash scripts/install_chromium_hardening.sh
+log "Policies de hardening do Chromium instaladas"
 
 # ── 2. Python venv ──
 echo ""
@@ -161,7 +174,7 @@ echo "  Para ativar o venv:"
 echo "    source venv/bin/activate"
 echo ""
 echo "  Para cadastrar alunos:"
-echo "    python3 scripts/enroll.py --turma MINHA-TURMA --ra 12345 --nome 'Nome'"
+echo "    python3 scripts/enroll.py --turma MINHA-TURMA"
 echo ""
 echo "  Para rodar testes:"
 echo "    pytest tests/ -v"

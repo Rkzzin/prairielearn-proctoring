@@ -10,7 +10,7 @@ from typing import Any, Callable
 import httpx
 
 from src.core.config import DashboardConfig
-from src.core.session import SessionManager, SessionState
+from src.core.session import SessionError, SessionManager, SessionState, StationMode
 from src.proctor.events import ProctorEvent
 
 logger = logging.getLogger(__name__)
@@ -79,18 +79,40 @@ class DashboardHeartbeatWorker:
         payload = command.get("payload") or {}
 
         if command_type == "APPLY_CONFIG":
-            self._session_manager.apply_dashboard_config(payload)
+            config = self._session_manager.apply_dashboard_config(payload)
+            if config.auto_start:
+                self._enter_exam_mode_if_idle()
             logger.info("Configuração aplicada a partir do dashboard")
             return
 
         if command_type == "SET_AUTOSTART":
-            self._session_manager.update_config(auto_start=bool(payload.get("auto_start")))
-            logger.info("SET_AUTOSTART processado: %s", bool(payload.get("auto_start")))
+            enabled = bool(payload.get("auto_start"))
+            self._session_manager.update_config(auto_start=enabled)
+            if enabled:
+                self._enter_exam_mode_if_idle()
+            else:
+                self._session_manager.exit_exam_mode()
+            logger.info("SET_AUTOSTART processado como modo prova: %s", enabled)
             return
 
         if command_type == "STOP_SESSION":
             self._session_manager.stop_session(reason="dashboard_command")
             logger.info("STOP_SESSION processado")
+            return
+
+        if command_type == "PREPARE_EXAM_MODE":
+            self._session_manager.prepare_exam_mode()
+            logger.info("PREPARE_EXAM_MODE processado")
+            return
+
+        if command_type == "ENTER_EXAM_MODE":
+            self._session_manager.enter_exam_mode()
+            logger.info("ENTER_EXAM_MODE processado")
+            return
+
+        if command_type == "EXIT_EXAM_MODE":
+            self._session_manager.exit_exam_mode()
+            logger.info("EXIT_EXAM_MODE processado")
             return
 
         if command_type == "UNBLOCK_SESSION":
@@ -100,6 +122,16 @@ class DashboardHeartbeatWorker:
             return
 
         logger.warning("Comando desconhecido do dashboard: %s", command_type)
+
+    def _enter_exam_mode_if_idle(self) -> None:
+        if self._session_manager.state != SessionState.IDLE:
+            return
+        if self._session_manager.mode == StationMode.WAITING_STUDENT:
+            return
+        try:
+            self._session_manager.enter_exam_mode()
+        except SessionError as exc:
+            logger.warning("Falha ao entrar no modo prova via auto-start: %s", exc)
 
     def _sync_session(self, client: httpx.Client) -> None:
         current = self._session_manager.dashboard_session_payload()

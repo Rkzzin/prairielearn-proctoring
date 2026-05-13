@@ -1,17 +1,20 @@
-"""Gerenciador do Chromium em modo kiosk.
+"""Gerenciador do Chromium controlado para prova.
 
 Responsabilidades:
-  - Abrir o Chromium em fullscreen
+  - Abrir o Chromium em modo controlado/maximizado
+  - Carregar a extensão local de allowlist
   - Congelar (SIGSTOP) e retomar (SIGCONT) durante bloqueios de proctoring
+  - Limpar perfil dedicado ao fim da sessão
   - Encerrar limpo ao fim da sessão
 
-Lockdown de teclado (Alt+F4, Super, Ctrl+Alt+T etc.) foi movido para M7.
+Lockdown de teclado fica em src/kiosk/lockdown.py e é acionado pelo
+SessionManager junto com o browser.
 
 Requer: wmctrl (sudo apt install wmctrl)
 
 Uso típico:
     kiosk = ChromiumKiosk()
-    kiosk.start("https://prairielearn.org/pl")
+    kiosk.start("https://prairielearn.org/pl", allowlist=["prairielearn.org"])
     kiosk.block()    # SIGSTOP durante bloqueio
     kiosk.unblock()  # SIGCONT após re-identificação
     kiosk.stop()
@@ -26,6 +29,9 @@ import shutil
 import subprocess
 import time
 from pathlib import Path
+
+from src.kiosk.allowlist import EXTENSION_DIR, build_allowlist_config, write_extension_config
+from src.kiosk.profile import ChromiumProfileCleaner, ProfileCleanupError
 
 logger = logging.getLogger(__name__)
 
@@ -53,57 +59,84 @@ def _find_chromium() -> str:
 
 
 class ChromiumKiosk:
-    """Gerencia o Chromium em modo kiosk para uma sessão de prova.
+    """Gerencia o Chromium controlado para uma sessão de prova.
 
     Args:
         display: Display X11 (default: lê $DISPLAY ou ":1").
-        profile_dir: Diretório de perfil temporário do Chromium.
+        profile_dir: Diretório de perfil dedicado do Chromium.
+        extension_dir: Diretório da extensão allowlist estática.
+        window_mode: ``maximized`` (produção), ``fullscreen`` ou ``kiosk``.
+        cleanup_profile_on_stop: limpar perfil ao encerrar o browser.
+        manage_gnome_extensions: compatibilidade para testes no GNOME.
     """
 
     def __init__(
         self,
         display: str | None = None,
         profile_dir: Path | str | None = None,
+        extension_dir: Path | str | None = None,
+        window_mode: str = "maximized",
+        cleanup_profile_on_stop: bool = True,
+        manage_gnome_extensions: bool = False,
     ):
         self._display = display or os.environ.get("DISPLAY", ":1")
         self._profile_dir = Path(profile_dir or "/tmp/proctor-chromium-profile")
+        self._extension_dir = Path(extension_dir or EXTENSION_DIR)
+        self._window_mode = window_mode
+        self._cleanup_profile_on_stop = cleanup_profile_on_stop
+        self._manage_gnome_extensions = manage_gnome_extensions
         self._proc: subprocess.Popen | None = None
         self._blocked = False
         self._disabled_extensions: list[str] = []
+        self._last_url: str | None = None
+        self._last_allowlist: list[str] = []
 
     # ──────────────────────────────────────────────
     #  Ciclo de vida
     # ──────────────────────────────────────────────
 
-    def start(self, url: str) -> None:
-        """Abre o Chromium em fullscreen na URL especificada."""
+    def start(self, url: str, *, allowlist: list[str] | None = None) -> None:
+        """Abre o Chromium controlado na URL especificada."""
         if self._proc and self._proc.poll() is None:
             logger.warning("Chromium já está rodando — ignorando start()")
             return
 
+        self._last_url = url
+        self._last_allowlist = list(allowlist or [])
         self._profile_dir.mkdir(parents=True, exist_ok=True)
+        allowlist_config = build_allowlist_config(
+            start_url=url,
+            allowlist=self._last_allowlist,
+        )
+        write_extension_config(allowlist_config, extension_dir=self._extension_dir)
         chromium = _find_chromium()
 
-        # Desabilitar extensões do Gnome que impedem fullscreen
-        self._disable_gnome_extensions()
+        if self._manage_gnome_extensions:
+            self._disable_gnome_extensions()
 
         cmd = [
             chromium,
-            "--kiosk",
-            "--start-fullscreen",
             "--no-first-run",
             "--disable-translate",
-            "--disable-extensions",
             "--disable-dev-tools",
             "--disable-default-apps",
             "--disable-background-networking",
             "--disable-sync",
             "--disable-infobars",
             "--noerrdialogs",
-            "--incognito",
+            "--password-store=basic",
+            "--disable-features=AutofillServerCommunication",
+            f"--disable-extensions-except={self._extension_dir}",
+            f"--load-extension={self._extension_dir}",
             f"--user-data-dir={self._profile_dir}",
             url,
         ]
+        if self._window_mode == "kiosk":
+            cmd.insert(1, "--kiosk")
+        elif self._window_mode == "fullscreen":
+            cmd.insert(1, "--start-fullscreen")
+        else:
+            cmd.insert(1, "--start-maximized")
 
         env = os.environ.copy()
         env["DISPLAY"] = self._display
@@ -116,8 +149,7 @@ class ChromiumKiosk:
             stderr=subprocess.DEVNULL,
         )
 
-        # Forçar fullscreen pelo PID — evita pegar janela errada por nome
-        self._force_fullscreen_by_pid()
+        self._apply_window_mode_by_pid()
         logger.info("Chromium iniciado (PID %d)", self._proc.pid)
 
     def stop(self) -> None:
@@ -135,12 +167,34 @@ class ChromiumKiosk:
                 self._proc.wait()
 
         self._proc = None
-        self._restore_gnome_extensions()
+        if self._manage_gnome_extensions:
+            self._restore_gnome_extensions()
+        if self._cleanup_profile_on_stop:
+            try:
+                ChromiumProfileCleaner(self._profile_dir).cleanup()
+            except ProfileCleanupError as exc:
+                logger.error("Falha na limpeza do perfil Chromium: %s", exc)
+                raise
         logger.info("Chromium encerrado")
 
     @property
     def is_running(self) -> bool:
         return self._proc is not None and self._proc.poll() is None
+
+    def relaunch(self) -> bool:
+        """Reabre o Chromium com a última URL/config caso ele tenha fechado."""
+        if self.is_running:
+            return True
+        if self._last_url is None:
+            logger.error("Não há URL anterior para relançar o Chromium")
+            return False
+        logger.warning("Chromium não está rodando; tentando relançar")
+        try:
+            self.start(self._last_url, allowlist=self._last_allowlist)
+        except Exception as exc:
+            logger.error("Falha ao relançar Chromium: %s", exc)
+            return False
+        return self.is_running
 
     # ──────────────────────────────────────────────
     #  Bloqueio / desbloqueio
@@ -166,15 +220,17 @@ class ChromiumKiosk:
     #  Fullscreen
     # ──────────────────────────────────────────────
 
-    def _force_fullscreen_by_pid(self) -> None:
-        """Força fullscreen via wmctrl buscando a janela pelo PID do processo.
+    def _apply_window_mode_by_pid(self) -> None:
+        """Aplica maximização/fullscreen via wmctrl buscando a janela pelo PID.
 
         Buscar pelo PID evita pegar janelas de outros aplicativos que
         possam ter "Chromium" no nome (ex: abas do VSCode ou Firefox).
         """
+        if self._window_mode == "kiosk":
+            return
         if not shutil.which("wmctrl"):
             logger.warning(
-                "wmctrl não encontrado — fullscreen não será aplicado. "
+                "wmctrl não encontrado — modo de janela não será aplicado. "
                 "Instale com: sudo apt install wmctrl"
             )
             return
@@ -210,13 +266,26 @@ class ChromiumKiosk:
             )
             return
 
-        # Aplicar fullscreen pela window ID
+        action = (
+            "add,fullscreen"
+            if self._window_mode == "fullscreen"
+            else "add,maximized_vert,maximized_horz"
+        )
         time.sleep(0.3)
         subprocess.run(
-            ["wmctrl", "-i", "-r", win_id, "-b", "add,fullscreen"],
+            ["wmctrl", "-i", "-r", win_id, "-b", action],
             env=env, capture_output=True, timeout=3,
         )
-        logger.info("Fullscreen aplicado (PID %d, window %s)", pid, win_id)
+        logger.info("Modo de janela aplicado (PID %d, window %s, %s)", pid, win_id, action)
+
+    def _force_fullscreen_by_pid(self) -> None:
+        """Compatibilidade com testes/uso legado."""
+        previous = self._window_mode
+        self._window_mode = "fullscreen"
+        try:
+            self._apply_window_mode_by_pid()
+        finally:
+            self._window_mode = previous
 
     # ──────────────────────────────────────────────
     #  Gnome extensions

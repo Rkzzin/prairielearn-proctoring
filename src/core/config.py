@@ -126,7 +126,7 @@ class RecorderConfig(BaseSettings):
         description="Formato de entrada V4L2 da webcam para o ffmpeg (ex: mjpeg, yuyv422).",
     )
     display: str = Field(
-        default=":0.0",
+        default=":1",
         description="Display X11 para captura de tela",
     )
     screen_size: str = Field(

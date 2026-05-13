@@ -68,7 +68,7 @@ class FakeClock:
         return self._last
 
 
-def test_chromium_start_adds_kiosk_flags(monkeypatch):
+def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     proc = DummyProc()
     popen_calls = []
 
@@ -78,17 +78,29 @@ def test_chromium_start_adds_kiosk_flags(monkeypatch):
 
     monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
     monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", fake_popen)
-    monkeypatch.setattr(ChromiumKiosk, "_disable_gnome_extensions", lambda self: None)
-    monkeypatch.setattr(ChromiumKiosk, "_force_fullscreen_by_pid", lambda self: None)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
 
-    kiosk = ChromiumKiosk(display=":9")
-    kiosk.start("https://example.com/exam")
+    extension_dir = tmp_path / "extension"
+    kiosk = ChromiumKiosk(
+        display=":9",
+        profile_dir=tmp_path / "proctor-chromium-profile",
+        extension_dir=extension_dir,
+        cleanup_profile_on_stop=False,
+    )
+    kiosk.start("https://example.com/exam", allowlist=["prairielearn.org"])
 
     assert kiosk.is_running is True
     cmd, env, *_ = popen_calls[0]
-    assert cmd[:3] == ["/usr/bin/chromium", "--kiosk", "--start-fullscreen"]
+    assert cmd[:2] == ["/usr/bin/chromium", "--start-maximized"]
+    assert "--kiosk" not in cmd
+    assert "--incognito" not in cmd
+    assert "--disable-extensions" not in cmd
+    assert f"--load-extension={extension_dir}" in cmd
+    assert f"--disable-extensions-except={extension_dir}" in cmd
+    assert not any(item.startswith("--host-resolver-rules=") for item in cmd)
     assert env["DISPLAY"] == ":9"
     assert cmd[-1] == "https://example.com/exam"
+    assert (extension_dir / "config.json").exists()
 
 
 def test_chromium_block_and_unblock_send_signals(monkeypatch):
@@ -102,6 +114,36 @@ def test_chromium_block_and_unblock_send_signals(monkeypatch):
     kiosk.unblock()
 
     assert proc.signals == [signal.SIGSTOP, signal.SIGCONT]
+
+
+def test_chromium_relaunch_uses_last_url_and_allowlist(monkeypatch, tmp_path):
+    procs = [DummyProc(pid=10), DummyProc(pid=11)]
+    popen_calls = []
+
+    def fake_popen(cmd, env, stdout, stderr):
+        popen_calls.append((cmd, env, stdout, stderr))
+        return procs[len(popen_calls) - 1]
+
+    monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
+
+    extension_dir = tmp_path / "extension"
+    kiosk = ChromiumKiosk(
+        display=":9",
+        profile_dir=tmp_path / "proctor-chromium-profile",
+        extension_dir=extension_dir,
+        cleanup_profile_on_stop=False,
+    )
+    kiosk.start("https://example.com/exam", allowlist=["example.edu"])
+
+    procs[0].returncode = 1
+    assert kiosk.relaunch() is True
+
+    assert len(popen_calls) == 2
+    assert popen_calls[1][0][-1] == "https://example.com/exam"
+    payload = (extension_dir / "config.json").read_text(encoding="utf-8")
+    assert "example.edu" in payload
 
 
 def test_disable_gnome_extensions_is_best_effort_when_binary_missing(monkeypatch):
@@ -251,21 +293,146 @@ def test_run_reidentify_times_out(monkeypatch):
     assert ok is False
 
 
-def test_lockdown_enable_disable_tracks_state():
-    lockdown = Lockdown(display=":3")
+def test_lockdown_enable_disable_tracks_state(monkeypatch, tmp_path):
+    run_calls = []
+    popen_calls = []
+
+    class RunningProc(DummyProc):
+        def __init__(self):
+            super().__init__(pid=99)
+            self.stderr = SimpleNamespace(read=lambda: b"")
+
+        def wait(self, timeout: float | None = None) -> int:
+            if timeout == 0.25 and self.returncode is None:
+                raise subprocess.TimeoutExpired(cmd="xbindkeys", timeout=timeout)
+            return 0
+
+    proc = RunningProc()
+
+    def fake_run(cmd, **_kwargs):
+        run_calls.append(cmd)
+        if cmd == ["gsettings", "get", "org.gnome.mutter", "overlay-key"]:
+            return SimpleNamespace(returncode=0, stdout="'Super_L'\n", stderr="")
+        if cmd[:2] == ["gsettings", "get"]:
+            return SimpleNamespace(returncode=0, stdout="['orig']\n", stderr="")
+        if cmd == ["setxkbmap", "-query"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="rules: evdev\nmodel: pc105\nlayout: br\noptions: terminate:ctrl_alt_bksp\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_popen(cmd, **_kwargs):
+        popen_calls.append(cmd)
+        return proc
+
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.run", fake_run)
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("src.kiosk.lockdown.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    lockdown = Lockdown(display=":3", state_path=tmp_path / "lockdown.json")
 
     assert lockdown.is_enabled is False
 
     lockdown.enable()
     assert lockdown.is_enabled is True
+    assert ["setxkbmap", "-option", "srvrkeys:none"] in run_calls
+    assert any(call[:4] == ["gsettings", "set", "org.gnome.desktop.wm.keybindings", "close"] for call in run_calls)
+    assert ["gsettings", "set", "org.gnome.mutter", "overlay-key", "''"] in run_calls
+    assert popen_calls[0][:3] == ["xbindkeys", "-n", "-f"]
+    assert popen_calls[0][-2:] == ["-X", ":3"]
 
     lockdown.disable()
     assert lockdown.is_enabled is False
+    assert proc.terminated is True
+    assert ["setxkbmap", "-option"] in run_calls
+    assert ["setxkbmap", "-option", "terminate:ctrl_alt_bksp"] in run_calls
+    assert ["gsettings", "set", "org.gnome.mutter", "overlay-key", "'Super_L'"] in run_calls
+    assert not (tmp_path / "lockdown.json").exists()
+
+
+def test_lockdown_can_allow_browser_navigation_shortcuts(monkeypatch, tmp_path):
+    configs = []
+
+    class RunningProc(DummyProc):
+        stderr = SimpleNamespace(read=lambda: b"")
+
+        def wait(self, timeout: float | None = None) -> int:
+            if timeout == 0.25:
+                raise subprocess.TimeoutExpired(cmd="xbindkeys", timeout=timeout)
+            return 0
+
+    def fake_run(cmd, **_kwargs):
+        if cmd[:2] == ["gsettings", "get"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="missing")
+        if cmd == ["setxkbmap", "-query"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def fake_popen(cmd, **_kwargs):
+        configs.append(cmd[3])
+        return RunningProc()
+
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.run", fake_run)
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("src.kiosk.lockdown.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    lockdown = Lockdown(
+        display=":3",
+        allow_browser_shortcuts=True,
+        state_path=tmp_path / "lockdown.json",
+    )
+    lockdown.enable()
+
+    body = open(configs[0], encoding="utf-8").read()
+    assert "Control + t" not in body
+    assert "Control + l" not in body
+    assert "Control + q" in body
+
+    lockdown.disable()
+
+
+def test_lockdown_can_restore_from_persisted_state(monkeypatch, tmp_path):
+    run_calls = []
+    state_path = tmp_path / "lockdown.json"
+    state_path.write_text(
+        """
+{
+  "display": ":3",
+  "gsettings": [
+    {
+      "key": "overlay-key",
+      "schema": "org.gnome.mutter",
+      "value": "'Super_L'"
+    }
+  ],
+  "xkb_options": "terminate:ctrl_alt_bksp"
+}
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(cmd, **_kwargs):
+        run_calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.run", fake_run)
+    monkeypatch.setattr("src.kiosk.lockdown.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    lockdown = Lockdown(display=":3", state_path=state_path)
+    lockdown.disable()
+
+    assert ["setxkbmap", "-option"] in run_calls
+    assert ["setxkbmap", "-option", "terminate:ctrl_alt_bksp"] in run_calls
+    assert ["gsettings", "set", "org.gnome.mutter", "overlay-key", "'Super_L'"] in run_calls
+    assert not state_path.exists()
 
 
 def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     calls = []
-    procs = [DummyProc(pid=10), DummyProc(pid=11)]
+    procs = [DummyProc(pid=10), DummyProc(pid=11), DummyProc(pid=12), DummyProc(pid=13)]
 
     def fake_popen(cmd, env, stdout, stderr):
         calls.append((cmd, env))
@@ -274,13 +441,18 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     monkeypatch.setattr("src.kiosk.overlay.subprocess.Popen", fake_popen)
 
     overlay = SessionOverlay(display=":5", api_port=8123)
+    overlay.show_waiting()
     overlay.start_controls()
     overlay.show_blocked("ABSENCE")
 
-    assert calls[0][0][-4:] == ["--mode", "controls", "--stop-url", "http://127.0.0.1:8123/session/stop"]
+    assert calls[0][0][-4:-2] == ["--mode", "waiting"]
     assert calls[0][1]["DISPLAY"] == ":5"
-    assert calls[1][0][-4:] == ["--mode", "blocked", "--reason", "ABSENCE"]
+    assert calls[1][0][-2:] == ["--mode", "guard"]
+    assert calls[2][0][-4:] == ["--mode", "controls", "--stop-url", "http://127.0.0.1:8123/session/stop"]
+    assert calls[3][0][-4:] == ["--mode", "blocked", "--reason", "ABSENCE"]
 
     overlay.stop()
     assert procs[0].terminated is True
     assert procs[1].terminated is True
+    assert procs[2].terminated is True
+    assert procs[3].terminated is True

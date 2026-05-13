@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 
-from src.core.session import SessionError, SessionManager, SessionState
+from src.core.session import SessionError, SessionManager, SessionState, StationMode
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +50,8 @@ class SessionAutoStartWorker:
         if not cfg.auto_start or not cfg.turma_id:
             return
         if self._session_manager.state != SessionState.IDLE:
+            return
+        if self._session_manager.mode != StationMode.WAITING_STUDENT:
             return
 
         try:

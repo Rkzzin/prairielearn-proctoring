@@ -131,6 +131,7 @@ class DashboardStore:
             if payload.station_name:
                 station.station_name = payload.station_name
             station.status = payload.status
+            station.mode = payload.mode
             station.student = payload.student
             station.active_session_id = payload.active_session_id
             station.assessment = payload.assessment
@@ -200,6 +201,7 @@ class DashboardStore:
             station = self._stations.get(session.station_id)
             if station:
                 station.status = StationStatus.IDLE
+                station.mode = "MAINTENANCE"
                 station.active_session_id = None
                 station.student = None
                 station.seconds_remaining = None
@@ -268,6 +270,15 @@ class DashboardStore:
 
         self._broadcast()
         return result
+
+    def set_station_exam_mode(self, station_id: str, command_type: CommandType) -> CommandRecord:
+        if command_type not in {
+            CommandType.PREPARE_EXAM_MODE,
+            CommandType.ENTER_EXAM_MODE,
+            CommandType.EXIT_EXAM_MODE,
+        }:
+            raise ValueError(f"Comando de modo prova inválido: {command_type}")
+        return self.enqueue_command(station_id, command_type)
 
     def set_station_autostart(self, station_id: str, enabled: bool) -> CommandRecord:
         with self._lock:

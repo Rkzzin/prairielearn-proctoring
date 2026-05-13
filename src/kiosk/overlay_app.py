@@ -229,17 +229,87 @@ def _blocked_mode(reason: str) -> int:
     return 0
 
 
+def _waiting_mode(message: str) -> int:
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.title("Aguardando aluno")
+    root.attributes("-fullscreen", True)
+    root.attributes("-topmost", True)
+    root.configure(bg="#0f1f1a")
+
+    container = tk.Frame(root, bg="#0f1f1a")
+    container.place(relx=0.5, rely=0.5, anchor="center")
+
+    eyebrow = tk.Label(
+        container,
+        text="PROCTOR STATION",
+        fg="#9fc7ad",
+        bg="#0f1f1a",
+        font=("Helvetica", 14, "bold"),
+    )
+    eyebrow.pack(pady=(0, 16))
+
+    title = tk.Label(
+        container,
+        text=message,
+        fg="white",
+        bg="#0f1f1a",
+        wraplength=900,
+        justify="center",
+        font=("Helvetica", 30, "bold"),
+    )
+    title.pack(pady=(0, 18))
+
+    subtitle = tk.Label(
+        container,
+        text="A prova iniciara automaticamente quando sua identidade for confirmada.",
+        fg="#d7e4d5",
+        bg="#0f1f1a",
+        wraplength=780,
+        justify="center",
+        font=("Helvetica", 18),
+    )
+    subtitle.pack()
+
+    root.mainloop()
+    return 0
+
+
+def _guard_mode(height: int) -> int:
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.title("Proctor Guard")
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    root.configure(bg="#0b0f12", cursor="none")
+
+    screen_width = root.winfo_screenwidth()
+    guard_height = max(1, height)
+    root.geometry(f"{screen_width}x{guard_height}+0+0")
+
+    root.mainloop()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Overlay da estação de prova")
-    parser.add_argument("--mode", choices=["controls", "blocked"], required=True)
+    parser.add_argument("--mode", choices=["controls", "blocked", "waiting", "guard"], required=True)
     parser.add_argument("--stop-url", default="http://127.0.0.1:8000/session/stop")
     parser.add_argument("--reason", default="")
+    parser.add_argument("--message", default="Sente-se e olhe para a camera para iniciar a prova.")
+    parser.add_argument("--guard-height", type=int, default=32)
     args = parser.parse_args(argv)
 
     os.environ.setdefault("DISPLAY", os.environ.get("DISPLAY", ":1"))
 
     if args.mode == "controls":
         return _controls_mode(args.stop_url)
+    if args.mode == "waiting":
+        return _waiting_mode(args.message)
+    if args.mode == "guard":
+        return _guard_mode(args.guard_height)
     return _blocked_mode(args.reason)
 
 

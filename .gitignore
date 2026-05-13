@@ -3,6 +3,9 @@
 /venv
 .env
 __pycache__*
+*.py[cod]
+*.egg-info/
+.pytest_cache/
 /src/proctor_station*
 .codex
 .python-version
@@ -12,6 +15,8 @@ tmp-*
 
 # Students information
 encodings
+/data/dashboard/
+/data/sessions/
 
 
 # Face recognition models

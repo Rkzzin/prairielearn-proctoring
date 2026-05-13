@@ -1,0 +1,28 @@
+{
+  "blockedMessage": "Este site nao esta autorizado para esta prova.",
+  "sites": [
+    {
+      "host": "login.microsoftonline.com",
+      "label": "login.microsoftonline.com",
+      "url": "https://login.microsoftonline.com"
+    },
+    {
+      "host": "prairielearn.org",
+      "label": "prairielearn.org",
+      "url": "https://prairielearn.org"
+    },
+    {
+      "host": "us.prairielearn.com",
+      "label": "us.prairielearn.com",
+      "url": "https://us.prairielearn.com"
+    },
+    {
+      "host": "youtube.com",
+      "label": "youtube.com",
+      "url": "https://youtube.com"
+    }
+  ],
+  "startUrl": "https://prairielearn.org/pl",
+  "strictSubresources": false,
+  "version": 1
+}
