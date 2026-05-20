@@ -10,10 +10,14 @@
         {% endfor %}
       </select>
     </label>
+    {% if s3_turmas_error %}
+    <p class="empty">Não foi possível listar turmas no S3; usando turmas conhecidas localmente. {{ s3_turmas_error }}</p>
+    {% endif %}
     <label>Assessment<input type="text" name="assessment" value="Quiz-03"></label>
     <label>Timer (min)<input type="number" name="timer_minutes" value="45"></label>
     <label>PrairieLearn URL<input type="url" name="prairielearn_url" value="https://prairielearn.org/pl"></label>
-    <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org</textarea></label>
+    <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org
+login.microsoftonline.com</textarea></label>
     <label>Estações alvo
       <select name="target_station_ids" multiple size="{{ [station_choices|length, 6]|min }}">
         {% for station in station_choices %}

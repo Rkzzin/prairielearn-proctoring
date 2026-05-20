@@ -1,33 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel two-column">
+<section class="panel">
   <form
     class="form-card"
-    hx-post="/api/enrollment"
-    hx-encoding="multipart/form-data"
-    hx-target="#enrollment-list"
+    hx-post="/api/enrollment/s3"
+    hx-target="#s3-enrollment-result"
     hx-swap="innerHTML"
   >
-    <h2>Novo enrollment</h2>
-    <label>Turma<input type="text" name="turma" value="ES2025-T1"></label>
-    <label>RA<input type="text" name="student_id" value=""></label>
-    <label>Nome<input type="text" name="student_name" value=""></label>
-    <label>Origem
-      <select name="source">
-        <option value="upload">Upload de fotos</option>
-        <option value="webcam">Webcam ao vivo</option>
+    <h2>Enrollment completo via S3</h2>
+    {% if s3_error %}
+    <p class="empty">Não foi possível listar turmas no S3: {{ s3_error }}</p>
+    {% endif %}
+    <label>Turma no S3
+      <select name="turma" {% if not s3_turmas %}disabled{% endif %}>
+        {% for turma in s3_turmas %}
+        <option value="{{ turma }}">{{ turma }}</option>
+        {% endfor %}
       </select>
     </label>
-    <label>Fotos<input type="file" name="files" multiple></label>
-    <button type="submit">Registrar</button>
+    <button type="submit" {% if not s3_turmas %}disabled{% endif %}>Gerar enrollment da turma</button>
+    <div id="s3-enrollment-result"></div>
   </form>
-
-  <section class="panel inset">
-    <h2>Cadastros recentes</h2>
-    <div id="enrollment-list">
-      {% include "_enrollments.html" %}
-    </div>
-  </section>
 </section>
 {% endblock %}
-

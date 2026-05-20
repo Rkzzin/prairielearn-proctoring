@@ -136,14 +136,42 @@ def test_chromium_relaunch_uses_last_url_and_allowlist(monkeypatch, tmp_path):
         cleanup_profile_on_stop=False,
     )
     kiosk.start("https://example.com/exam", allowlist=["example.edu"])
+    cookie_file = tmp_path / "proctor-chromium-profile" / "Default" / "Cookies"
+    cookie_file.parent.mkdir(parents=True)
+    cookie_file.write_text("keep-login", encoding="utf-8")
 
     procs[0].returncode = 1
     assert kiosk.relaunch() is True
 
     assert len(popen_calls) == 2
     assert popen_calls[1][0][-1] == "https://example.com/exam"
+    assert cookie_file.read_text(encoding="utf-8") == "keep-login"
     payload = (extension_dir / "config.json").read_text(encoding="utf-8")
     assert "example.edu" in payload
+
+
+def test_chromium_stop_cleans_profile_after_formal_session_end(monkeypatch, tmp_path):
+    proc = DummyProc()
+
+    monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", lambda *args, **kwargs: proc)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
+
+    profile_dir = tmp_path / "proctor-chromium-profile"
+    kiosk = ChromiumKiosk(
+        display=":9",
+        profile_dir=profile_dir,
+        extension_dir=tmp_path / "extension",
+    )
+    kiosk.start("https://example.com/exam", allowlist=["example.edu"])
+    (profile_dir / "Default").mkdir(parents=True)
+    (profile_dir / "Default" / "Cookies").write_text("cookie", encoding="utf-8")
+    (profile_dir / "Default" / "Local Storage").mkdir()
+
+    kiosk.stop()
+
+    assert proc.terminated is True
+    assert not profile_dir.exists()
 
 
 def test_disable_gnome_extensions_is_best_effort_when_binary_missing(monkeypatch):

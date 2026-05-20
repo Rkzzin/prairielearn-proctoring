@@ -63,6 +63,29 @@ class S3Client:
         logger.info("Turma '%s': %d fotos encontradas no S3", turma_id, len(keys))
         return keys
 
+    def list_photo_turmas(self) -> list[str]:
+        """Lista turmas que possuem pasta de fotos no S3.
+
+        Espera o layout ``photos_prefix/turma_id/foto.ext`` e retorna os
+        ``turma_id`` encontrados diretamente abaixo de ``photos_prefix``.
+        """
+        prefix = f"{self.config.photos_prefix.strip('/')}/"
+        turmas: set[str] = set()
+
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(
+            Bucket=self.config.bucket,
+            Prefix=prefix,
+            Delimiter="/",
+        ):
+            for item in page.get("CommonPrefixes", []):
+                raw = item.get("Prefix", "")
+                turma = raw.removeprefix(prefix).strip("/")
+                if turma:
+                    turmas.add(turma)
+
+        return sorted(turmas)
+
     def download_student_photo(self, s3_key: str) -> StudentPhoto:
         """Baixa uma foto do S3 e retorna como array BGR (OpenCV).
 

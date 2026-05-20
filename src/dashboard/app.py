@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import anyio
 from datetime import timezone
 from io import StringIO
 from pathlib import Path
@@ -21,6 +22,7 @@ from src.dashboard.models import (
     SessionRecord,
     StationHeartbeat,
 )
+from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.store import DashboardStore
 
 
@@ -41,6 +43,7 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     )
     app.state.store = dashboard_store
     app.state.templates = templates
+    app.state.s3_enrollment_service = S3EnrollmentService(app_config)
 
     def render_template(request: Request, template_name: str, **context: object) -> HTMLResponse:
         return templates.TemplateResponse(
@@ -62,11 +65,18 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request) -> HTMLResponse:
         snapshot = dashboard_store.snapshot()
+        s3_turmas_error = None
+        try:
+            known_turmas = request.app.state.s3_enrollment_service.list_turmas()
+        except Exception as exc:
+            s3_turmas_error = str(exc)
+            known_turmas = dashboard_store.list_known_turmas()
         return render_template(
             request,
             "config.html",
             title="Configuração de prova",
-            known_turmas=dashboard_store.list_known_turmas(),
+            known_turmas=known_turmas,
+            s3_turmas_error=s3_turmas_error,
             station_choices=dashboard_store.list_station_choices(),
             **snapshot,
         )
@@ -74,10 +84,18 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     @app.get("/enrollment", response_class=HTMLResponse)
     async def enrollment_page(request: Request) -> HTMLResponse:
         snapshot = dashboard_store.snapshot()
+        s3_turmas: list[str] = []
+        s3_error = None
+        try:
+            s3_turmas = request.app.state.s3_enrollment_service.list_turmas()
+        except Exception as exc:
+            s3_error = str(exc)
         return render_template(
             request,
             "enrollment.html",
             title="Enrollment",
+            s3_turmas=s3_turmas,
+            s3_error=s3_error,
             **snapshot,
         )
 
@@ -238,6 +256,45 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         return render_template(
             request,
             "_enrollments.html",
+            enrollments=dashboard_store.list_enrollments(),
+        )
+
+    @app.post("/api/enrollment/s3")
+    async def create_s3_enrollment(
+        request: Request,
+        turma: str = Form(...),
+    ) -> HTMLResponse:
+        try:
+            summary = await anyio.to_thread.run_sync(
+                lambda: request.app.state.s3_enrollment_service.enroll_turma(
+                    turma,
+                    force=True,
+                )
+            )
+        except S3EnrollmentError as exc:
+            return render_template(
+                request,
+                "_s3_enrollment_result.html",
+                summary=None,
+                error=str(exc),
+            )
+
+        for student in summary.students:
+            if not student.success:
+                continue
+            dashboard_store.add_enrollment(
+                turma=summary.turma,
+                student_id=student.student_id,
+                student_name=student.student_name,
+                source="s3",
+                file_names=[student.s3_key],
+            )
+
+        return render_template(
+            request,
+            "_s3_enrollment_result.html",
+            summary=summary,
+            error=None,
             enrollments=dashboard_store.list_enrollments(),
         )
 

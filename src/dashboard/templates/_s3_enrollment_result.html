@@ -1,0 +1,17 @@
+{% if error %}
+<p class="empty">{{ error }}</p>
+{% elif summary %}
+<div class="notice">
+  <strong>{{ summary.turma }}</strong>: {{ summary.ok }}/{{ summary.total }} aluno(s) cadastrados.
+  {% if summary.failed %}{{ summary.failed }} falharam.{% endif %}
+  {% if summary.pkl_path %}<span>.pkl: {{ summary.pkl_path }}</span>{% endif %}
+</div>
+<ul class="stack">
+  {% for student in summary.students %}
+  <li>
+    <strong>{% if student.success %}✓{% else %}✗{% endif %} {{ student.student_name }}</strong>
+    <span>{{ student.message }} · {{ student.s3_key }}</span>
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}

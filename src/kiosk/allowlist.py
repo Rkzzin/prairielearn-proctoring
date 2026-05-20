@@ -183,12 +183,13 @@ def _default_url_for_host(host: str) -> str:
 def _implicit_hosts_for_start_host(host: str) -> list[str]:
     """Inclui hosts conhecidos de redirects do provedor da prova.
 
-    PrairieLearn publica a URL curta em prairielearn.org, mas o login real
-    redireciona para us.prairielearn.com. Sem esse host implícito a allowlist
-    bloqueia a própria prova antes do aluno conseguir autenticar.
+    PrairieLearn publica a URL curta em prairielearn.org, mas o fluxo real pode
+    redirecionar para us.prairielearn.com e Microsoft Online. Sem esses hosts
+    implícitos a allowlist bloqueia a própria prova antes do aluno conseguir
+    autenticar.
     """
     if host == "prairielearn.org" or host.endswith(".prairielearn.org"):
-        return ["us.prairielearn.com"]
+        return ["login.microsoftonline.com", "us.prairielearn.com"]
     return []
 
 

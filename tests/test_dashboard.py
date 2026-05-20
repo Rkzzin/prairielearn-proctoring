@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -17,12 +18,49 @@ from src.dashboard.models import (
     StationStatus,
     StudentInfo,
 )
+from src.dashboard.enrollment_service import S3EnrollmentStudent, S3EnrollmentSummary
 from src.dashboard.store import DashboardStore
 
 
 def _make_app(tmp_path):
     config = AppConfig(data_dir=tmp_path)
     return create_app(config=config)
+
+
+class FakeS3EnrollmentService:
+    def __init__(self):
+        self.calls = []
+
+    def list_turmas(self):
+        return ["ES2025-T1", "ES2025-T2"]
+
+    def enroll_turma(self, turma: str, *, force: bool = False):
+        self.calls.append((turma, force))
+        return S3EnrollmentSummary(
+            turma=turma,
+            total=2,
+            ok=1,
+            failed=1,
+            pkl_path=Path("data/encodings") / f"{turma}.pkl",
+            students=[
+                S3EnrollmentStudent(
+                    student_id="alice",
+                    student_name="alice",
+                    s3_key=f"fotos/{turma}/alice.jpg",
+                    success=True,
+                    samples_captured=3,
+                    message="3 samples capturados com sucesso.",
+                ),
+                S3EnrollmentStudent(
+                    student_id="bob",
+                    student_name="bob",
+                    s3_key=f"fotos/{turma}/bob.jpg",
+                    success=False,
+                    samples_captured=0,
+                    message="verifique se a foto contém exatamente 1 rosto.",
+                ),
+            ],
+        )
 
 
 @pytest.mark.asyncio
@@ -145,6 +183,51 @@ async def test_enrollment_form_updates_partial(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_enrollment_page_lists_s3_turmas(tmp_path):
+    app = _make_app(tmp_path)
+    app.state.s3_enrollment_service = FakeS3EnrollmentService()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/enrollment")
+
+    assert response.status_code == 200
+    assert "Enrollment completo via S3" in response.text
+    assert '<option value="ES2025-T1">ES2025-T1</option>' in response.text
+    assert '<option value="ES2025-T2">ES2025-T2</option>' in response.text
+    assert "Reprocessar" not in response.text
+    assert 'name="force"' not in response.text
+    assert "Novo enrollment" not in response.text
+    assert "Cadastros recentes" not in response.text
+    assert 'hx-post="/api/enrollment"' not in response.text
+
+
+@pytest.mark.asyncio
+async def test_s3_enrollment_endpoint_processes_turma_and_records_successes(tmp_path):
+    app = _make_app(tmp_path)
+    service = FakeS3EnrollmentService()
+    app.state.s3_enrollment_service = service
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/enrollment/s3",
+            data={"turma": "ES2025-T1"},
+        )
+
+    assert response.status_code == 200
+    assert "ES2025-T1" in response.text
+    assert "1/2 aluno" in response.text
+    assert "alice" in response.text
+    assert "bob" in response.text
+    assert service.calls == [("ES2025-T1", True)]
+
+    enrollments = app.state.store.list_enrollments()
+    assert len(enrollments) == 1
+    assert enrollments[0].student_id == "alice"
+    assert enrollments[0].source == "s3"
+    assert enrollments[0].file_names == ["fotos/ES2025-T1/alice.jpg"]
+
+
+@pytest.mark.asyncio
 async def test_station_command_endpoints_enqueue_commands(tmp_path):
     async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
         stop_response = await client.post("/api/stations/nuc-01/session/stop")
@@ -236,9 +319,10 @@ async def test_autostart_command_endpoints_enqueue_toggle(tmp_path):
 @pytest.mark.asyncio
 async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path):
     app = _make_app(tmp_path)
+    app.state.s3_enrollment_service = FakeS3EnrollmentService()
     store = app.state.store
     store.add_enrollment(
-        turma="ES2025-T1",
+        turma="LOCAL-ONLY",
         student_id="123",
         student_name="Alice Silva",
         source="upload",
@@ -267,6 +351,8 @@ async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path):
     assert response.status_code == 200
     assert '<select name="turma">' in response.text
     assert '<option value="ES2025-T1"' in response.text
+    assert '<option value="ES2025-T2"' in response.text
+    assert "LOCAL-ONLY" not in response.text
     assert '<select name="target_station_ids" multiple' in response.text
     assert 'NUC Sala 1 (nuc-01)' in response.text
     assert 'https://prairielearn.org/pl' in response.text

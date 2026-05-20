@@ -109,7 +109,10 @@ proctor-station/
 
 ### Fluxo de enrollment
 
-Alunos sobem suas fotos nas primeiras semanas de aula para o S3. Após o prazo, o operador roda o enrollment para gerar o `.pkl` local na NUC.
+Alunos sobem suas fotos nas primeiras semanas de aula para o S3. Após o prazo,
+o operador roda o enrollment para gerar o `.pkl` local na NUC. Isso pode ser
+feito pelo dashboard em `/enrollment`, selecionando a turma detectada no S3, ou
+pela CLI.
 
 ```
 Layout no S3:
@@ -117,12 +120,15 @@ Layout no S3:
 
 Fluxo:
   1. Alunos fazem upload de suas fotos para o S3
-  2. Operador roda: python scripts/enroll.py --turma ES2025-T1
-  3. Script baixa fotos do S3, gera encodings 128-d via dlib ResNet
+  2. Operador seleciona a turma em /enrollment ou roda scripts/enroll.py
+  3. Sistema baixa fotos do S3, gera encodings 128-d via dlib ResNet
   4. Salva em data/encodings/ES2025-T1.pkl
 ```
 
 ```bash
+# Pelo dashboard
+Abrir /enrollment → selecionar turma no dropdown S3 → Gerar enrollment da turma
+
 # Enrollment completo de uma turma
 python scripts/enroll.py --turma ES2025-T1
 
