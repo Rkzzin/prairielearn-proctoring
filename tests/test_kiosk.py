@@ -97,6 +97,10 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     assert "--disable-extensions" not in cmd
     assert f"--load-extension={extension_dir}" in cmd
     assert f"--disable-extensions-except={extension_dir}" in cmd
+    assert any(
+        item.startswith(f"--user-data-dir={tmp_path / 'proctor-chromium-profile' / 'proctor-session-'}")
+        for item in cmd
+    )
     assert not any(item.startswith("--host-resolver-rules=") for item in cmd)
     assert env["DISPLAY"] == ":9"
     assert cmd[-1] == "https://example.com/exam"
@@ -136,7 +140,8 @@ def test_chromium_relaunch_uses_last_url_and_allowlist(monkeypatch, tmp_path):
         cleanup_profile_on_stop=False,
     )
     kiosk.start("https://example.com/exam", allowlist=["example.edu"])
-    cookie_file = tmp_path / "proctor-chromium-profile" / "Default" / "Cookies"
+    assert kiosk._profile_dir is not None
+    cookie_file = kiosk._profile_dir / "Default" / "Cookies"
     cookie_file.parent.mkdir(parents=True)
     cookie_file.write_text("keep-login", encoding="utf-8")
 
@@ -164,14 +169,96 @@ def test_chromium_stop_cleans_profile_after_formal_session_end(monkeypatch, tmp_
         extension_dir=tmp_path / "extension",
     )
     kiosk.start("https://example.com/exam", allowlist=["example.edu"])
-    (profile_dir / "Default").mkdir(parents=True)
-    (profile_dir / "Default" / "Cookies").write_text("cookie", encoding="utf-8")
-    (profile_dir / "Default" / "Local Storage").mkdir()
+    assert kiosk._profile_dir is not None
+    active_profile = kiosk._profile_dir
+    (active_profile / "Default").mkdir(parents=True)
+    (active_profile / "Default" / "Cookies").write_text("cookie", encoding="utf-8")
+    (active_profile / "Default" / "Local Storage").mkdir()
 
     kiosk.stop()
 
     assert proc.terminated is True
-    assert not profile_dir.exists()
+    assert not active_profile.exists()
+    assert kiosk._profile_dir is None
+
+
+def test_chromium_start_uses_new_profile_after_formal_stop(monkeypatch, tmp_path):
+    procs = [DummyProc(pid=10), DummyProc(pid=11)]
+    popen_calls = []
+
+    def fake_popen(cmd, env, stdout, stderr):
+        popen_calls.append((cmd, env, stdout, stderr))
+        return procs[len(popen_calls) - 1]
+
+    monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
+
+    kiosk = ChromiumKiosk(
+        display=":9",
+        profile_dir=tmp_path / "proctor-chromium-profile",
+        extension_dir=tmp_path / "extension",
+    )
+    kiosk.start("https://example.com/exam", allowlist=["example.edu"])
+    first_profile = kiosk._profile_dir
+    assert first_profile is not None
+    kiosk.stop()
+
+    kiosk.start("https://example.com/exam", allowlist=["example.edu"])
+    second_profile = kiosk._profile_dir
+
+    assert second_profile is not None
+    assert second_profile != first_profile
+    assert f"--user-data-dir={first_profile}" in popen_calls[0][0]
+    assert f"--user-data-dir={second_profile}" in popen_calls[1][0]
+
+
+def test_chromium_stop_terminates_remaining_processes_for_profile(monkeypatch, tmp_path):
+    proc = DummyProc()
+    proc.returncode = 0
+    signals = []
+
+    monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", lambda *args, **kwargs: proc)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
+    monkeypatch.setattr(ChromiumKiosk, "_find_profile_processes", lambda self: [9876])
+    monkeypatch.setattr(ChromiumKiosk, "_wait_profile_processes", lambda self, pids, timeout: None)
+    monkeypatch.setattr(
+        ChromiumKiosk,
+        "_signal_pid",
+        staticmethod(lambda pid, sig: signals.append((pid, sig))),
+    )
+
+    profile_dir = tmp_path / "proctor-chromium-profile"
+    kiosk = ChromiumKiosk(
+        display=":9",
+        profile_dir=profile_dir,
+        extension_dir=tmp_path / "extension",
+        cleanup_profile_on_stop=False,
+    )
+    kiosk.start("https://example.com/exam", allowlist=["example.edu"])
+
+    kiosk.stop()
+
+    assert proc.terminated is False
+    assert signals == [(9876, signal.SIGTERM), (9876, signal.SIGKILL)]
+
+
+def test_chromium_profile_process_match_requires_exact_user_data_dir(tmp_path):
+    profile_dir = str((tmp_path / "proctor-chromium-profile").resolve())
+
+    assert ChromiumKiosk._cmdline_uses_profile(
+        ["/usr/bin/chromium", f"--user-data-dir={profile_dir}"],
+        profile_dir,
+    )
+    assert ChromiumKiosk._cmdline_uses_profile(
+        ["/usr/bin/chromium", "--user-data-dir", profile_dir],
+        profile_dir,
+    )
+    assert not ChromiumKiosk._cmdline_uses_profile(
+        ["/usr/bin/chromium", f"--user-data-dir={profile_dir}-other"],
+        profile_dir,
+    )
 
 
 def test_disable_gnome_extensions_is_best_effort_when_binary_missing(monkeypatch):
