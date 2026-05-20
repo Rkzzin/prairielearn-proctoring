@@ -240,6 +240,19 @@ def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, m
     assert commands, "ffmpeg da webcam não foi iniciado"
     cmd = commands[0]
     assert "-filter_complex" in cmd
+    assert "-f" in cmd
+    assert "alsa" in cmd
+    assert "hw:CARD=C920,DEV=0" in cmd
+    assert "-map" in cmd
+    assert "1:a:0" in cmd
+    assert "-c:a" in cmd
+    assert "aac" in cmd
+    assert "-b:a" in cmd
+    assert "96k" in cmd
+    assert "-ac" in cmd
+    assert "1" in cmd
+    assert "-ar" in cmd
+    assert "48000" in cmd
     assert "udp://127.0.0.1:19191?pkt_size=1316" in cmd
     assert "-use_wallclock_as_timestamps" in cmd
     assert "-fps_mode" in cmd
@@ -259,6 +272,43 @@ def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, m
     assert "repeat-headers=1:aud=1" in cmd
     assert "mpeg1video" not in cmd
     assert capture.preview_url == "udp://127.0.0.1:19191?overrun_nonfatal=1&fifo_size=5000000"
+
+
+def test_capture_webcam_ffmpeg_command_can_disable_audio(tmp_path: Path, monkeypatch):
+    commands: list[list[str]] = []
+
+    class FakeProc(DummyProc):
+        def __init__(self, cmd):
+            super().__init__()
+            self.cmd = cmd
+            self.stderr = []
+
+    def fake_popen(cmd, **_kwargs):
+        commands.append(cmd)
+        return FakeProc(cmd)
+
+    monkeypatch.setattr("src.recorder.capture.subprocess.Popen", fake_popen)
+
+    capture = Capture(
+        session_id="sess-no-audio",
+        s3_config=S3Config(segment_duration_sec=300),
+        face_config=FaceConfig(
+            models_dir=tmp_path / "models",
+            encodings_dir=tmp_path / "encodings",
+        ),
+        app_config=AppConfig(data_dir=tmp_path),
+        recorder_config=RecorderConfig(webcam_audio_enabled=False),
+    )
+
+    monkeypatch.setattr(capture, "_start_monitor_threads", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(capture, "_ensure_process_started", lambda *_args, **_kwargs: None)
+
+    capture._start_webcam_stream()
+
+    cmd = commands[0]
+    assert "alsa" not in cmd
+    assert "1:a:0" not in cmd
+    assert "-c:a" not in cmd
 
 
 def test_capture_ensure_process_started_raises_if_ffmpeg_exits_early(tmp_path: Path, monkeypatch):
@@ -333,6 +383,9 @@ def test_capture_screen_ffmpeg_command_uses_browser_compatible_h264(tmp_path: Pa
     assert "yuv420p" in cmd
     assert "-segment_format_options" in cmd
     assert "movflags=+faststart" in cmd
+    assert "alsa" not in cmd
+    assert "1:a:0" not in cmd
+    assert "-c:a" not in cmd
 
 
 def test_resolve_screen_capture_size_uses_display_resolution_from_xrandr(tmp_path: Path, monkeypatch):

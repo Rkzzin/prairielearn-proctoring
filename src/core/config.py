@@ -125,6 +125,18 @@ class RecorderConfig(BaseSettings):
         default="mjpeg",
         description="Formato de entrada V4L2 da webcam para o ffmpeg (ex: mjpeg, yuyv422).",
     )
+    webcam_audio_enabled: bool = Field(
+        default=True,
+        description="Gravar áudio ambiente do microfone da webcam junto com o vídeo da webcam.",
+    )
+    webcam_audio_device: str = Field(
+        default="hw:CARD=C920,DEV=0",
+        description="Dispositivo ALSA de captura do microfone da webcam para o ffmpeg.",
+    )
+    webcam_audio_bitrate: str = Field(
+        default="96k",
+        description="Bitrate AAC usado no áudio ambiente gravado no vídeo da webcam.",
+    )
     display: str = Field(
         default=":1",
         description="Display X11 para captura de tela",

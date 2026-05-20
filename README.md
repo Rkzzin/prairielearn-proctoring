@@ -257,8 +257,8 @@ Fluxo real:
 1. `SessionManager` abre `/dev/video0` por OpenCV só para identificar o aluno.
 2. Após o match, a câmera física é liberada.
 3. `Capture.start()` sobe dois processos FFmpeg independentes: webcam e tela.
-4. O FFmpeg da webcam abre `/dev/video0` via `v4l2` e aplica `split=2`.
-5. O ramo `record` grava segmentos `webcam_%03d.mp4`.
+4. O FFmpeg da webcam abre `/dev/video0` via `v4l2` e o microfone da C920 via ALSA.
+5. O ramo `record` grava segmentos `webcam_%03d.mp4` com vídeo da câmera e áudio ambiente.
 6. O ramo `preview` publica MPEG-TS em `udp://127.0.0.1:18181?pkt_size=1316`.
 7. O OpenCV reconecta em `udp://127.0.0.1:18181?overrun_nonfatal=1&fifo_size=5000000` para gaze, ausência e reidentificação.
 8. O FFmpeg da tela usa `x11grab`; o tamanho real do display é detectado via `xrandr --current` e redimensionado para `PROCTOR_REC_SCREEN_SIZE`.
@@ -270,8 +270,10 @@ Comandos equivalentes:
 ffmpeg -f v4l2 -thread_queue_size 512 -input_format mjpeg \
        -use_wallclock_as_timestamps 1 \
        -framerate 30 -video_size 1280x720 -i /dev/video0 \
+       -f alsa -thread_queue_size 512 -i hw:CARD=C920,DEV=0 \
        -filter_complex "[0:v]split=2[record][preview];[preview]fps=10,scale=640:360[preview_out]" \
-       -map "[record]" \
+       -map "[record]" -map 1:a:0 \
+       -c:a aac -b:a 96k -ac 1 -ar 48000 \
        -c:v libx264 -preset veryfast -crf 23 -profile:v high -pix_fmt yuv420p \
        -threads 1 -fps_mode passthrough \
        -f segment -segment_time 300 -segment_format_options movflags=+faststart \
@@ -296,6 +298,7 @@ ffmpeg -f x11grab -thread_queue_size 512 \
 
 **Decisões:**
 - `/dev/video0` não fica mais aberto em paralelo durante a sessão; o FFmpeg é o dono da webcam
+- O áudio gravado é apenas o microfone da webcam (`PROCTOR_REC_WEBCAM_AUDIO_DEVICE`), muxado nos arquivos `webcam_%03d.mp4`; `screen_%03d.mp4` não grava áudio do PC
 - O proctoring contínuo lê um preview local de baixa latência, não a câmera física
 - Webcam e tela usam timestamps de relógio real (`use_wallclock_as_timestamps`) e `fps_mode passthrough`
 - Os MP4s finais são gravados em H.264 `High` + `yuv420p` + `faststart` para compatibilidade com navegador/dashboard
@@ -635,6 +638,9 @@ PROCTOR_MULTI_FACE_BLOCK=true
 PROCTOR_REC_DISPLAY=:1                # display X11 capturado no GNOME atual da NUC
 PROCTOR_REC_SCREEN_SIZE=1280x720      # resolução final do vídeo de tela
 PROCTOR_REC_WEBCAM_INPUT_FORMAT=mjpeg
+PROCTOR_REC_WEBCAM_AUDIO_ENABLED=true
+PROCTOR_REC_WEBCAM_AUDIO_DEVICE=hw:CARD=C920,DEV=0
+PROCTOR_REC_WEBCAM_AUDIO_BITRATE=96k
 PROCTOR_REC_FFMPEG_THREADS=1
 PROCTOR_REC_PREVIEW_HOST=127.0.0.1
 PROCTOR_REC_PREVIEW_PORT=18181

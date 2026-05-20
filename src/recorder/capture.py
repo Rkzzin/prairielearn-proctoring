@@ -186,6 +186,8 @@ class Capture:
         pattern = str(self._rec_dir / "webcam_%03d.mp4")
         video_device = f"/dev/video{self._face_cfg.camera_index}"
         input_format = self._rec_cfg.webcam_input_format.strip()
+        audio_enabled = self._rec_cfg.webcam_audio_enabled
+        audio_device = self._rec_cfg.webcam_audio_device.strip()
         ffmpeg_threads = max(1, self._rec_cfg.ffmpeg_threads)
         preview_fps = max(1, self._rec_cfg.preview_fps)
         preview_width = max(160, self._rec_cfg.preview_width)
@@ -207,12 +209,30 @@ class Capture:
             "-framerate", str(fps),
             "-video_size", f"{w}x{h}",
             "-i", video_device,
+        ])
+        if audio_enabled and audio_device:
+            cmd.extend([
+                "-f", "alsa",
+                "-thread_queue_size", "512",
+                "-i", audio_device,
+            ])
+        cmd.extend([
             "-filter_complex",
             (
                 "[0:v]split=2[record][preview];"
                 f"[preview]fps={preview_fps},scale={preview_width}:{preview_height}[preview_out]"
             ),
             "-map", "[record]",
+        ])
+        if audio_enabled and audio_device:
+            cmd.extend([
+                "-map", "1:a:0",
+                "-c:a", "aac",
+                "-b:a", self._rec_cfg.webcam_audio_bitrate,
+                "-ac", "1",
+                "-ar", "48000",
+            ])
+        cmd.extend([
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "23",
