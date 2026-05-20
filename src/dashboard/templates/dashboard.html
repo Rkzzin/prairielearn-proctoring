@@ -32,8 +32,13 @@
 
 <section class="panel">
   <div class="panel-header">
-    <h2>Sessões recentes</h2>
-    <p>Use a revisão para abrir a timeline de eventos, vídeos e exportação CSV.</p>
+    <div>
+      <h2>Sessões recentes</h2>
+      <p>Use a revisão para abrir a timeline de eventos, vídeos e exportação CSV.</p>
+    </div>
+    <button type="button" class="button-secondary" onclick="clearKnownSessions()">
+      Limpar sessões
+    </button>
   </div>
   <div
     id="sessions-panel"
@@ -65,6 +70,17 @@ async function issueAutoStartCommand(stationId, enabled) {
   const response = await fetch(endpoint, {method: 'POST'});
   if (response.ok && window.htmx) {
     htmx.ajax('GET', '/partials/stations', '#stations-panel');
+  }
+}
+
+async function clearKnownSessions() {
+  const confirmed = window.confirm('Limpar o histórico local de sessões conhecidas deste dashboard? Isso não apaga arquivos no S3.');
+  if (!confirmed) {
+    return;
+  }
+  const response = await fetch('/api/sessions/clear', {method: 'POST'});
+  if (response.ok) {
+    window.location.reload();
   }
 }
 

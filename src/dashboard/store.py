@@ -88,6 +88,17 @@ class DashboardStore:
     def list_sessions(self) -> list[SessionRecord]:
         return self.snapshot()["sessions"]  # type: ignore[return-value]
 
+    def clear_sessions(self) -> int:
+        """Remove o histórico local de sessões conhecidas do dashboard."""
+        with self._lock:
+            removed = len(self._sessions)
+            self._sessions.clear()
+            self._db.execute("DELETE FROM sessions")
+            self._db.commit()
+
+        self._broadcast()
+        return removed
+
     def list_enrollments(self) -> list[EnrollmentRecord]:
         return self.snapshot()["enrollments"]  # type: ignore[return-value]
 

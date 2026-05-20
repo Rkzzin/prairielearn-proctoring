@@ -70,6 +70,7 @@ async def test_dashboard_home_renders(tmp_path):
 
     assert response.status_code == 200
     assert "Estações em tempo real" in response.text
+    assert "Limpar sessões" in response.text
 
 
 @pytest.mark.asyncio
@@ -399,6 +400,60 @@ def test_dashboard_store_persists_across_restarts(tmp_path):
     assert snapshot["configs"][0].assessment == "Quiz-03"
     assert snapshot["enrollments"][0].student_name == "Alice Silva"
     assert snapshot["sessions"][0].session_id == "sess-1"
+
+
+def test_dashboard_store_clear_sessions_removes_local_history(tmp_path):
+    store = DashboardStore(tmp_path / "dashboard")
+    store.add_enrollment(
+        turma="ES2025-T1",
+        student_id="123",
+        student_name="Alice Silva",
+        source="upload",
+        file_names=["alice.jpg"],
+    )
+    store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="123", student_name="Alice Silva"),
+            status=StationStatus.COMPLETED,
+        )
+    )
+
+    removed = store.clear_sessions()
+    reloaded = DashboardStore(tmp_path / "dashboard")
+
+    assert removed == 1
+    assert reloaded.list_sessions() == []
+    assert reloaded.list_enrollments()[0].student_name == "Alice Silva"
+
+
+@pytest.mark.asyncio
+async def test_clear_sessions_endpoint_removes_dashboard_history(tmp_path):
+    app = _make_app(tmp_path)
+    store = app.state.store
+    store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="123", student_name="Alice Silva"),
+            status=StationStatus.COMPLETED,
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/api/sessions/clear")
+        sessions_response = await client.get("/api/sessions")
+
+    assert response.status_code == 200
+    assert response.json() == {"removed": 1}
+    assert sessions_response.json() == []
 
 
 def test_finalize_session_marks_history_completed_and_station_idle(tmp_path):

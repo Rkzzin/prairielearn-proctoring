@@ -148,6 +148,11 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             [session.model_dump(mode="json") for session in dashboard_store.list_sessions()]
         )
 
+    @app.post("/api/sessions/clear")
+    async def clear_sessions() -> JSONResponse:
+        removed = dashboard_store.clear_sessions()
+        return JSONResponse({"removed": removed})
+
     @app.post("/api/heartbeats")
     async def upsert_heartbeat(payload: StationHeartbeat) -> JSONResponse:
         station = dashboard_store.upsert_station_heartbeat(payload)
