@@ -30,8 +30,6 @@ from src.dashboard.models import (
 class DashboardStore:
     def __init__(self, data_dir: Path, app_config=None, s3_client=None):
         self.data_dir = self._prepare_data_dir(data_dir)
-        self.upload_dir = self.data_dir / "enrollment_uploads"
-        self.upload_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.data_dir / "dashboard.sqlite3"
         self._db = sqlite3.connect(self.db_path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
@@ -281,15 +279,6 @@ class DashboardStore:
 
         self._broadcast()
         return result
-
-    def set_station_exam_mode(self, station_id: str, command_type: CommandType) -> CommandRecord:
-        if command_type not in {
-            CommandType.PREPARE_EXAM_MODE,
-            CommandType.ENTER_EXAM_MODE,
-            CommandType.EXIT_EXAM_MODE,
-        }:
-            raise ValueError(f"Comando de modo prova inválido: {command_type}")
-        return self.enqueue_command(station_id, command_type)
 
     def set_station_autostart(self, station_id: str, enabled: bool) -> CommandRecord:
         with self._lock:

@@ -100,21 +100,6 @@ class DashboardHeartbeatWorker:
             logger.info("STOP_SESSION processado")
             return
 
-        if command_type == "PREPARE_EXAM_MODE":
-            self._session_manager.prepare_exam_mode()
-            logger.info("PREPARE_EXAM_MODE processado")
-            return
-
-        if command_type == "ENTER_EXAM_MODE":
-            self._session_manager.enter_exam_mode()
-            logger.info("ENTER_EXAM_MODE processado")
-            return
-
-        if command_type == "EXIT_EXAM_MODE":
-            self._session_manager.exit_exam_mode()
-            logger.info("EXIT_EXAM_MODE processado")
-            return
-
         if command_type == "UNBLOCK_SESSION":
             if self._session_manager.state == SessionState.BLOCKED:
                 self._session_manager.unblock_session()

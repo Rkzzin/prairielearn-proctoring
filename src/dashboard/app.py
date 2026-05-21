@@ -9,7 +9,7 @@ from datetime import timezone
 from io import StringIO
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, Request, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -128,14 +128,6 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             sessions=dashboard_store.list_sessions(),
         )
 
-    @app.get("/partials/enrollments", response_class=HTMLResponse)
-    async def enrollments_partial(request: Request) -> HTMLResponse:
-        return render_template(
-            request,
-            "_enrollments.html",
-            enrollments=dashboard_store.list_enrollments(),
-        )
-
     @app.get("/api/stations")
     async def list_stations() -> JSONResponse:
         return JSONResponse(
@@ -179,21 +171,6 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         command = dashboard_store.enqueue_command(station_id, CommandType.UNBLOCK_SESSION)
         return JSONResponse(command.model_dump(mode="json"), status_code=202)
 
-    @app.post("/api/stations/{station_id}/exam/prepare")
-    async def prepare_exam_mode(station_id: str) -> JSONResponse:
-        command = dashboard_store.set_station_exam_mode(station_id, CommandType.PREPARE_EXAM_MODE)
-        return JSONResponse(command.model_dump(mode="json"), status_code=202)
-
-    @app.post("/api/stations/{station_id}/exam/enter")
-    async def enter_exam_mode(station_id: str) -> JSONResponse:
-        command = dashboard_store.set_station_exam_mode(station_id, CommandType.ENTER_EXAM_MODE)
-        return JSONResponse(command.model_dump(mode="json"), status_code=202)
-
-    @app.post("/api/stations/{station_id}/exam/exit")
-    async def exit_exam_mode(station_id: str) -> JSONResponse:
-        command = dashboard_store.set_station_exam_mode(station_id, CommandType.EXIT_EXAM_MODE)
-        return JSONResponse(command.model_dump(mode="json"), status_code=202)
-
     @app.post("/api/stations/{station_id}/autostart/enable")
     async def enable_autostart(station_id: str) -> JSONResponse:
         command = dashboard_store.set_station_autostart(station_id, True)
@@ -233,37 +210,6 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             return JSONResponse({"detail": "Sessão não encontrada."}, status_code=404)
         return JSONResponse(session.model_dump(mode="json"))
 
-    @app.post("/api/enrollment")
-    async def create_enrollment(
-        request: Request,
-        turma: str = Form(...),
-        student_id: str = Form(...),
-        student_name: str = Form(...),
-        source: str = Form("upload"),
-        files: list[UploadFile] | None = File(None),
-    ) -> HTMLResponse:
-        file_names: list[str] = []
-        for upload in files or []:
-            if not upload.filename:
-                continue
-            destination = dashboard_store.upload_dir / upload.filename
-            contents = await upload.read()
-            destination.write_bytes(contents)
-            file_names.append(upload.filename)
-
-        dashboard_store.add_enrollment(
-            turma=turma,
-            student_id=student_id,
-            student_name=student_name,
-            source=source,
-            file_names=file_names,
-        )
-        return render_template(
-            request,
-            "_enrollments.html",
-            enrollments=dashboard_store.list_enrollments(),
-        )
-
     @app.post("/api/enrollment/s3")
     async def create_s3_enrollment(
         request: Request,
@@ -300,7 +246,6 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             "_s3_enrollment_result.html",
             summary=summary,
             error=None,
-            enrollments=dashboard_store.list_enrollments(),
         )
 
     @app.websocket("/ws/stations")

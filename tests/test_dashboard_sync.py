@@ -19,7 +19,6 @@ class FakeSessionManager:
         self.updated_payloads: list[dict] = []
         self.stop_reasons: list[str] = []
         self.unblock_calls = 0
-        self.prepare_mode_calls = 0
         self.enter_mode_calls = 0
         self.exit_mode_calls = 0
         self._app_cfg = AppConfig(data_dir=Path("/tmp/proctor-dashboard-sync"))
@@ -55,9 +54,6 @@ class FakeSessionManager:
 
     def unblock_session(self):
         self.unblock_calls += 1
-
-    def prepare_exam_mode(self):
-        self.prepare_mode_calls += 1
 
     def enter_exam_mode(self):
         self.enter_mode_calls += 1
@@ -198,37 +194,6 @@ def test_dashboard_worker_enabling_autostart_enters_exam_mode():
 
     assert manager.updated_payloads == [{"auto_start": True}]
     assert manager.enter_mode_calls == 1
-
-
-def test_dashboard_worker_applies_exam_mode_commands():
-    def handler(_request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            200,
-            json={
-                "station": {"station_id": "nuc-01"},
-                "commands": [
-                    {"command_type": "PREPARE_EXAM_MODE", "payload": {}},
-                    {"command_type": "ENTER_EXAM_MODE", "payload": {}},
-                    {"command_type": "EXIT_EXAM_MODE", "payload": {}},
-                ],
-            },
-        )
-
-    manager = FakeSessionManager()
-    worker = DashboardHeartbeatWorker(
-        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
-        session_manager=manager,
-        client_factory=lambda: httpx.Client(
-            transport=httpx.MockTransport(handler),
-            base_url="http://dashboard.test",
-        ),
-    )
-
-    worker.run_once()
-
-    assert manager.prepare_mode_calls == 1
-    assert manager.enter_mode_calls == 1
-    assert manager.exit_mode_calls == 1
 
 
 def test_dashboard_worker_registers_and_finalizes_completed_session():

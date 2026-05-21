@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
 
-def test_camera(camera_index: int = 0, headless: bool = False) -> bool:
+def run_camera_check(camera_index: int = 0, headless: bool = False) -> bool:
     print(f"\n{'='*50}")
     print(f"  Teste de câmera — /dev/video{camera_index}")
     print(f"{'='*50}\n")
@@ -154,7 +154,7 @@ def main() -> None:
     parser.add_argument("--headless", action="store_true", help="Sem janela (para SSH/CI)")
     args = parser.parse_args()
 
-    success = test_camera(args.camera, args.headless)
+    success = run_camera_check(args.camera, args.headless)
     sys.exit(0 if success else 1)
 
 
