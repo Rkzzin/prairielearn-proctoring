@@ -33,6 +33,7 @@ from pathlib import Path
 
 from src.kiosk.allowlist import EXTENSION_DIR, build_allowlist_config, write_extension_config
 from src.kiosk.profile import ChromiumProfileCleaner, ProfileCleanupError
+from src.core.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ class ChromiumKiosk:
             f"--disable-extensions-except={self._extension_dir}",
             f"--load-extension={self._extension_dir}",
             f"--user-data-dir={profile_dir}",
+            f"--proxy-server={config.proxy_server}",
             url,
         ]
         if self._window_mode == "kiosk":

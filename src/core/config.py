@@ -278,6 +278,7 @@ class AppConfig(BaseSettings):
     recorder: RecorderConfig = Field(default_factory=RecorderConfig)
     s3: S3Config = Field(default_factory=S3Config)
     dashboard: DashboardConfig = Field(default_factory=DashboardConfig)
+    proxy_server: str | None = Field(default=None, description="proxy")
 
     api_port: int = 8000
     log_level: str = "INFO"

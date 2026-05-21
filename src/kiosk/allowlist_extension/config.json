@@ -15,11 +15,6 @@
       "host": "us.prairielearn.com",
       "label": "us.prairielearn.com",
       "url": "https://us.prairielearn.com"
-    },
-    {
-      "host": "youtube.com",
-      "label": "youtube.com",
-      "url": "https://youtube.com"
     }
   ],
   "startUrl": "https://prairielearn.org/pl",
