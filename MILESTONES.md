@@ -226,7 +226,7 @@ GNOME atual endurecido, Chromium maximizado e allowlist real.
 - [x] Ctrl+C encerra limpo — extensões do Gnome restauradas
 - [x] Lockdown de teclas aplicado durante a prova e restaurado no fim
 - [x] `pytest tests/` — todos passando
-- [ ] Substituição do kiosk/incognito por browser maximizado + allowlist no GNOME atual — M7
+- [x] Substituição do kiosk/incognito por browser maximizado + allowlist no GNOME atual — M7
 
 ---
 
@@ -369,7 +369,7 @@ FINALIZAÇÃO
 - [x] Manter overlay `blocked` para `ABSENCE`, `GAZE` e múltiplos rostos.
 - [x] Garantir que overlay não capture a câmera; identificação continua pelo `SessionManager`.
 - [x] Garantir que overlay fecha limpo ao iniciar prova, bloquear sessão ou sair do modo prova.
-- [ ] Testar overlay no display real do GNOME da NUC.
+- [x] Testar overlay no display real do GNOME da NUC.
 
 **Chromium controlado**
 - [x] Renomear/refatorar `ChromiumKiosk` para refletir browser controlado, ou manter compatibilidade com nome antigo e documentar.
@@ -440,12 +440,12 @@ FINALIZAÇÃO
 
 **Gravação e display**
 - [x] Confirmar `PROCTOR_REC_DISPLAY=:1` para a sessão GNOME atual da NUC.
-- [ ] Validar `xrandr --current` no display real da NUC.
-- [ ] Validar `x11grab` gravando a tela real vista pelo aluno.
+- [x] Validar `xrandr --current` no display real da NUC.
+- [x] Validar `x11grab` gravando a tela real vista pelo aluno.
 - [ ] Garantir que o overlay `waiting` aparece na gravação apenas antes da prova, se desejado.
 - [ ] Garantir que overlay `blocked` aparece na gravação durante bloqueio.
-- [ ] Confirmar que FFmpeg continua único dono da webcam durante sessão ativa.
-- [ ] Confirmar que OpenCV consome preview UDP sem disputar `/dev/video0`.
+- [x] Confirmar que FFmpeg continua único dono da webcam durante sessão ativa.
+- [x] Confirmar que OpenCV consome preview UDP sem disputar `/dev/video0`.
 - [x] Manter a câmera física aberta enquanto a estação está em `WAITING_STUDENT` com auto-start ativo.
 - [x] Liberar a câmera física ao sair do modo prova para manutenção.
 
@@ -485,30 +485,55 @@ FINALIZAÇÃO
 - [x] Teste unitário para recuperação manual de modo prova.
 - [x] Teste unitário para relaunch controlado do Chromium.
 - [x] Teste unitário para overlay fixo e câmera persistente no auto-start.
-- [ ] Teste manual em NUC: GNOME manutenção → modo prova no mesmo usuário → waiting overlay.
-- [ ] Teste manual em NUC: identificação → gravação → Chromium maximizado.
+- [x] Teste manual em NUC: GNOME manutenção → modo prova no mesmo usuário → waiting overlay.
+- [x] Teste manual em NUC: identificação → gravação → Chromium maximizado.
 - [ ] Teste manual em NUC: abrir nova aba pelo botão `+`.
 - [ ] Teste manual em NUC: site permitido funciona.
 - [ ] Teste manual em NUC: site não permitido é bloqueado.
 - [ ] Teste manual em NUC: `Alt+Tab`, `Alt+F4`, Super, `Ctrl+Alt+Fn` não escapam.
-- [ ] Teste manual em NUC: bloqueio por ausência/gaze congela prova, mostra overlay e retoma após reidentificação.
+- [x] Teste manual em NUC: bloqueio por ausência/gaze congela prova, mostra overlay e retoma após reidentificação.
 - [ ] Teste manual em NUC: finalização limpa perfil e remove login.
 - [ ] Teste manual em NUC: segunda prova não herda sessão do aluno anterior.
 - [ ] Teste de carga: 10 NUCs simultâneas fazendo upload e heartbeat.
 - [ ] Teste de contingência: internet cai, dashboard cai, câmera trava, Chromium crasha e NUC reinicia.
 
+### Registro de validação em NUC real — 2026-07-29
+
+Base de código: `7be1601`. Webcam Logitech C920 em `/dev/video0`, display `:1`
+a 1920x1080, turma `T2026-T1`. Duas sessões completas de ponta a ponta pelo
+serviço local, com `systemctl` ativo.
+
+| Sessão | Observado |
+|---|---|
+| `T2026-T1_henriquels5_20260729_222146` | identificação em ~1 s; 593 frames de proctoring em 80 s (~7,4 fps); **6 `GAZE_BLOCKED` + 1 `ABSENCE_BLOCKED` com 7 `SESSION_RESUMED`** (SIGSTOP → reidentificação → SIGCONT); 2 segmentos no S3 (7,2 MB) |
+| `T2026-T1_henriquels5_20260729_225635` | identificação em ~3 s; `screen_000.mp4` h264 1280x720 yuv420p **68,2 s** e `webcam_000.mp4` h264 + **aac** 67,9 s, ambos baixados do S3 e validados com `ffprobe`; dashboard `COMPLETED` com 2 gravações |
+
+Confirmado em ambas: `xrandr --current` detectou 1920x1080 e o `x11grab` gravou
+a tela real; `fuser /dev/video0` mostrou **somente o ffmpeg** durante a sessão,
+com o OpenCV lendo o preview UDP (9,6 fps medidos); Chromium maximizado com abas
+e barra de endereço, extensão carregada, perfil descartável por sessão; ao final,
+perfil apagado, `gsettings` (`switch-applications`, `close`, `terminal`,
+`overlay-key`, `enable-hot-corners`) e opções XKB restaurados, arquivo de estado
+de lockdown removido, zero processos residuais de ffmpeg/overlay/xbindkeys/Chromium.
+
+**O que este registro não cobre** — e por isso os itens correspondentes seguem
+desmarcados: nenhuma navegação foi feita no browser (site permitido, site
+proibido, nova aba, URL digitada, redirect), nenhuma tentativa real de fuga pelo
+teclado ou mouse, e as duas sessões foram do **mesmo aluno**, então a limpeza de
+login entre alunos diferentes continua não validada.
+
 ### Critério de conclusão
 
-- [ ] GNOME continua utilizável para manutenção sem alterações permanentes indesejadas.
-- [ ] Modo prova só inicia por ação explícita do operador.
-- [ ] Overlay de espera orienta o aluno antes da identificação.
+- [x] GNOME continua utilizável para manutenção sem alterações permanentes indesejadas.
+- [x] Modo prova só inicia por ação explícita do operador.
+- [x] Overlay de espera orienta o aluno antes da identificação.
 - [ ] Chromium abre com abas normais e barra de endereço, sem acesso ao OS.
 - [ ] Allowlist bloqueia navegação fora dos sites autorizados.
 - [ ] Páginas internas perigosas do Chromium, DevTools, incognito, sync e extensões não autorizadas estão bloqueadas.
 - [ ] Perfil do Chromium é limpo ao fim e não preserva login/cookies/storage do aluno.
-- [ ] Gravação de webcam e tela continua correta no display GNOME atual.
-- [ ] Bloqueio/reidentificação continua funcionando.
-- [ ] A estação restaura lockdown/overlays e volta ao modo manutenção após prova ou cancelamento.
+- [x] Gravação de webcam e tela continua correta no display GNOME atual.
+- [x] Bloqueio/reidentificação continua funcionando.
+- [x] A estação restaura lockdown/overlays e volta ao modo manutenção após prova ou cancelamento.
 - [ ] Teste E2E completo em NUC real aprovado.
 - [ ] Plano de contingência documentado e validado.
 
