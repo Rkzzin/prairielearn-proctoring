@@ -40,7 +40,7 @@ OS:           Ubuntu 24.04 LTS Desktop
 Linguagem:    Python 3.12
 CV/ML:        OpenCV 4.x + dlib (HOG detector + ResNet 128-d encoding)
 Gaze:         dlib shape_predictor_68 + solvePnP (pose estimation)
-Gravação:     FFmpeg 6.x (H.264 via libx264, sem áudio)
+Gravação:     FFmpeg 6.x (H.264 via libx264 + áudio ambiente AAC da webcam)
 Browser:      Chromium controlado no GNOME atual + extensão allowlist
 Orquestrador: FastAPI (API local na NUC)
 Upload:       boto3 → AWS S3 real (sa-east-1)
@@ -71,8 +71,7 @@ proctor-station/
 │   │   ├── models.py            # Dataclasses do sistema
 │   │   └── s3_client.py         # Cliente S3 real + factory get_s3_client()
 │   ├── face/
-│   │   ├── recognizer.py        # Enrollment + identificação
-│   │   └── detector.py          # Detecção rápida para proctoring contínuo
+│   │   └── recognizer.py        # Enrollment + identificação
 │   ├── proctor/
 │   │   ├── engine.py            # FSM principal de monitoramento
 │   │   ├── gaze.py              # Pose estimation via dlib + solvePnP
@@ -161,8 +160,11 @@ Detecção HOG → encoding ResNet 128-d → distância euclidiana contra `.pkl`
 
 - [x] Script de enrollment via S3 com CLI completa
 - [x] `recognizer.py` com `identify()` e `identify_best_of_n()`
-- [x] `detector.py` para detecção leve no loop de proctoring
 - [x] 16 testes unitários cobrindo todos os fluxos
+
+> `src/face/detector.py` (`FaceDetector`) existiu para detecção leve no loop de
+> proctoring, mas foi removido: o `GazeEstimator` já roda o próprio detector HOG e
+> nada importava a classe.
 
 ---
 
@@ -660,7 +662,7 @@ executados sem credenciais.
 ### Comandos úteis
 
 ```bash
-# Testes automatizados (87 casos, sem câmera)
+# Testes automatizados (117 casos, sem câmera)
 pytest tests/ -v
 
 # Enrollment de turma

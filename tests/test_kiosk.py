@@ -107,6 +107,63 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     assert (extension_dir / "config.json").exists()
 
 
+def _start_kiosk_capturing_cmd(monkeypatch, tmp_path, *, proxy_server):
+    """Sobe o kiosk com um proxy fixo e devolve o argv passado ao Popen."""
+    popen_calls = []
+
+    def fake_popen(cmd, env, stdout, stderr):
+        popen_calls.append(cmd)
+        return DummyProc()
+
+    monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
+    monkeypatch.setattr(
+        "src.kiosk.chromium.config",
+        SimpleNamespace(proxy_server=proxy_server),
+    )
+
+    kiosk = ChromiumKiosk(
+        display=":9",
+        profile_dir=tmp_path / "proctor-chromium-profile",
+        extension_dir=tmp_path / "extension",
+        cleanup_profile_on_stop=False,
+    )
+    kiosk.start("https://example.com/exam", allowlist=["prairielearn.org"])
+    return popen_calls[0]
+
+
+def test_chromium_omits_proxy_flag_when_none_configured(monkeypatch, tmp_path):
+    """Sem proxy configurado o flag não pode aparecer.
+
+    Antes da guarda, um PROCTOR_APP_PROXY_SERVER ausente virava
+    '--proxy-server=None' e quebrava toda a navegação da prova.
+    """
+    cmd = _start_kiosk_capturing_cmd(monkeypatch, tmp_path, proxy_server=None)
+
+    assert not any(item.startswith("--proxy-server") for item in cmd)
+    assert "--proxy-server=None" not in cmd
+    assert cmd[-1] == "https://example.com/exam"
+
+
+def test_chromium_omits_proxy_flag_when_configured_empty(monkeypatch, tmp_path):
+    cmd = _start_kiosk_capturing_cmd(monkeypatch, tmp_path, proxy_server="")
+
+    assert not any(item.startswith("--proxy-server") for item in cmd)
+    assert cmd[-1] == "https://example.com/exam"
+
+
+def test_chromium_passes_configured_proxy_before_url(monkeypatch, tmp_path):
+    cmd = _start_kiosk_capturing_cmd(
+        monkeypatch, tmp_path, proxy_server="http://proxy.test:443"
+    )
+
+    assert "--proxy-server=http://proxy.test:443" in cmd
+    # A URL precisa continuar sendo o último argumento.
+    assert cmd[-1] == "https://example.com/exam"
+    assert cmd.index("--proxy-server=http://proxy.test:443") < len(cmd) - 1
+
+
 def test_chromium_block_and_unblock_send_signals(monkeypatch):
     monkeypatch.setattr(ChromiumKiosk, "_restore_gnome_extensions", lambda self: None)
 

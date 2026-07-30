@@ -132,9 +132,14 @@ class ChromiumKiosk:
             f"--disable-extensions-except={self._extension_dir}",
             f"--load-extension={self._extension_dir}",
             f"--user-data-dir={profile_dir}",
-            f"--proxy-server={config.proxy_server}",
-            url,
         ]
+        # Só passa --proxy-server quando há proxy configurado: sem a guarda, um
+        # PROCTOR_APP_PROXY_SERVER ausente virava "--proxy-server=None" e
+        # derrubava toda a navegação da prova.
+        proxy_server = config.proxy_server
+        if proxy_server:
+            cmd.append(f"--proxy-server={proxy_server}")
+        cmd.append(url)
         if self._window_mode == "kiosk":
             cmd.insert(1, "--kiosk")
         elif self._window_mode == "fullscreen":

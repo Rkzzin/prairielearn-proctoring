@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import threading
 from collections import deque
 from datetime import datetime, timezone
@@ -7,12 +8,31 @@ from datetime import datetime, timezone
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from src.api.routes import ConfigUpdateRequest
 from src.api.server import create_app
 from src.core.autostart import SessionAutoStartWorker
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.models import IdentifyResult, IdentifyStatus
-from src.core.session import SessionError, SessionManager, SessionRuntime, SessionState, StationMode
+from src.core.session import (
+    DASHBOARD_CONFIG_FIELD_MAP,
+    DASHBOARD_PROCTOR_FIELD_CASTS,
+    DASHBOARD_ROUTING_FIELDS,
+    SessionConfig,
+    SessionError,
+    SessionManager,
+    SessionRuntime,
+    SessionState,
+    StationMode,
+)
+from src.core.states import SessionState as CanonicalSessionState
+from src.core.states import StationMode as CanonicalStationMode
+from src.core.states import derive_station_status
+from src.dashboard.models import ExamConfigPayload
 from src.proctor.engine import ProctorState
+
+
+def _session_config_field_names() -> set[str]:
+    return {field.name for field in dataclasses.fields(SessionConfig)}
 
 
 class FakeCamera:
@@ -677,6 +697,130 @@ def test_autostart_keeps_waiting_camera_open_between_failed_attempts():
     assert overlay.waiting_shown == [None]
     assert overlay.waiting_hidden == 0
     assert camera.released is False
+
+
+# ── Contratos de estado e de config ─────────────────────────────────────────
+#
+# Estes testes não exercitam comportamento: eles travam as fronteiras onde antes
+# um campo se perdia em silêncio. Falham por construção quando alguém adiciona
+# um campo/estado sem decidir seu destino.
+
+
+def test_session_module_reexports_canonical_states():
+    """Os estados são definidos em src/core/states.py, não duplicados aqui."""
+    assert SessionState is CanonicalSessionState
+    assert StationMode is CanonicalStationMode
+
+
+@pytest.mark.parametrize(
+    ("state", "mode", "expected"),
+    [
+        (SessionState.IDLE, StationMode.MAINTENANCE, "IDLE"),
+        (SessionState.IDLE, StationMode.EXAM_READY, "EXAM_READY"),
+        (SessionState.IDLE, StationMode.WAITING_STUDENT, "WAITING_STUDENT"),
+        # Sessão em andamento vence o modo da estação.
+        (SessionState.SESSION, StationMode.WAITING_STUDENT, "SESSION"),
+        (SessionState.BLOCKED, StationMode.SESSION, "BLOCKED"),
+        (SessionState.UPLOADING, StationMode.SESSION, "UPLOADING"),
+        (SessionState.IDENTIFYING, StationMode.WAITING_STUDENT, "IDENTIFYING"),
+    ],
+)
+def test_derive_station_status_collapses_state_and_mode(state, mode, expected):
+    assert derive_station_status(state, mode) == expected
+
+
+def test_dashboard_config_payload_fields_are_all_classified():
+    """Todo campo de ExamConfigPayload tem destino declarado.
+
+    Sem isto, um campo novo no dashboard simplesmente não chega à estação e
+    nada acusa.
+    """
+    classified = (
+        set(DASHBOARD_CONFIG_FIELD_MAP)
+        | set(DASHBOARD_PROCTOR_FIELD_CASTS)
+        | set(DASHBOARD_ROUTING_FIELDS)
+    )
+
+    assert set(ExamConfigPayload.model_fields) == classified
+
+
+def test_dashboard_config_field_map_targets_real_session_config_fields():
+    """Os destinos do mapa existem em SessionConfig — pega typo no alvo."""
+    assert set(DASHBOARD_CONFIG_FIELD_MAP.values()) <= _session_config_field_names()
+
+
+def test_config_update_request_only_exposes_session_config_fields():
+    """POST /config não pode oferecer campo que update_config agora rejeita."""
+    assert set(ConfigUpdateRequest.model_fields) <= _session_config_field_names()
+
+
+def test_update_config_rejects_unknown_field():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+
+    # "turma" é o nome do lado do dashboard; o SessionConfig usa "turma_id".
+    # Antes isso era descartado em silêncio e a turma nunca era aplicada.
+    with pytest.raises(SessionError, match="turma"):
+        manager.update_config(turma="ES2025-T1")
+
+    assert manager.next_config.turma_id is None
+
+
+def test_update_config_treats_none_as_no_change():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+
+    manager.update_config(turma_id="ES2025-T1", assessment="Quiz-03")
+    manager.update_config(turma_id=None, assessment="Quiz-04")
+
+    config = manager.next_config
+    assert config.turma_id == "ES2025-T1"
+    assert config.assessment == "Quiz-04"
+
+
+def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+
+    config = manager.apply_dashboard_config(
+        {
+            "turma": "ES2025-T1",
+            "assessment": "Quiz-03",
+            "timer_minutes": 30,
+            "prairielearn_url": "https://pl.test/exam",
+            "allowlist": ["example.edu"],
+            "auto_start": True,
+            "s3_prefix": "ES2025-T1/quiz-03",
+            "target_station_ids": ["nuc-01"],
+            "gaze_h_threshold": 0.4,
+            "gaze_duration_sec": 4.0,
+            "absence_timeout_sec": 6.0,
+            "multi_face_block": False,
+        }
+    )
+
+    assert config.turma_id == "ES2025-T1"
+    assert config.assessment == "Quiz-03"
+    assert config.timer_minutes == 30
+    assert config.prairielearn_url == "https://pl.test/exam"
+    assert config.allowlist == ["example.edu"]
+    assert config.auto_start is True
+    assert config.s3_prefix == "ES2025-T1/quiz-03"
+
+    assert manager._proctor_cfg.gaze_h_threshold == 0.4
+    assert manager._proctor_cfg.gaze_duration_sec == 4.0
+    assert manager._proctor_cfg.absence_timeout_sec == 6.0
+    assert manager._proctor_cfg.multi_face_block is False
+
+
+def test_apply_dashboard_config_ignores_missing_optional_fields():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager.update_config(turma_id="ES2025-T1", timer_minutes=45)
+    before = manager._proctor_cfg.gaze_h_threshold
+
+    config = manager.apply_dashboard_config({"assessment": "Quiz-09"})
+
+    assert config.assessment == "Quiz-09"
+    assert config.turma_id == "ES2025-T1"
+    assert config.timer_minutes == 45
+    assert manager._proctor_cfg.gaze_h_threshold == before
 
 
 @pytest.mark.asyncio

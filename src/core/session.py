@@ -20,7 +20,6 @@ import time
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from enum import Enum
 from typing import Any, Callable
 
 import boto3
@@ -29,6 +28,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.cpu_affinity import auto_split_cpu_sets, get_process_cpu_set, parse_cpu_set, set_process_cpu_set
+from src.core.states import SessionState, StationMode, derive_station_status
 from src.face.recognizer import FaceRecognizer
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.allowlist import build_allowlist_config, write_extension_config
@@ -43,19 +43,50 @@ from src.recorder.uploader import Uploader
 logger = logging.getLogger(__name__)
 
 
-class SessionState(str, Enum):
-    IDLE = "IDLE"
-    IDENTIFYING = "IDENTIFYING"
-    SESSION = "SESSION"
-    BLOCKED = "BLOCKED"
-    UPLOADING = "UPLOADING"
+# ``SessionState``/``StationMode`` vivem em src/core/states.py (só stdlib) para
+# que o dashboard use o mesmo vocabulário sem importar cv2/dlib/boto3. São
+# reexportados aqui porque o resto do código já os importa deste módulo.
+__all__ = [
+    "DASHBOARD_CONFIG_FIELD_MAP",
+    "DASHBOARD_PROCTOR_FIELD_CASTS",
+    "DASHBOARD_ROUTING_FIELDS",
+    "SessionConfig",
+    "SessionError",
+    "SessionManager",
+    "SessionRuntime",
+    "SessionState",
+    "StationMode",
+]
 
 
-class StationMode(str, Enum):
-    MAINTENANCE = "MAINTENANCE"
-    EXAM_READY = "EXAM_READY"
-    WAITING_STUDENT = "WAITING_STUDENT"
-    SESSION = "SESSION"
+#: Tradução explícita ``ExamConfigPayload`` (dashboard) → campo de
+#: ``SessionConfig``. É uma tabela, e não um `payload.get()` por campo espalhado
+#: no código, porque o rename ``turma`` → ``turma_id`` na fronteira já era um
+#: convite a perder campo em silêncio. `tests/test_session_manager.py` garante
+#: que todo campo do payload está classificado em um dos três conjuntos abaixo.
+DASHBOARD_CONFIG_FIELD_MAP = {
+    "turma": "turma_id",
+    "assessment": "assessment",
+    "timer_minutes": "timer_minutes",
+    "prairielearn_url": "prairielearn_url",
+    "allowlist": "allowlist",
+    "auto_start": "auto_start",
+    "s3_prefix": "s3_prefix",
+}
+
+#: Campos do payload que ajustam thresholds do proctoring em memória, não o
+#: ``SessionConfig``. O valor é o cast aplicado.
+#: Nota: o payload do dashboard não expõe ``gaze_v_threshold`` — o limiar
+#: vertical só é configurável por `.env`.
+DASHBOARD_PROCTOR_FIELD_CASTS = {
+    "gaze_h_threshold": float,
+    "gaze_duration_sec": float,
+    "absence_timeout_sec": float,
+    "multi_face_block": bool,
+}
+
+#: Campos que são roteamento interno do dashboard e nunca chegam à estação.
+DASHBOARD_ROUTING_FIELDS = frozenset({"target_station_ids"})
 
 
 @dataclass
@@ -197,10 +228,23 @@ class SessionManager:
             return SessionConfig(**asdict(self._next_config))
 
     def update_config(self, **kwargs: Any) -> SessionConfig:
+        """Aplica um patch parcial na config da próxima sessão.
+
+        ``None`` significa "não mexer neste campo" — é o que dá semântica de
+        patch ao ``POST /config``. Um campo **desconhecido**, por outro lado, é
+        erro: antes era descartado em silêncio, então um nome errado (ou o
+        ``turma`` do dashboard em vez de ``turma_id``) virava um no-op invisível.
+        """
         with self._lock:
             current = asdict(self._next_config)
+            unknown = sorted(set(kwargs) - set(current))
+            if unknown:
+                raise SessionError(
+                    "Campos desconhecidos em update_config: "
+                    f"{', '.join(unknown)}. Campos válidos: {', '.join(sorted(current))}"
+                )
             for key, value in kwargs.items():
-                if value is not None and key in current:
+                if value is not None:
                     current[key] = value
             self._next_config = SessionConfig(**current)
             return self.next_config
@@ -238,24 +282,24 @@ class SessionManager:
         }
 
     def apply_dashboard_config(self, payload: dict[str, Any]) -> SessionConfig:
+        """Traduz um ``ExamConfigPayload`` do dashboard para a config local.
+
+        O mapeamento é dirigido por ``DASHBOARD_CONFIG_FIELD_MAP`` e pelos dois
+        conjuntos irmãos, de modo que todo campo do payload tem destino
+        declarado — config da sessão, threshold de proctoring ou roteamento do
+        dashboard.
+        """
         config = self.update_config(
-            turma_id=payload.get("turma"),
-            assessment=payload.get("assessment"),
-            timer_minutes=payload.get("timer_minutes"),
-            allowlist=payload.get("allowlist"),
-            s3_prefix=payload.get("s3_prefix"),
-            prairielearn_url=payload.get("prairielearn_url"),
-            auto_start=payload.get("auto_start"),
+            **{
+                session_field: payload.get(payload_field)
+                for payload_field, session_field in DASHBOARD_CONFIG_FIELD_MAP.items()
+            }
         )
 
-        if payload.get("gaze_h_threshold") is not None:
-            self._proctor_cfg.gaze_h_threshold = float(payload["gaze_h_threshold"])
-        if payload.get("gaze_duration_sec") is not None:
-            self._proctor_cfg.gaze_duration_sec = float(payload["gaze_duration_sec"])
-        if payload.get("absence_timeout_sec") is not None:
-            self._proctor_cfg.absence_timeout_sec = float(payload["absence_timeout_sec"])
-        if payload.get("multi_face_block") is not None:
-            self._proctor_cfg.multi_face_block = bool(payload["multi_face_block"])
+        for payload_field, cast in DASHBOARD_PROCTOR_FIELD_CASTS.items():
+            value = payload.get(payload_field)
+            if value is not None:
+                setattr(self._proctor_cfg, payload_field, cast(value))
 
         self._write_browser_allowlist_config(config)
         return config
@@ -801,11 +845,7 @@ class SessionManager:
             self._runtime.state = state
 
     def _station_status(self) -> str:
-        if self._state != SessionState.IDLE:
-            return self._state.value
-        if self._mode in {StationMode.EXAM_READY, StationMode.WAITING_STUDENT}:
-            return self._mode.value
-        return SessionState.IDLE.value
+        return derive_station_status(self._state, self._mode)
 
     def _hide_waiting_overlay(self) -> None:
         if self._waiting_overlay is None:
@@ -848,21 +888,6 @@ class SessionManager:
             self._lockdown.disable()
         finally:
             self._lockdown = None
-
-    @staticmethod
-    def _waiting_message_for_error(exc: Exception) -> str:
-        text = str(exc)
-        if "já concluiu" in text or "ja concluiu" in text:
-            return (
-                "Este aluno ja concluiu esta prova nesta estacao. "
-                "Chame o fiscal ou aguarde outro aluno."
-            )
-        if "Aluno não identificado" in text or "Aluno nao identificado" in text:
-            return (
-                "Aluno nao reconhecido. Sente-se de frente para a camera, "
-                "mantenha o rosto visivel e aguarde."
-            )
-        return "Aguardando condicao operacional para iniciar a prova. Chame o fiscal se persistir."
 
     def _seconds_remaining(self) -> int | None:
         if self._runtime is None:

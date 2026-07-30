@@ -9,6 +9,16 @@ from pydantic import BaseModel, Field
 
 
 class StationStatus(str, Enum):
+    """Status de estação na visão do dashboard.
+
+    É a união do vocabulário de ``SessionState`` e ``StationMode``
+    (``src/core/states.py``) mais ``COMPLETED``/``OFFLINE``, que só existem
+    aqui. Mantido explícito porque templates e ``store.py`` referenciam membros
+    pelo nome; a consistência com ``states.known_station_statuses()`` é
+    garantida por teste, não por herança — o dashboard não pode importar
+    ``src.core.session`` sem arrastar cv2/dlib/boto3.
+    """
+
     IDLE = "IDLE"
     MAINTENANCE = "MAINTENANCE"
     EXAM_READY = "EXAM_READY"

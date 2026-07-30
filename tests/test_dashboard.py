@@ -7,6 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.core.config import AppConfig
+from src.core.states import known_station_statuses
 from src.dashboard.app import create_app
 from src.dashboard.models import (
     ExamConfigPayload,
@@ -323,6 +324,16 @@ async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path):
     assert 'https://prairielearn.org/pl' in response.text
     assert 'prairielearn.org' in response.text
     assert 'name="auto_start"' not in response.text
+
+
+def test_station_status_matches_canonical_state_vocabulary():
+    """StationStatus é a união de SessionState, StationMode e COMPLETED/OFFLINE.
+
+    O dashboard não pode importar src.core.session (arrastaria cv2/dlib/boto3),
+    então a consistência entre os dois enums é garantida aqui em vez de por
+    herança. Falha se um estado novo surgir em qualquer um dos lados.
+    """
+    assert {status.value for status in StationStatus} == known_station_statuses()
 
 
 def test_dashboard_store_persists_across_restarts(tmp_path):
