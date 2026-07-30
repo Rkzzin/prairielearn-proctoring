@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 import boto3
-import cv2
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
@@ -149,6 +148,15 @@ class SessionManager:
     Dependências são injetáveis para permitir testes sem câmera real.
     """
 
+    #: Componentes cujo ciclo de vida é de **uma sessão**: sempre encerrados por
+    #: inteiro no teardown, nunca preservados. A ordem importa — o browser sai
+    #: antes da gravação (para o vídeo registrar o fechamento) e o uploader sai
+    #: por último (para drenar a fila de segmentos).
+    #:
+    #: Lockdown, overlay de espera e câmera **não** entram aqui: são escopo de
+    #: estação e podem sobreviver entre sessões. Ver ``_shutdown_components``.
+    _SESSION_SCOPED_COMPONENTS = ("_kiosk", "_overlay", "_capture", "_engine", "_uploader")
+
     def __init__(
         self,
         *,
@@ -196,9 +204,8 @@ class SessionManager:
         # SessionCamera; ver src/core/camera.py para o invariante.
         self._camera = SessionCamera(
             face_config=self._face_cfg,
-            capture_factory=video_capture_factory or cv2.VideoCapture,
+            capture_factory=video_capture_factory,
             sleep_fn=self._sleep,
-            cv2_module=cv2,
         )
 
         self._lock = threading.RLock()
@@ -926,47 +933,42 @@ class SessionManager:
         return False
 
     def _shutdown_components(self, policy: ShutdownPolicy | None = None) -> None:
-        """Encerra os componentes da sessão conforme a política de teardown.
+        """Encerra os componentes conforme a política de teardown.
 
-        O que sobrevive é decidido por ``ShutdownPolicy`` (src/core/teardown.py),
-        não por booleanos montados no ponto de chamada.
+        Há dois escopos de vida distintos aqui, e é a diferença entre eles que
+        justifica a ``ShutdownPolicy``:
+
+        * **Escopo de sessão** (``_SESSION_SCOPED_COMPONENTS`` + recognizer):
+          pertencem a *uma* prova e são sempre encerrados por inteiro.
+        * **Escopo de estação** (lockdown, overlay de espera, câmera): podem
+          sobreviver, porque a estação pode continuar em modo prova esperando o
+          próximo aluno. Só estes consultam a política.
+
+        Antes os dois escopos estavam na mesma lista, e o lockdown precisava ser
+        detectado com ``component is self._lockdown`` para chamar ``disable()``
+        em vez de ``stop()``.
         """
         policy = policy or ShutdownPolicy.full_teardown()
 
-        components = [
-            self._kiosk,
-            self._overlay,
-            self._capture,
-            self._engine,
-            self._uploader,
-        ]
-        if not policy.keep_lockdown:
-            components.append(self._lockdown)
-        for component in components:
+        for name in self._SESSION_SCOPED_COMPONENTS:
+            component = getattr(self, name)
             if component is None:
                 continue
             try:
-                if component is self._lockdown:
-                    component.disable()
-                else:
-                    component.stop()
+                component.stop()
             except Exception as exc:  # pragma: no cover - cleanup best effort
                 logger.warning("Falha ao encerrar componente %s: %s", type(component).__name__, exc)
+        for name in self._SESSION_SCOPED_COMPONENTS:
+            setattr(self, name, None)
+        # O recognizer não tem stop(); basta soltar a referência.
+        self._recognizer = None
 
+        if not policy.keep_lockdown:
+            self._disable_exam_lockdown()
         if not policy.keep_camera:
             self._release_camera()
         if not policy.keep_waiting_overlay:
             self._hide_waiting_overlay()
-        self._recognizer = None
-        self._engine = None
-        self._capture = None
-        self._uploader = None
-        self._kiosk = None
-        self._overlay = None
-        if not policy.keep_waiting_overlay:
-            self._waiting_overlay = None
-        if not policy.keep_lockdown:
-            self._lockdown = None
 
     def _collect_dashboard_events(self, session_id: str) -> list[dict[str, Any]]:
         return collect_session_events(self.data_dir, session_id)

@@ -11,8 +11,7 @@ Antes isso eram cinco métodos soltos no ``SessionManager`` mexendo num
 chamadas. Aqui as duas fontes são métodos distintos (``open_device`` e
 ``open_preview``), e há um único lugar que fecha o handle.
 
-Sem dependência de cv2 no import: a fábrica de captura é injetada, o que
-também é o que permite testar sem hardware.
+A fábrica de captura é injetável, o que é o que permite testar sem hardware.
 """
 
 from __future__ import annotations
@@ -21,7 +20,54 @@ import logging
 import time
 from typing import Any, Callable
 
+import cv2
+
 logger = logging.getLogger(__name__)
+
+#: Teto para a **abertura** de uma fonte de rede (o preview UDP do FFmpeg).
+#:
+#: Sem isto, ``cv2.VideoCapture`` de uma URL que não responde bloqueia ~30 s
+#: dentro de uma única tentativa — medido — e o laço de retry de
+#: ``open_preview`` só checa o deadline *entre* tentativas. O efeito era
+#: ``start_session`` pendurado ~30 s **segurando o RLock** do SessionManager,
+#: com ``/status`` e ``/health`` bloqueados junto.
+#:
+#: **Não reduza sem medir.** Esse timeout também limita o tempo que o OpenCV tem
+#: para sondar o stream e achar SPS/PPS do H.264. Medido contra o preview real:
+#:
+#:   =========  ==========  ==================================================
+#:   timeout    abertura    frames em 4 s
+#:   =========  ==========  ==================================================
+#:   800 ms     0,90 s      **0** — abre, mas nunca decodifica ("non-existing
+#:                          PPS 0"); o handle fica inútil
+#:   2000 ms    2,04 s      15 (degradado)
+#:   3000 ms    2,63 s      44 (saudável)
+#:   5000 ms    2,85 s      41 (saudável)
+#:   =========  ==========  ==================================================
+#:
+#: A abertura saudável custa ~2,85 s, então 5000 ms dá ~2x de margem e ainda
+#: corta o pior caso de 30 s para ~5 s (verificado: URL morta bloqueia 5,06 s).
+PREVIEW_OPEN_TIMEOUT_MS = 5000
+
+
+def open_video_capture(source: int | str) -> Any:
+    """Fábrica default de captura.
+
+    Fonte inteira é dispositivo local (``/dev/videoN``) e abre direto. Fonte
+    string é rede (preview UDP) e ganha teto de abertura, para não bloquear a
+    thread que estiver chamando.
+
+    Não define ``CAP_PROP_READ_TIMEOUT_MSEC`` de propósito: durante a sessão o
+    ``read()`` bloqueante é o que mantém a continuidade de frames, e limitá-lo
+    mudaria a dinâmica do loop de proctoring sem necessidade.
+    """
+    if isinstance(source, str):
+        return cv2.VideoCapture(
+            source,
+            cv2.CAP_FFMPEG,
+            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, PREVIEW_OPEN_TIMEOUT_MS],
+        )
+    return cv2.VideoCapture(source)
 
 
 class CameraError(RuntimeError):
@@ -34,24 +80,21 @@ class SessionCamera:
     Args:
         face_config: resolução/fps/índice do dispositivo físico.
         capture_factory: constrói o objeto de captura a partir de um índice
-            (dispositivo) ou de uma URL (preview). Injetável para testes.
+            (dispositivo) ou de uma URL (preview). Injetável para testes;
+            default ``open_video_capture``, que limita a abertura de rede.
         sleep_fn: usado no retry de abertura do preview.
-        cv2_module: opcional; só é necessário para aplicar os ``CAP_PROP_*`` ao
-            abrir o dispositivo físico. Ausente, a sintonia é ignorada.
     """
 
     def __init__(
         self,
         *,
         face_config: Any,
-        capture_factory: Callable[[Any], Any],
+        capture_factory: Callable[[Any], Any] | None = None,
         sleep_fn: Callable[[float], None] | None = None,
-        cv2_module: Any | None = None,
     ):
         self._cfg = face_config
-        self._factory = capture_factory
+        self._factory = capture_factory or open_video_capture
         self._sleep = sleep_fn or time.sleep
-        self._cv2 = cv2_module
         self._handle: Any | None = None
 
     # ── estado ────────────────────────────────────────────────
@@ -155,9 +198,8 @@ class SessionCamera:
         Só faz sentido no dispositivo — no preview a codificação já vem do
         FFmpeg. Silenciosamente ignorado se o handle não suportar ``set``.
         """
-        if self._cv2 is None or not hasattr(cap, "set"):
+        if not hasattr(cap, "set"):
             return
-        cv2 = self._cv2
         cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._cfg.camera_width)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.camera_height)
