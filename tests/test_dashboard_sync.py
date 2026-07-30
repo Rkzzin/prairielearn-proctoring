@@ -4,8 +4,6 @@ import json
 import httpx
 from pathlib import Path
 
-from src.core.config import AppConfig
-
 from src.core.config import DashboardConfig
 from src.core.dashboard_sync import DashboardHeartbeatWorker
 from src.core.session import SessionConfig, SessionState, StationMode
@@ -21,7 +19,8 @@ class FakeSessionManager:
         self.unblock_calls = 0
         self.enter_mode_calls = 0
         self.exit_mode_calls = 0
-        self._app_cfg = AppConfig(data_dir=Path("/tmp/proctor-dashboard-sync"))
+        # Interface pública que o worker consome (antes ele alcançava _app_cfg).
+        self.data_dir = Path("/tmp/proctor-dashboard-sync")
         self.session_payload = None
 
     def dashboard_snapshot(self):

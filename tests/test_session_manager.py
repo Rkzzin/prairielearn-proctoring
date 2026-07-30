@@ -27,6 +27,7 @@ from src.core.session import (
 from src.core.states import SessionState as CanonicalSessionState
 from src.core.states import StationMode as CanonicalStationMode
 from src.core.states import derive_station_status
+from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.dashboard.models import ExamConfigPayload
 from src.proctor.engine import ProctorState
 
@@ -212,6 +213,7 @@ def _make_manager(
     engine_states,
     frames,
     reidentify_fn=None,
+    video_capture_factory=None,
 ):
     fake_recognizer = FakeRecognizer(identify_results)
     fake_engine = FakeEngine(engine_states)
@@ -239,7 +241,7 @@ def _make_manager(
         kiosk_factory=lambda: fake_kiosk,
         overlay_factory=lambda: fake_overlay,
         lockdown_factory=lambda: fake_lockdown,
-        video_capture_factory=lambda _index: fake_camera,
+        video_capture_factory=video_capture_factory or (lambda _index: fake_camera),
         reidentify_fn=reidentify_fn or (lambda **_kwargs: True),
         s3_probe=lambda: True,
         sleep_fn=lambda _seconds: None,
@@ -307,8 +309,8 @@ def test_session_manager_switches_from_device_camera_to_capture_preview():
         ],
         engine_states=[ProctorState.NORMAL],
         frames=[],
+        video_capture_factory=video_capture_factory,
     )
-    manager._video_capture_factory = video_capture_factory
 
     manager.update_config(turma_id="ES2025-T1", prairielearn_url="https://pl.test/exam")
     manager.start_session()
@@ -494,8 +496,8 @@ def test_session_manager_resets_to_idle_if_preview_camera_cannot_open():
         ],
         engine_states=[],
         frames=[],
+        video_capture_factory=video_capture_factory,
     )
-    manager._video_capture_factory = video_capture_factory
 
     manager.update_config(turma_id="ES2025-T1")
 
@@ -821,6 +823,71 @@ def test_apply_dashboard_config_ignores_missing_optional_fields():
     assert config.turma_id == "ES2025-T1"
     assert config.timer_minutes == 45
     assert manager._proctor_cfg.gaze_h_threshold == before
+
+
+# ── Política de teardown ─────────────────────────────────────────────────────
+#
+# A regra de "o que sobrevive ao encerramento" era três booleanos calculados no
+# except de start_session, cobertos só de forma indireta. Agora tem teste direto.
+
+
+def test_full_teardown_keeps_nothing():
+    policy = ShutdownPolicy.full_teardown()
+    assert (policy.keep_lockdown, policy.keep_waiting_overlay, policy.keep_camera) == (
+        False,
+        False,
+        False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mode", "session_started", "expected"),
+    [
+        # Em WAITING_STUDENT sem sessão criada: preserva tudo, para não causar
+        # flicker no overlay nem liga/desliga da webcam entre tentativas.
+        (StationMode.WAITING_STUDENT, False, (True, True, True)),
+        # Sessão já existia quando falhou: lockdown fica (segue em modo prova),
+        # mas overlay/câmera são reconstruídos.
+        (StationMode.WAITING_STUDENT, True, (True, False, False)),
+        # Fora do modo prova, nada sobrevive.
+        (StationMode.SESSION, True, (False, False, False)),
+        (StationMode.EXAM_READY, False, (False, False, False)),
+        (StationMode.MAINTENANCE, False, (False, False, False)),
+    ],
+)
+def test_failed_start_policy(mode, session_started, expected):
+    policy = ShutdownPolicy.for_failed_start(mode=mode, session_started=session_started)
+    assert (
+        policy.keep_lockdown,
+        policy.keep_waiting_overlay,
+        policy.keep_camera,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    ("mode", "auto_start", "reason", "keep_lockdown"),
+    [
+        # Sessão encerrada com auto-start ligado: volta a esperar aluno, mantém
+        # o lockdown de pé.
+        (StationMode.SESSION, True, "manual", True),
+        (StationMode.SESSION, True, "dashboard_command", True),
+        # Saída do modo prova nunca preserva: o operador quer manutenção.
+        (StationMode.SESSION, True, EXIT_EXAM_MODE_REASON, False),
+        # Sem auto-start, cai para EXAM_READY e restaura o ambiente.
+        (StationMode.SESSION, False, "manual", False),
+        # Sem sessão ativa não há o que preservar.
+        (StationMode.WAITING_STUDENT, True, "manual", False),
+        (StationMode.MAINTENANCE, True, "manual", False),
+    ],
+)
+def test_stopped_session_policy(mode, auto_start, reason, keep_lockdown):
+    policy = ShutdownPolicy.for_stopped_session(
+        mode=mode, auto_start=auto_start, reason=reason
+    )
+    assert policy.keep_lockdown is keep_lockdown
+    # Overlay/câmera nunca sobrevivem a um stop; são recriados ao voltar a esperar.
+    assert policy.keep_waiting_overlay is False
+    assert policy.keep_camera is False
 
 
 @pytest.mark.asyncio

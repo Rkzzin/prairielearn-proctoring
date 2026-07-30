@@ -20,6 +20,7 @@ import time
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 import boto3
@@ -27,15 +28,22 @@ import cv2
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
+from src.core.camera import CameraError, SessionCamera
 from src.core.cpu_affinity import auto_split_cpu_sets, get_process_cpu_set, parse_cpu_set, set_process_cpu_set
+from src.core.dashboard_payload import (
+    build_session_payload,
+    build_station_snapshot,
+    collect_session_events,
+    collect_session_recordings,
+)
 from src.core.states import SessionState, StationMode, derive_station_status
+from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.face.recognizer import FaceRecognizer
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.allowlist import build_allowlist_config, write_extension_config
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.reidentify import run_reidentify
-from src.proctor.events import EventLogger
 from src.proctor.engine import ProctorEngine, ProctorState
 from src.recorder.capture import Capture
 from src.recorder.uploader import Uploader
@@ -180,10 +188,18 @@ class SessionManager:
         self._lockdown_factory = lockdown_factory or (
             lambda: Lockdown(display=self._rec_cfg.display, allow_browser_shortcuts=True)
         )
-        self._video_capture_factory = video_capture_factory or cv2.VideoCapture
         self._reidentify_fn = reidentify_fn or run_reidentify
         self._s3_probe = s3_probe or self._default_s3_probe
         self._sleep = sleep_fn or time.sleep
+
+        # A posse da câmera (dispositivo físico vs. preview do FFmpeg) vive em
+        # SessionCamera; ver src/core/camera.py para o invariante.
+        self._camera = SessionCamera(
+            face_config=self._face_cfg,
+            capture_factory=video_capture_factory or cv2.VideoCapture,
+            sleep_fn=self._sleep,
+            cv2_module=cv2,
+        )
 
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -198,7 +214,6 @@ class SessionManager:
         self._runtime: SessionRuntime | None = None
         self._last_session: SessionRuntime | None = None
 
-        self._camera = None
         self._recognizer = None
         self._engine = None
         self._capture = None
@@ -273,12 +288,15 @@ class SessionManager:
             return None
 
     def get_health(self) -> dict[str, Any]:
+        # Cada probe abre a câmera / bate no S3, então avalia uma vez só.
+        camera_ok = self._camera_ok()
+        s3_ok = self._s3_probe()
         return {
-            "status": "ok" if self._camera_ok() and self._s3_probe() else "degraded",
+            "status": "ok" if camera_ok and s3_ok else "degraded",
             "state": self.state.value,
             "mode": self.mode.value,
-            "camera_ok": self._camera_ok(),
-            "s3_ok": self._s3_probe(),
+            "camera_ok": camera_ok,
+            "s3_ok": s3_ok,
         }
 
     def apply_dashboard_config(self, payload: dict[str, Any]) -> SessionConfig:
@@ -304,28 +322,21 @@ class SessionManager:
         self._write_browser_allowlist_config(config)
         return config
 
-    def dashboard_snapshot(self) -> dict[str, Any]:
-        status = self.get_status()
-        student = None
-        if self._runtime is not None:
-            student = {
-                "student_id": self._runtime.student_id,
-                "student_name": self._runtime.student_name,
-            }
+    @property
+    def data_dir(self) -> Path:
+        """Diretório de dados desta estação (sessões, eventos, gravações).
 
-        return {
-            "station_id": self._next_config.station_id,
-            "station_name": self._next_config.station_name,
-            "status": status["station_status"],
-            "mode": status["mode"],
-            "student": student,
-            "active_session_id": status["session_id"],
-            "assessment": status["assessment"],
-            "turma": status["turma_id"],
-            "auto_start_enabled": self._next_config.auto_start,
-            "seconds_remaining": status["seconds_remaining"],
-            "recent_events": [],
-        }
+        Público porque o heartbeat precisa localizar o ``events.jsonl`` da
+        sessão corrente; antes ele alcançava ``_app_cfg`` por dentro.
+        """
+        return Path(self._app_cfg.data_dir)
+
+    def dashboard_snapshot(self) -> dict[str, Any]:
+        return build_station_snapshot(
+            status=self.get_status(),
+            config=self._next_config,
+            runtime=self._runtime,
+        )
 
     def prepare_exam_mode(self) -> dict[str, Any]:
         with self._lock:
@@ -350,7 +361,7 @@ class SessionManager:
         stop_error: Exception | None = None
         if self.state != SessionState.IDLE:
             try:
-                self.stop_session(reason="exit_exam_mode")
+                self.stop_session(reason=EXIT_EXAM_MODE_REASON)
             except Exception as exc:
                 logger.warning("Falha ao parar sessão durante saída do modo prova: %s", exc)
                 stop_error = exc
@@ -376,7 +387,7 @@ class SessionManager:
                 self._runtime.notes["stop_reason"] = "recover_exam_mode"
                 self._runtime.stopped_at = datetime.now(timezone.utc)
                 self._last_session = self._runtime
-            self._shutdown_components()
+            self._shutdown_components(ShutdownPolicy.full_teardown())
             self._restore_runtime_cpu_affinity()
             self._runtime = None
             self._thread = None
@@ -389,27 +400,7 @@ class SessionManager:
         target = self._runtime if self._runtime is not None else (self._last_session if include_completed else None)
         if target is None:
             return None
-        return {
-            "session_id": target.session_id,
-            "station_id": self._next_config.station_id,
-            "turma": target.turma_id,
-            "assessment": target.assessment,
-            "started_at": target.started_at.isoformat(),
-            "ended_at": target.stopped_at.isoformat() if target.stopped_at else None,
-            "timer_minutes": target.timer_minutes,
-            "student": {
-                "student_id": target.student_id,
-                "student_name": target.student_name,
-            },
-            "status": target.state.value,
-            "flags_count": sum(
-                1
-                for event in target.notes.get("dashboard_events", [])
-                if event["severity"] in {"WARNING", "CRITICAL"}
-            ),
-            "events": target.notes.get("dashboard_events", []),
-            "recordings": target.notes.get("dashboard_recordings", []),
-        }
+        return build_session_payload(target=target, station_id=self._next_config.station_id)
 
     def start_session(
         self,
@@ -484,7 +475,7 @@ class SessionManager:
                 if self._capture is not None:
                     self._release_camera()
                     self._capture.start()
-                    self._camera = self._open_preview_camera(self._capture.preview_url)
+                    self._open_preview_camera(self._capture.preview_url)
                     self._apply_runtime_cpu_affinity()
                 self._lockdown.enable()
                 if self._kiosk is not None:
@@ -513,11 +504,11 @@ class SessionManager:
                 )
                 return self.get_status()
             except Exception:
-                preserve_waiting_resources = self._mode == StationMode.WAITING_STUDENT and self._runtime is None
                 self._shutdown_components(
-                    preserve_exam_lockdown=self._mode == StationMode.WAITING_STUDENT,
-                    preserve_waiting_overlay=preserve_waiting_resources,
-                    preserve_camera=preserve_waiting_resources,
+                    ShutdownPolicy.for_failed_start(
+                        mode=self._mode,
+                        session_started=self._runtime is not None,
+                    )
                 )
                 self._restore_runtime_cpu_affinity()
                 self._runtime = None
@@ -546,12 +537,15 @@ class SessionManager:
         with self._lock:
             runtime = self._runtime
             uploader = self._uploader
-            keep_waiting = (
-                self._mode == StationMode.SESSION
-                and self._next_config.auto_start
-                and reason != "exit_exam_mode"
+            policy = ShutdownPolicy.for_stopped_session(
+                mode=self._mode,
+                auto_start=self._next_config.auto_start,
+                reason=reason,
             )
-            self._shutdown_components(preserve_exam_lockdown=keep_waiting)
+            # keep_lockdown é, por construção, o mesmo predicado de "volta para
+            # WAITING_STUDENT" — usado nas duas decisões abaixo de propósito.
+            keep_waiting = policy.keep_lockdown
+            self._shutdown_components(policy)
             self._restore_runtime_cpu_affinity()
             if runtime is not None:
                 runtime.notes["dashboard_events"] = self._collect_dashboard_events(runtime.session_id)
@@ -626,7 +620,7 @@ class SessionManager:
 
         ok = self._reidentify_fn(
             recognizer=self._recognizer,
-            cap=self._camera,
+            cap=self._camera.handle,
             expected_student_id=self._runtime.student_id,
             timeout_sec=self._next_config.reidentify_timeout_sec,
             required_matches=self._next_config.reidentify_matches,
@@ -667,70 +661,25 @@ class SessionManager:
             f"Aluno não identificado após {max_attempts} tentativas"
         )
 
-    def _open_camera(self, source: int | str | None = None):
-        source = self._face_cfg.camera_index if source is None else source
-        cap = self._video_capture_factory(source)
-        if isinstance(source, int) and hasattr(cap, "set"):
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, self._face_cfg.camera_width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._face_cfg.camera_height)
-            cap.set(cv2.CAP_PROP_FPS, self._face_cfg.camera_fps)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        is_opened = cap.isOpened() if hasattr(cap, "isOpened") else True
-        if not is_opened:
-            raise SessionError(f"Não foi possível abrir a câmera {source}")
-        return cap
-
     def _ensure_identification_camera_open(self) -> None:
-        if self._camera is not None:
-            is_opened = self._camera.isOpened() if hasattr(self._camera, "isOpened") else True
-            if is_opened:
-                return
-            self._release_camera()
-        self._camera = self._open_camera()
+        """Abre o dispositivo físico para identificar aluno / esperar aluno."""
+        try:
+            self._camera.open_device()
+        except CameraError as exc:
+            raise SessionError(str(exc)) from exc
 
     def _open_preview_camera(self, source: str, timeout_sec: float = 5.0):
-        deadline = time.monotonic() + timeout_sec
-        last_error: SessionError | None = None
-        while time.monotonic() < deadline:
-            try:
-                cap = self._open_camera(source)
-                ret, frame = cap.read()
-                if ret and frame is not None:
-                    return cap
-                if hasattr(cap, "release"):
-                    cap.release()
-            except SessionError as exc:
-                last_error = exc
-            self._sleep(0.1)
-        raise SessionError(
-            f"Não foi possível abrir o preview local da webcam em {source}"
-        ) from last_error
+        """Troca a fonte de vídeo para o preview publicado pelo FFmpeg."""
+        try:
+            return self._camera.open_preview(source, timeout_sec=timeout_sec)
+        except CameraError as exc:
+            raise SessionError(str(exc)) from exc
 
     def _release_camera(self) -> None:
-        if self._camera is None or not hasattr(self._camera, "release"):
-            self._camera = None
-            return
-        try:
-            self._camera.release()
-        except Exception:
-            pass
-        self._camera = None
+        self._camera.release()
 
     def _camera_ok(self) -> bool:
-        if self._camera is not None:
-            try:
-                return bool(self._camera.isOpened()) if hasattr(self._camera, "isOpened") else True
-            except Exception:
-                return False
-        try:
-            cap = self._video_capture_factory(self._face_cfg.camera_index)
-            ok = cap.isOpened() if hasattr(cap, "isOpened") else True
-            if hasattr(cap, "release"):
-                cap.release()
-            return bool(ok)
-        except Exception:
-            return False
+        return self._camera.probe()
 
     def _default_s3_probe(self) -> bool:
         try:
@@ -976,13 +925,14 @@ class SessionManager:
         self._stop_event.set()
         return False
 
-    def _shutdown_components(
-        self,
-        *,
-        preserve_exam_lockdown: bool = False,
-        preserve_waiting_overlay: bool = False,
-        preserve_camera: bool = False,
-    ) -> None:
+    def _shutdown_components(self, policy: ShutdownPolicy | None = None) -> None:
+        """Encerra os componentes da sessão conforme a política de teardown.
+
+        O que sobrevive é decidido por ``ShutdownPolicy`` (src/core/teardown.py),
+        não por booleanos montados no ponto de chamada.
+        """
+        policy = policy or ShutdownPolicy.full_teardown()
+
         components = [
             self._kiosk,
             self._overlay,
@@ -990,7 +940,7 @@ class SessionManager:
             self._engine,
             self._uploader,
         ]
-        if not preserve_exam_lockdown:
+        if not policy.keep_lockdown:
             components.append(self._lockdown)
         for component in components:
             if component is None:
@@ -1003,9 +953,9 @@ class SessionManager:
             except Exception as exc:  # pragma: no cover - cleanup best effort
                 logger.warning("Falha ao encerrar componente %s: %s", type(component).__name__, exc)
 
-        if not preserve_camera:
+        if not policy.keep_camera:
             self._release_camera()
-        if not preserve_waiting_overlay:
+        if not policy.keep_waiting_overlay:
             self._hide_waiting_overlay()
         self._recognizer = None
         self._engine = None
@@ -1013,39 +963,13 @@ class SessionManager:
         self._uploader = None
         self._kiosk = None
         self._overlay = None
-        if not preserve_waiting_overlay:
+        if not policy.keep_waiting_overlay:
             self._waiting_overlay = None
-        if not preserve_exam_lockdown:
+        if not policy.keep_lockdown:
             self._lockdown = None
 
     def _collect_dashboard_events(self, session_id: str) -> list[dict[str, Any]]:
-        log_path = self._app_cfg.data_dir / "sessions" / session_id / "events.jsonl"
-        if not log_path.exists():
-            return []
-        payloads = []
-        for event in EventLogger.read_session(log_path):
-            payloads.append(
-                {
-                    "timestamp": datetime.fromtimestamp(event.timestamp, tz=timezone.utc).isoformat(),
-                    "frame_number": event.frame,
-                    "event_type": event.type,
-                    "severity": event.severity,
-                    "details": event.details,
-                }
-            )
-        return payloads
+        return collect_session_events(self.data_dir, session_id)
 
     def _collect_dashboard_recordings(self, uploader: Any) -> list[dict[str, Any]]:
-        if uploader is None:
-            return []
-        assets = []
-        for segment, s3_key in uploader.uploaded_segments:
-            assets.append(
-                {
-                    "label": f"{segment.stream.capitalize()} {segment.index:03d}",
-                    "s3_bucket": self._s3_cfg.bucket,
-                    "s3_key": s3_key,
-                    "kind": "video",
-                }
-            )
-        return assets
+        return collect_session_recordings(uploader, self._s3_cfg.bucket)

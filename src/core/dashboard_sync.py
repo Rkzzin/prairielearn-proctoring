@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 import httpx
 
 from src.core.config import DashboardConfig
+from src.core.dashboard_payload import event_to_payload, session_events_path
 from src.core.session import SessionError, SessionManager, SessionState, StationMode
 from src.proctor.events import ProctorEvent
 
 logger = logging.getLogger(__name__)
+
+#: Quantos eventos recentes acompanham cada heartbeat.
+_RECENT_EVENTS_KEPT = 10
 
 
 class DashboardHeartbeatWorker:
@@ -152,7 +155,12 @@ class DashboardHeartbeatWorker:
         return payload
 
     def _read_recent_events(self, session_id: str) -> list[dict[str, Any]]:
-        log_path = self._session_manager._app_cfg.data_dir / "sessions" / session_id / "events.jsonl"
+        """Lê incrementalmente o JSONL da sessão, guardando o offset de arquivo.
+
+        Formato do evento vem de ``event_to_payload`` — mesmo formato usado na
+        coleta final da sessão, para os dois não divergirem.
+        """
+        log_path = session_events_path(self._session_manager.data_dir, session_id)
         if not log_path.exists():
             return self._recent_events.get(session_id, [])
 
@@ -164,18 +172,9 @@ class DashboardHeartbeatWorker:
                 line = line.strip()
                 if not line:
                     continue
-                event = ProctorEvent.from_json(line)
-                cached.append(
-                    {
-                        "timestamp": datetime.fromtimestamp(event.timestamp, tz=timezone.utc).isoformat(),
-                        "frame_number": event.frame,
-                        "event_type": event.type,
-                        "severity": event.severity,
-                        "details": event.details,
-                    }
-                )
+                cached.append(event_to_payload(ProctorEvent.from_json(line)))
             self._event_offsets[session_id] = handle.tell()
-        self._recent_events[session_id] = cached[-10:]
+        self._recent_events[session_id] = cached[-_RECENT_EVENTS_KEPT:]
         return self._recent_events[session_id]
 
     def _default_client_factory(self) -> httpx.Client:
