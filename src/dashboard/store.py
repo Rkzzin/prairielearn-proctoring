@@ -378,9 +378,30 @@ class DashboardStore:
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS credentials (
+              username TEXT PRIMARY KEY,
+              password_hash TEXT NOT NULL
+            );
             """
         )
         self._db.commit()
+
+    def get_credential_hash(self, username: str) -> str | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT password_hash FROM credentials WHERE username = ?",
+                (username,),
+            ).fetchone()
+        return row["password_hash"] if row else None
+
+    def ensure_credential(self, username: str, password_hash: str) -> None:
+        """Insere a credencial só se `username` ainda não existir (não sobrescreve)."""
+        with self._lock:
+            self._db.execute(
+                "INSERT OR IGNORE INTO credentials (username, password_hash) VALUES (?, ?)",
+                (username, password_hash),
+            )
+            self._db.commit()
 
     def _load_from_db(self) -> None:
         self._stations = {

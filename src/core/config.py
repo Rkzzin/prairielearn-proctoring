@@ -261,6 +261,22 @@ class DashboardConfig(BaseSettings):
         default="NUC Local",
         description="Nome amigável exibido no dashboard.",
     )
+    admin_user: str | None = Field(
+        default=None,
+        description=(
+            "Usado dos dois lados: no dashboard, semeia a credencial (hash) no "
+            "banco no primeiro boot; na NUC, autentica as chamadas de heartbeat/"
+            "comando contra o dashboard. Mesmo usuário/senha nos dois papéis."
+        ),
+    )
+    admin_password: str | None = Field(
+        default=None,
+        description=(
+            "Senha em texto puro só nesta variável de ambiente. No dashboard vira "
+            "hash no banco no primeiro boot; pode ser removida do .env depois. Na "
+            "NUC continua sendo necessária a cada start para autenticar saída."
+        ),
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="PROCTOR_DASHBOARD_",

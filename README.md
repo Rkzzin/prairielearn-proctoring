@@ -2,6 +2,13 @@
 
 Sistema de estações de prova presencial baseadas em Intel NUC, com reconhecimento facial, gravação com proctoring automatizado, browser lockdown e integração com PrairieLearn. O objetivo é substituir quizzes que consomem 1h de aula por sessões controladas em máquinas dedicadas, fora do horário de aula.
 
+O repositório serve dois papéis, em máquinas diferentes — **estação** (cada NUC,
+`proctor.service`) e **dashboard** do professor (máquina central, ex. EC2,
+`proctor-dashboard.service`). Ver [`docs/roles.md`](docs/roles.md) para o que
+pertence a cada um, e os passo a passo de setup em
+[`docs/setup_nuc.md`](docs/setup_nuc.md) e
+[`docs/setup_dashboard.md`](docs/setup_dashboard.md).
+
 ---
 
 ## Status de implementação
@@ -83,7 +90,9 @@ proctor-station/
 │   ├── api/                     # FastAPI local da NUC (Fase 5)
 │   └── dashboard/               # Dashboard do professor (Fase 6)
 ├── scripts/
-│   ├── bootstrap.sh             # Setup completo de uma NUC do zero
+│   ├── bootstrap.sh             # Setup completo de uma NUC do zero (papel: estação)
+│   ├── bootstrap_dashboard.sh   # Setup completo do dashboard do zero (papel: dashboard)
+│   ├── detect_camera_audio.sh   # Detecta câmera/mic depois da webcam conectada
 │   ├── download_models.sh       # Baixa modelos dlib (~100MB)
 │   ├── enroll.py                # CLI de enrollment via S3
 │   ├── calibrate_gaze.py        # Calibração visual de thresholds de gaze

@@ -5,7 +5,7 @@ SERVICE_NAME="proctor-dashboard.service"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
 PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
-PORT="${PROCTOR_DASHBOARD_PORT:-8010}"
+PORT="${PROCTOR_DASHBOARD_PORT:-80}"
 UNIT_PATH="/etc/systemd/system/$SERVICE_NAME"
 TMP_UNIT="$(mktemp)"
 
@@ -33,6 +33,8 @@ Environment=PYTHONUNBUFFERED=1
 ExecStart=$PYTHON_BIN -m uvicorn src.dashboard.app:app --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

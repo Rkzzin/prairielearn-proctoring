@@ -3,18 +3,20 @@
 from __future__ import annotations
 
 import csv
+import hmac
 import json
 import anyio
 from datetime import timezone
 from io import StringIO
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Form, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.core.config import AppConfig
+from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
 from src.dashboard.models import (
     CommandType,
     ExamConfigPayload,
@@ -44,6 +46,29 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     app.state.store = dashboard_store
     app.state.templates = templates
     app.state.s3_enrollment_service = S3EnrollmentService(app_config)
+
+    auth_username = app_config.dashboard.admin_user
+    if auth_username:
+        admin_password = app_config.dashboard.admin_password
+        if admin_password and dashboard_store.get_credential_hash(auth_username) is None:
+            dashboard_store.ensure_credential(auth_username, hash_password(admin_password))
+
+        @app.middleware("http")
+        async def require_basic_auth(request: Request, call_next):
+            stored_hash = dashboard_store.get_credential_hash(auth_username)
+            credentials = parse_basic_auth(request.headers.get("authorization"))
+            authenticated = (
+                stored_hash is not None
+                and credentials is not None
+                and hmac.compare_digest(credentials[0], auth_username)
+                and verify_password(credentials[1], stored_hash)
+            )
+            if not authenticated:
+                return Response(
+                    status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="proctor-dashboard"'},
+                )
+            return await call_next(request)
 
     def render_template(request: Request, template_name: str, **context: object) -> HTMLResponse:
         return templates.TemplateResponse(

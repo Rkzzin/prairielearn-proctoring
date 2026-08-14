@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # ============================================================================
-#  proctor-station bootstrap
-#  Leva um Ubuntu 24.04 limpo até o projeto rodando.
+#  proctor-station bootstrap — papel de ESTAÇÃO (NUC)
+#  Leva um Ubuntu 24.04 Desktop limpo até proctor.service rodando.
+#  Para o dashboard do professor (outra máquina, ex. EC2), use
+#  scripts/bootstrap_dashboard.sh em vez deste.
 #
 #  Uso:
 #    chmod +x scripts/bootstrap.sh
@@ -9,11 +11,14 @@
 #
 #  O que faz:
 #    1. Instala pacotes do sistema (apt)
-#    2. Cria Python venv
-#    3. Instala dependências Python
-#    4. Baixa modelos dlib (~100MB)
-#    5. Roda testes
-#    6. Testa câmera (se disponível)
+#    2. Verifica sessão gráfica (X11)
+#    3. Cria Python venv
+#    4. Instala dependências Python
+#    5. Baixa modelos dlib (~100MB)
+#    6. Copia .env.example -> .env (se não existir) e tenta detectar
+#       automaticamente câmera (índice V4L2) e microfone (card ALSA)
+#    7. Roda testes
+#    8. Testa câmera (se disponível)
 # ============================================================================
 
 set -euo pipefail
@@ -67,8 +72,9 @@ log "Bibliotecas numéricas instaladas"
 sudo apt install -y -qq \
     ffmpeg \
     v4l-utils \
+    alsa-utils \
     > /dev/null 2>&1
-log "FFmpeg e v4l-utils instalados"
+log "FFmpeg, v4l-utils e alsa-utils instalados"
 
 sudo apt install -y -qq \
     git \
@@ -91,10 +97,24 @@ chmod +x scripts/install_chromium_hardening.sh
 sudo bash scripts/install_chromium_hardening.sh
 log "Policies de hardening do Chromium instaladas"
 
-# ── 2. Python venv ──
+# ── 2. Sessão gráfica ──
 echo ""
 echo "=========================================="
-echo "  2/6  Criando Python virtual environment"
+echo "  2/8  Verificando sessão gráfica"
+echo "=========================================="
+
+if [ "${XDG_SESSION_TYPE:-desconhecido}" != "x11" ]; then
+    warn "Sessão atual é '${XDG_SESSION_TYPE:-desconhecido}', não 'x11'."
+    warn "A prova depende de X11 (captura de tela via x11grab, wmctrl, xbindkeys)."
+    warn "Troque para 'Ubuntu on Xorg' na tela de login do GNOME antes de rodar a prova."
+else
+    log "Sessão X11 confirmada"
+fi
+
+# ── 3. Python venv ──
+echo ""
+echo "=========================================="
+echo "  3/8  Criando Python virtual environment"
 echo "=========================================="
 
 if [ -d ".venv" ] || [ -d "venv" ]; then
@@ -116,30 +136,50 @@ log "Python do venv confirmado em 3.12"
 python3 -m pip install --upgrade pip --quiet
 log "pip atualizado: $(pip --version | cut -d' ' -f2)"
 
-# ── 3. Instalar dependências Python ──
+# ── 4. Instalar dependências Python ──
 echo ""
 echo "=========================================="
-echo "  3/6  Instalando dependências Python"
+echo "  4/8  Instalando dependências Python"
 echo "=========================================="
 echo "       (dlib compila do source — pode levar 3-5 min)"
 
-python3 -m pip install -e ".[dev]"
-log "Dependências instaladas"
+python3 -m pip install -e ".[station,dev]"
+log "Dependências instaladas (papel: estação)"
 
-# ── 4. Baixar modelos dlib ──
+# ── 5. Baixar modelos dlib ──
 echo ""
 echo "=========================================="
-echo "  4/6  Baixando modelos dlib"
+echo "  5/8  Baixando modelos dlib"
 echo "=========================================="
 
 chmod +x scripts/download_models.sh
 ./scripts/download_models.sh models
 log "Modelos prontos"
 
-# ── 5. Testes ──
+# ── 6. Preparar .env ──
 echo ""
 echo "=========================================="
-echo "  5/6  Rodando testes"
+echo "  6/8  Preparando .env"
+echo "=========================================="
+
+if [ -f ".env" ]; then
+    warn ".env já existe — não foi sobrescrito. Confira manualmente se está completo."
+else
+    cp .env.example .env
+    log ".env criado a partir de .env.example"
+    warn "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY e as credenciais do dashboard"
+    warn "(PROCTOR_DASHBOARD_ADMIN_USER/PASSWORD) continuam em branco — preencha o .env à mão."
+fi
+
+warn "Câmera/microfone NÃO são detectados aqui: o bootstrap costuma rodar antes"
+warn "da webcam definitiva estar conectada na NUC. Depois de plugar a webcam de"
+warn "verdade, rode:"
+warn "    bash scripts/detect_camera_audio.sh"
+
+# ── 7. Testes ──
+echo ""
+echo "=========================================="
+echo "  7/8  Rodando testes"
 echo "=========================================="
 
 python3 -m pytest tests/ -v --tb=short
@@ -151,10 +191,10 @@ else
     warn "Alguns testes falharam — verifique a saída acima"
 fi
 
-# ── 6. Teste de câmera ──
+# ── 8. Teste de câmera ──
 echo ""
 echo "=========================================="
-echo "  6/6  Testando câmera"
+echo "  8/8  Testando câmera"
 echo "=========================================="
 
 if ls /dev/video* > /dev/null 2>&1; then

@@ -65,6 +65,35 @@ class FakeS3EnrollmentService:
 
 
 @pytest.mark.asyncio
+async def test_dashboard_has_no_auth_when_admin_user_unset(tmp_path):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+        response = await client.get("/")
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dashboard_requires_basic_auth_when_admin_user_set(tmp_path):
+    config = AppConfig(
+        data_dir=tmp_path,
+        dashboard={"admin_user": "prof", "admin_password": "senha-forte"},
+    )
+    app = create_app(config=config)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        unauthenticated = await client.get("/")
+        assert unauthenticated.status_code == 401
+        assert unauthenticated.headers["www-authenticate"].startswith("Basic")
+
+        wrong_password = await client.get("/", auth=("prof", "senha-errada"))
+        assert wrong_password.status_code == 401
+
+        wrong_user = await client.get("/", auth=("outro", "senha-forte"))
+        assert wrong_user.status_code == 401
+
+        authenticated = await client.get("/", auth=("prof", "senha-forte"))
+        assert authenticated.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_dashboard_home_renders(tmp_path):
     async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
         response = await client.get("/")

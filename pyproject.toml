@@ -7,6 +7,11 @@ name = "proctor-station"
 version = "0.1.0"
 description = "NUC-based proctoring station with face recognition, recording, and browser lockdown"
 requires-python = ">=3.12,<3.13"
+# Dependencias comuns aos dois papeis do projeto (estacao/NUC e dashboard do
+# professor). dlib/opencv/numpy/Pillow entram aqui e nao em "station" porque
+# o dashboard tambem os usa: o enrollment via S3 (src/dashboard/enrollment_service.py)
+# roda FaceRecognizer (dlib) e baixa/decodifica fotos (Pillow) no proprio
+# dashboard, nao so na NUC. Ver docs/roles.md para o mapeamento completo.
 dependencies = [
     "dlib>=19.24.0",
     "opencv-python-headless>=4.9.0.80",
@@ -16,13 +21,25 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.3.0",
-    "jinja2>=3.1.4",
-    "python-multipart>=0.0.9",
     "boto3>=1.34.0",
     "Pillow>=10.3.0",
 ]
 
 [project.optional-dependencies]
+# Papel de ESTACAO (NUC): scripts/bootstrap.sh instala isto.
+# Hoje nao adiciona pacote pip nenhum alem de "dependencies" — existe como
+# grupo nomeado para instalar so o que a estacao precisa (`pip install -e
+# ".[station]"`) e deixar explicito o papel, mesmo sem diferenca de pacotes
+# ainda. Dependencias de sistema (ffmpeg, v4l-utils, chromium, xbindkeys...)
+# nao entram aqui — essas vem do apt em scripts/bootstrap.sh.
+station = []
+# Papel de DASHBOARD (professor): scripts/bootstrap_dashboard.sh instala isto.
+# Server web com HTMX/Jinja2 e upload de formulario (enrollment manual, hoje
+# removido, mas python-multipart segue sendo usado por outros forms do painel).
+dashboard = [
+    "jinja2>=3.1.4",
+    "python-multipart>=0.0.9",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
