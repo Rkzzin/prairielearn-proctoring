@@ -470,7 +470,7 @@ FINALIZAÇÃO
 - [ ] Desabilitar Bluetooth se não usado.
 - [ ] Aplicar `apt-mark hold` em Chromium, FFmpeg e pacotes críticos depois de validar versão.
 - [ ] Atualizar Ansible com roles `base`, `browser`, `proctor` e `monitoring`.
-- [ ] Atualizar Terraform para S3, lifecycle, IAM mínimo, EC2 dashboard e alarmes.
+- [ ] Atualizar Terraform para S3, lifecycle, IAM mínimo, EC2 dashboard e alarmes (M8 usa portal AWS manual por decisão, não Terraform — ver M8).
 - [ ] Configurar métricas/logs com `node_exporter` e `promtail` ou equivalente.
 
 **Testes**
@@ -539,6 +539,69 @@ login entre alunos diferentes continua não validada.
 
 ---
 
+## M8 — Migração do dashboard para EC2 compartilhada 🟡
+
+**Objetivo:** tirar o dashboard de teste local e colocá-lo no ar numa EC2 já
+existente, compartilhada com outro serviço via nginx, com storage e
+autenticação adequados para ficar exposto num subdomínio público. Planos
+completos em `docs/migracao_ec2_plano_dev.md` (mudanças de repositório) e
+`docs/migracao_ec2_passo_a_passo_aws.md` (portal AWS + shell na EC2).
+
+Esta rodada é deliberadamente manual (console AWS + SSH), não Terraform —
+fecha o item de IaC pendente em M7 com uma decisão explícita, não um
+esquecimento: IaC completa fica para depois, se a operação em mais de uma
+EC2/ambiente justificar o investimento.
+
+### Repositório (feito neste milestone)
+
+- [x] Trocar storage do `DashboardStore` de SQLite para Postgres (`psycopg`),
+      mantendo o mesmo padrão de lock + linha como JSON.
+- [x] Autenticação por token individual de estação (`X-Station-Id`/
+      `X-Station-Token`), separada da senha do professor — reduz o raio de
+      dano de uma NUC comprometida ao expor o painel na internet pública.
+- [x] `scripts/issue_station_token.py` para emitir/rotacionar token por NUC.
+- [x] App para de escutar em porta pública direta (`127.0.0.1:8010` por
+      padrão) — nginx assume 80/443 como ponto de entrada único.
+- [x] Template de server block nginx (`scripts/nginx/proctor-dashboard.conf`),
+      com os headers de upgrade que `/ws/stations` (WebSocket) exige.
+- [x] Fixture de teste (`tests/conftest.py`) isola cada teste num banco
+      Postgres novo; `docker-compose.yml` sobe um Postgres local pra dev.
+- [x] Docs (`setup_dashboard.md`, `setup_nuc.md`, `roles.md`, `.env.example`)
+      atualizadas para o storage e a autenticação novos.
+
+### Operador — portal AWS + EC2 (pendente, ver `docs/migracao_ec2_passo_a_passo_aws.md`)
+
+- [ ] Validar capacidade da EC2 atual (`free -h`/`df -h`) e decidir
+      t3.micro vs t3.small com o Postgres novo rodando.
+- [ ] Confirmar security group: só 80/443 públicos, nada da app/Postgres
+      exposto diretamente.
+- [ ] Registro DNS do subdomínio do dashboard, na mesma zona do domínio que
+      a EC2 já usa para o outro serviço.
+- [ ] Provisionar Postgres nativo na EC2 (banco/role isolados do outro
+      serviço).
+- [ ] Deploy da aplicação (clone, bootstrap, `.env`, systemd) na porta
+      interna.
+- [ ] Server block nginx novo + certbot para o subdomínio novo, na mesma
+      janela (sem tráfego em claro entre um passo e outro).
+- [ ] Emitir token de cada NUC e apontá-las pro subdomínio novo (`https://`).
+- [ ] Cutover controlado: 1-2 sessões de teste de ponta a ponta antes de
+      considerar produção.
+- [ ] Monitoramento inicial (`free -h`, `journalctl`) nas primeiras provas
+      reais na EC2 compartilhada.
+
+### Critério de conclusão
+
+- [x] Dashboard roda com Postgres e token por estação, testado localmente
+      (157 testes automatizados, incluindo o fluxo de auth novo).
+- [ ] Dashboard acessível via HTTPS no subdomínio novo, atrás do nginx
+      compartilhado da EC2.
+- [ ] Pelo menos uma NUC completando uma prova de ponta a ponta apontando
+      pro subdomínio novo (não mais para um endereço de teste local).
+- [ ] Rollback validado: queda da EC2 não impede a NUC de terminar uma
+      prova em andamento e buferizar localmente até a conexão voltar.
+
+---
+
 ## Registro de decisões técnicas
 
 | Milestone | Decisão | Motivo |
@@ -561,3 +624,7 @@ login entre alunos diferentes continua não validada.
 | M7 | Chromium maximizado em vez de `--kiosk` | Permite abas normais e barra de endereço para pesquisa em sites autorizados |
 | M7 | Extensão allowlist pré-criada | Evita custo de gerar extensão/perfil inteiro no início da prova |
 | M7 | Limpeza explícita de perfil | `--incognito` será removido; cookies e logins precisam sumir ao final da prova |
+| M8 | Postgres em vez de SQLite no dashboard | Prioridade sobre a menor pegada de RAM do SQLite; ganha backup/gerenciamento mais formal e caminho aberto pra RDS depois. Custo aceito: instância provavelmente precisa subir pra t3.small, e testes passam a precisar de um Postgres disponível (local ou CI) |
+| M8 | Token individual por estação em vez de credencial única compartilhada | Uma NUC comprometida ou com `.env` vazado só compromete aquela estação — não o painel do professor nem as demais NUCs |
+| M8 | Token/auth de estação como `Depends` do FastAPI por rota, não extensão do middleware de Basic Auth | Evita ambiguidade de path-matching entre rotas que a NUC chama e rotas homônimas do professor (ex: `POST /api/sessions` da NUC vs `GET /api/sessions`/`POST /api/sessions/clear` do professor) |
+| M8 | Postgres nativo na EC2 em vez de RDS | Sem infraestrutura AWS gerenciada nova nesta rodada, que é manual/portal, não Terraform; RDS fica como evolução futura |
