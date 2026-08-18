@@ -41,7 +41,7 @@ log "Diretório do projeto: $PROJECT_DIR"
 # ── 1. Pacotes do sistema ──
 echo ""
 echo "=========================================="
-echo "  1/6  Instalando pacotes do sistema"
+echo "  1/8  Instalando pacotes do sistema"
 echo "=========================================="
 
 sudo apt update -qq
@@ -167,8 +167,10 @@ if [ -f ".env" ]; then
 else
     cp .env.example .env
     log ".env criado a partir de .env.example"
-    warn "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY e as credenciais do dashboard"
-    warn "(PROCTOR_DASHBOARD_ADMIN_USER/PASSWORD) continuam em branco — preencha o .env à mão."
+    warn "AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, PROCTOR_DASHBOARD_STATION_ID/NAME"
+    warn "e PROCTOR_DASHBOARD_STATION_TOKEN (emitido no dashboard com"
+    warn "issue_station_token.py, NÃO é a senha do professor) continuam em branco —"
+    warn "preencha o .env à mão. Ver docs/setup_nuc.md passo 4."
 fi
 
 warn "Câmera/microfone NÃO são detectados aqui: o bootstrap costuma rodar antes"
@@ -181,8 +183,11 @@ echo ""
 echo "=========================================="
 echo "  7/8  Rodando testes"
 echo "=========================================="
+warn "tests/test_dashboard.py fica de fora — é do papel de DASHBOARD, não da"
+warn "estação (precisa de jinja2/psycopg do extra [dashboard] e de um Postgres"
+warn "rodando, nenhum dos dois faz parte do bootstrap da NUC). Ver docs/roles.md."
 
-python3 -m pytest tests/ -v --tb=short
+python3 -m pytest tests/ -v --tb=short --ignore=tests/test_dashboard.py
 PYTEST_EXIT=$?
 
 if [ "$PYTEST_EXIT" -eq 0 ]; then
