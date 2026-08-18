@@ -35,43 +35,52 @@ echo "=========================================="
 echo "  1/5  Instalando pacotes do sistema"
 echo "=========================================="
 
+# Só suprime stdout, nunca stderr — silenciar os dois já escondeu um erro
+# real (conflito curl/curl-minimal no dnf) sem deixar rastro nenhum pro
+# operador depurar. `set -e` já mata o script no primeiro erro; o mínimo é
+# ele aparecer na tela.
+
 if command -v apt-get >/dev/null 2>&1; then
     log "Gerenciador de pacotes: apt (Ubuntu/Debian)"
     sudo apt update -qq
 
-    sudo apt install -y -qq build-essential cmake pkg-config > /dev/null 2>&1
+    sudo apt install -y -qq build-essential cmake pkg-config > /dev/null
     log "Build essentials instalados"
 
-    sudo apt install -y -qq python3.12 python3.12-venv python3.12-dev > /dev/null 2>&1
+    sudo apt install -y -qq python3.12 python3.12-venv python3.12-dev > /dev/null
     log "Python 3.12 instalado"
 
-    if sudo apt install -y -qq libopenblas-dev liblapack-dev > /dev/null 2>&1; then
+    if sudo apt install -y -qq libopenblas-dev liblapack-dev > /dev/null 2>/dev/null; then
         log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
     else
         warn "libopenblas-dev/liblapack-dev indisponíveis — dlib compila sem elas (BLAS/LAPACK internos, mais lento, não é bloqueante)"
     fi
 
-    sudo apt install -y -qq git curl lsof > /dev/null 2>&1
+    sudo apt install -y -qq git curl lsof > /dev/null
     log "Git, curl e lsof instalados"
 
 elif command -v dnf >/dev/null 2>&1; then
     log "Gerenciador de pacotes: dnf (Amazon Linux/RHEL/Fedora)"
+    # --allowerasing: a imagem base do Amazon Linux já vem com curl-minimal,
+    # que conflita com o pacote curl completo — sem essa flag o dnf recusa a
+    # transação inteira (e sem isso o script já morreu aqui uma vez, calado
+    # porque o erro estava indo pro /dev/null junto com o resto).
 
-    sudo dnf install -y -q gcc gcc-c++ make cmake pkgconf-pkg-config > /dev/null 2>&1
+    sudo dnf install -y -q --allowerasing gcc gcc-c++ make cmake pkgconf-pkg-config > /dev/null
     log "Build essentials instalados"
 
-    if ! sudo dnf install -y -q python3.12 python3.12-devel > /dev/null 2>&1; then
+    if ! sudo dnf install -y -q --allowerasing python3.12 python3.12-devel > /dev/null; then
         fail "python3.12 não encontrado nos repositórios dnf desta máquina. Rode \`dnf list available 'python3.12*'\` para ver o que existe — se a versão exata não estiver disponível, instale via outra fonte (ex: compilar do source) e rode este script de novo."
     fi
     log "Python 3.12 instalado"
 
-    if sudo dnf install -y -q openblas-devel lapack-devel > /dev/null 2>&1; then
+    if sudo dnf install -y -q --allowerasing openblas-devel lapack-devel > /dev/null 2>/dev/null; then
         log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
     else
         warn "openblas-devel/lapack-devel indisponíveis — dlib compila sem elas (BLAS/LAPACK internos, mais lento, não é bloqueante)"
     fi
 
-    sudo dnf install -y -q git curl lsof > /dev/null 2>&1
+    sudo dnf install -y -q --allowerasing git curl lsof > /dev/null
     log "Git, curl e lsof instalados"
 
 else
