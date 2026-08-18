@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ============================================================================
 #  proctor-station bootstrap — papel de DASHBOARD (professor)
-#  Leva uma máquina Linux limpa (ex. EC2 Ubuntu 24.04) até
-#  proctor-dashboard.service rodando.
+#  Leva uma máquina Linux limpa (Ubuntu/apt ou Amazon Linux/dnf — detectado
+#  automaticamente) até proctor-dashboard.service rodando.
 #
-#  Diferença deliberada para scripts/bootstrap.sh (papel de ESTAÇÃO/NUC):
-#  nada de GNOME, X11, câmera, Chromium ou ferramentas de lockdown — o
-#  dashboard é só um servidor web. Ver docs/roles.md.
+#  Diferença deliberada para scripts/bootstrap.sh (papel de ESTAÇÃO/NUC, só
+#  Ubuntu — NUCs físicas): nada de GNOME, X11, câmera, Chromium ou
+#  ferramentas de lockdown — o dashboard é só um servidor web. Ver docs/roles.md.
 #
 #  Uso:
 #    chmod +x scripts/bootstrap_dashboard.sh
@@ -35,34 +35,48 @@ echo "=========================================="
 echo "  1/5  Instalando pacotes do sistema"
 echo "=========================================="
 
-sudo apt update -qq
+if command -v apt-get >/dev/null 2>&1; then
+    log "Gerenciador de pacotes: apt (Ubuntu/Debian)"
+    sudo apt update -qq
 
-sudo apt install -y -qq \
-    build-essential \
-    cmake \
-    pkg-config \
-    > /dev/null 2>&1
-log "Build essentials instalados"
+    sudo apt install -y -qq build-essential cmake pkg-config > /dev/null 2>&1
+    log "Build essentials instalados"
 
-sudo apt install -y -qq \
-    python3.12 \
-    python3.12-venv \
-    python3.12-dev \
-    > /dev/null 2>&1
-log "Python 3.12 instalado"
+    sudo apt install -y -qq python3.12 python3.12-venv python3.12-dev > /dev/null 2>&1
+    log "Python 3.12 instalado"
 
-sudo apt install -y -qq \
-    libopenblas-dev \
-    liblapack-dev \
-    > /dev/null 2>&1
-log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
+    if sudo apt install -y -qq libopenblas-dev liblapack-dev > /dev/null 2>&1; then
+        log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
+    else
+        warn "libopenblas-dev/liblapack-dev indisponíveis — dlib compila sem elas (BLAS/LAPACK internos, mais lento, não é bloqueante)"
+    fi
 
-sudo apt install -y -qq \
-    git \
-    curl \
-    lsof \
-    > /dev/null 2>&1
-log "Git, curl e lsof instalados"
+    sudo apt install -y -qq git curl lsof > /dev/null 2>&1
+    log "Git, curl e lsof instalados"
+
+elif command -v dnf >/dev/null 2>&1; then
+    log "Gerenciador de pacotes: dnf (Amazon Linux/RHEL/Fedora)"
+
+    sudo dnf install -y -q gcc gcc-c++ make cmake pkgconf-pkg-config > /dev/null 2>&1
+    log "Build essentials instalados"
+
+    if ! sudo dnf install -y -q python3.12 python3.12-devel > /dev/null 2>&1; then
+        fail "python3.12 não encontrado nos repositórios dnf desta máquina. Rode \`dnf list available 'python3.12*'\` para ver o que existe — se a versão exata não estiver disponível, instale via outra fonte (ex: compilar do source) e rode este script de novo."
+    fi
+    log "Python 3.12 instalado"
+
+    if sudo dnf install -y -q openblas-devel lapack-devel > /dev/null 2>&1; then
+        log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
+    else
+        warn "openblas-devel/lapack-devel indisponíveis — dlib compila sem elas (BLAS/LAPACK internos, mais lento, não é bloqueante)"
+    fi
+
+    sudo dnf install -y -q git curl lsof > /dev/null 2>&1
+    log "Git, curl e lsof instalados"
+
+else
+    fail "Nenhum gerenciador de pacotes suportado encontrado nesta máquina (esperado apt ou dnf)."
+fi
 
 # ── 2. Python venv ──
 echo ""
@@ -107,18 +121,23 @@ else
     log ".env criado a partir de .env.example"
 fi
 
-warn "Preencha à mão no .env: AWS_ACCESS_KEY_ID/SECRET, PROCTOR_DASHBOARD_ADMIN_USER"
-warn "e PROCTOR_DASHBOARD_ADMIN_PASSWORD (obrigatórios para o dashboard exigir login)."
-warn "Campos de estação (câmera, gaze, proxy, station_id) não se aplicam aqui —"
-warn "ver docs/setup_dashboard.md."
+warn "Preencha à mão no .env: AWS_ACCESS_KEY_ID/SECRET, PROCTOR_DASHBOARD_DATABASE_URL"
+warn "(Postgres — ver docs/setup_dashboard.md passo 4) e PROCTOR_DASHBOARD_ADMIN_USER"
+warn "/PASSWORD (login do professor; obrigatórios para o dashboard exigir login)."
+warn "Campos de estação (câmera, gaze, proxy, station_id, station_token) não se"
+warn "aplicam aqui — ver docs/setup_dashboard.md."
 
 # ── 5. Testes ──
 echo ""
 echo "=========================================="
 echo "  5/5  Rodando testes"
 echo "=========================================="
+warn "tests/test_dashboard.py fica de fora — precisa de Postgres já configurado"
+warn "(PROCTOR_DASHBOARD_DATABASE_URL, passo 4 do runbook), o que normalmente ainda"
+warn "não existe nesta hora do bootstrap. Depois de configurar o Postgres, rode"
+warn "\`pytest tests/test_dashboard.py\` à parte pra validar essa parte."
 
-python3 -m pytest tests/ -v --tb=short
+python3 -m pytest tests/ -v --tb=short --ignore=tests/test_dashboard.py
 PYTEST_EXIT=$?
 
 if [ "$PYTEST_EXIT" -eq 0 ]; then

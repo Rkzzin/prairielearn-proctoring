@@ -85,13 +85,33 @@ dig +short proctoring.dominio.com.br
 
 ## 4. Instalar e configurar Postgres (SSH na EC2)
 
+Comando de instalação depende da distro da EC2 — confirme com
+`cat /etc/os-release` se não tiver certeza.
+
+**Ubuntu/Debian (`apt`)** — instala, inicializa e já sobe o serviço:
+
 ```bash
 sudo apt update
 sudo apt install -y postgresql
 ```
 
-Criar banco e role exclusivos do dashboard — **sem overlap** de schema com o
-outro serviço que já roda na mesma instância:
+**Amazon Linux/RHEL (`dnf`)** — precisa inicializar o cluster e habilitar o
+serviço à mão (o nome exato do pacote pode variar; confira com
+`dnf list available 'postgresql*-server'` se o comando abaixo falhar):
+
+```bash
+sudo dnf install -y postgresql15 postgresql15-server
+sudo postgresql-setup --initdb
+sudo systemctl enable --now postgresql
+```
+
+Se `systemctl enable --now postgresql` reclamar que a unit não existe, rode
+`systemctl list-units --type=service | grep postgres` pra achar o nome real
+(pode vir versionado, ex: `postgresql-15`) — use esse nome nos comandos
+`systemctl` daqui pra frente.
+
+**Nos dois casos**, criar banco e role exclusivos do dashboard — **sem
+overlap** de schema com o outro serviço que já roda na mesma instância:
 
 ```bash
 sudo -u postgres psql -c "CREATE ROLE proctor_dashboard WITH LOGIN PASSWORD '<senha-forte>';"
@@ -99,14 +119,17 @@ sudo -u postgres psql -c "CREATE DATABASE proctor_dashboard OWNER proctor_dashbo
 ```
 
 Se a instância ficou em t3.micro (passo 1), reduzir o consumo de base do
-Postgres em `/etc/postgresql/*/main/postgresql.conf`:
-
-```
-shared_buffers = 32MB
-```
+Postgres. O caminho do `postgresql.conf` muda por distro/empacotamento —
+em vez de adivinhar, pergunte ao próprio Postgres:
 
 ```bash
-sudo systemctl restart postgresql
+sudo -u postgres psql -c "SHOW config_file;"
+```
+
+Editar `shared_buffers = 32MB` nesse arquivo, depois:
+
+```bash
+sudo systemctl restart postgresql   # ou o nome da unit achado acima
 ```
 
 O DSN resultante (`postgresql://proctor_dashboard:<senha>@127.0.0.1:5432/proctor_dashboard`)
@@ -158,11 +181,32 @@ capturando o tráfego nessa janela decodifica os dois numa linha. Não fazer
 login como professor, não emitir/usar token de estação e não apontar
 nenhuma NUC pro subdomínio novo antes do passo 7 estar confirmado.
 
+Antes de copiar o arquivo, confirme **onde** o nginx existente espera
+server blocks — `sites-available`/`sites-enabled` (convenção Debian/Ubuntu)
+e `conf.d/` (convenção Amazon Linux/RHEL) não são a mesma coisa, e colocar o
+arquivo no lugar errado não dá erro nenhum — o `nginx -t` passa, só que o
+bloco novo nunca é carregado:
+
 ```bash
+sudo grep -i include /etc/nginx/nginx.conf
+```
+
+- Se aparecer algo como `include /etc/nginx/sites-enabled/*;` → use
+  `sites-available`/`sites-enabled` (comandos abaixo já são esse caso).
+- Se aparecer `include /etc/nginx/conf.d/*.conf;` (mais comum em Amazon
+  Linux) → copie direto para `/etc/nginx/conf.d/proctor-dashboard.conf`,
+  sem symlink nenhum.
+
+```bash
+# Debian/Ubuntu (sites-available/sites-enabled):
 sudo cp ~/proctor-station/scripts/nginx/proctor-dashboard.conf \
   /etc/nginx/sites-available/proctor-dashboard
 sudo ln -s /etc/nginx/sites-available/proctor-dashboard \
   /etc/nginx/sites-enabled/proctor-dashboard
+
+# Amazon Linux/RHEL (conf.d) — use este OU o de cima, não os dois:
+sudo cp ~/proctor-station/scripts/nginx/proctor-dashboard.conf \
+  /etc/nginx/conf.d/proctor-dashboard.conf
 ```
 
 Editar `server_name` no arquivo copiado para o subdomínio real, se o

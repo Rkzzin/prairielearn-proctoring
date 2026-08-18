@@ -7,7 +7,9 @@ precisa de GNOME, X11, câmera nem Chromium; é só um servidor web.
 
 ## 1. Provisionar a máquina (manual)
 
-- Ubuntu 24.04 (Server serve — não precisa de sessão gráfica).
+- Ubuntu 24.04 ou Amazon Linux 2023 (Server serve — não precisa de sessão
+  gráfica). O bootstrap do passo 3 detecta sozinho qual é (`apt` vs `dnf`);
+  o passo 4 (Postgres) tem os dois comandos, use o que bater com a sua.
 - A app do dashboard escuta só em `127.0.0.1:8010` (ver passo 6) — quem
   precisa de porta pública aberta no security group/firewall é o nginx na
   frente dela (`80/443/tcp`), não a app diretamente. Se este for um teste
@@ -40,10 +42,32 @@ porquê), cria o venv, instala `pip install -e ".[dashboard,dev]"`, cria o
 
 O dashboard persiste tudo (estações, sessões, enrollments, configs,
 credenciais) em Postgres — não sobe sem um banco acessível. Numa máquina só
-para o dashboard, o mais simples é instalar nativo:
+para o dashboard, o mais simples é instalar nativo.
+
+**Ubuntu/Debian (`apt`)** — instala, inicializa e já sobe o serviço sozinho:
 
 ```bash
 sudo apt update && sudo apt install -y postgresql
+```
+
+**Amazon Linux/RHEL (`dnf`)** — precisa inicializar o cluster e habilitar o
+serviço manualmente (o `apt` faz isso por trás; o `dnf` não). O nome exato do
+pacote varia por versão disponível no repositório da máquina — confira antes
+com `dnf list available 'postgresql*-server'` se o comando abaixo falhar:
+
+```bash
+sudo dnf install -y postgresql15 postgresql15-server
+sudo postgresql-setup --initdb
+sudo systemctl enable --now postgresql
+```
+
+Se `systemctl enable --now postgresql` reclamar que a unit não existe, rode
+`systemctl list-units --type=service | grep postgres` pra achar o nome real
+do serviço (pode vir versionado, ex: `postgresql-15`) e use esse.
+
+**Nos dois casos**, criar o banco/role exclusivos do dashboard:
+
+```bash
 sudo -u postgres psql -c "CREATE ROLE proctor_dashboard WITH LOGIN PASSWORD '<senha-forte>';"
 sudo -u postgres psql -c "CREATE DATABASE proctor_dashboard OWNER proctor_dashboard;"
 ```
