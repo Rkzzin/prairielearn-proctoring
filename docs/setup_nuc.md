@@ -71,9 +71,11 @@ AWS_SECRET_ACCESS_KEY=
 PROCTOR_DASHBOARD_STATION_ID=nuc-01
 PROCTOR_DASHBOARD_STATION_NAME=Estação 1
 
-# Aponta para o dashboard real (EC2), não para 127.0.0.1
+# Aponta para o dashboard real (EC2), não para 127.0.0.1 — use https:// se o
+# dashboard estiver atrás do nginx/certbot (ver docs/setup_dashboard.md),
+# nunca http:// puro em produção (token de estação viajaria em texto claro).
 PROCTOR_DASHBOARD_ENABLED=true
-PROCTOR_DASHBOARD_BASE_URL=http://<host-do-dashboard>
+PROCTOR_DASHBOARD_BASE_URL=https://<host-do-dashboard>
 
 # Token desta estação — NÃO é a senha do professor. Emitido no dashboard com
 # scripts/issue_station_token.py <station_id>; copie o valor impresso lá.

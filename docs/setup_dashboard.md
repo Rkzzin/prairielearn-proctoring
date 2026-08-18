@@ -8,13 +8,14 @@ precisa de GNOME, X11, câmera nem Chromium; é só um servidor web.
 ## 1. Provisionar a máquina (manual)
 
 - Ubuntu 24.04 (Server serve — não precisa de sessão gráfica).
-- Abra a porta `80/tcp` (ou a que você escolher) no security group / firewall
-  para quem vai acessar o painel (professor e as NUCs). Como a autenticação é
-  usuário/senha (ver passo 5), não é obrigatório restringir por IP, mas reduz
-  superfície se você souber de antemão a faixa de rede das NUCs.
-- Não é preciso restringir por IP de origem se as NUCs/professor acessarem de
-  redes variáveis — é exatamente o cenário para o qual a Basic Auth do passo 5
-  foi feita.
+- A app do dashboard escuta só em `127.0.0.1:8010` (ver passo 6) — quem
+  precisa de porta pública aberta no security group/firewall é o nginx na
+  frente dela (`80/443/tcp`), não a app diretamente. Se este for um teste
+  isolado sem nginx (`PROCTOR_DASHBOARD_HOST=0.0.0.0` no passo 6), aí sim
+  abra a porta escolhida.
+- Como a autenticação é por credencial (Basic Auth do professor, token por
+  estação — ver passo 8), não é obrigatório restringir por IP de origem, mas
+  reduz superfície se você souber de antemão a faixa de rede das NUCs.
 
 ## 2. Clonar o repositório (manual)
 
@@ -78,7 +79,8 @@ PROCTOR_S3_REGION=sa-east-1
 PROCTOR_DASHBOARD_DATABASE_URL=postgresql://proctor_dashboard:<senha>@127.0.0.1:5432/proctor_dashboard
 
 # OBRIGATÓRIO — sem isto o painel fica acessível sem senha para qualquer um
-# que descubra o IP/porta. Mesmo usuário/senha que vai para as NUCs.
+# que descubra o IP/porta. É só o login do professor — as NUCs usam um
+# token próprio (passo 8), não esta senha.
 PROCTOR_DASHBOARD_ADMIN_USER=professor
 PROCTOR_DASHBOARD_ADMIN_PASSWORD=<escolha uma senha forte>
 ```
@@ -97,25 +99,30 @@ cd ~/proctor-station   # sempre cd antes — o script resolve import a partir do
 sudo bash scripts/install_dashboard_service.sh
 ```
 
-Isso cria e habilita `proctor-dashboard.service` na porta `80` por padrão
-(`PROCTOR_DASHBOARD_PORT` no shell muda isso, ex:
-`sudo env PROCTOR_DASHBOARD_PORT=8010 bash scripts/install_dashboard_service.sh`).
-O unit já ganha `AmbientCapabilities=CAP_NET_BIND_SERVICE`, necessário para
-abrir uma porta <1024 sem rodar como root.
+Isso cria e habilita `proctor-dashboard.service` escutando só em
+`127.0.0.1:8010` por padrão — pensado para rodar atrás de um nginx (mesma
+máquina ou compartilhado com outro serviço, ver
+`docs/migracao_ec2_passo_a_passo_aws.md`) que termina TLS e faz proxy pra
+essa porta interna; `scripts/nginx/proctor-dashboard.conf` tem o template do
+server block. `PROCTOR_DASHBOARD_PORT`/`PROCTOR_DASHBOARD_HOST` no shell
+mudam isso se precisar (ex: `sudo env PROCTOR_DASHBOARD_HOST=0.0.0.0 bash
+scripts/install_dashboard_service.sh` pra expor direto, sem nginx, num teste
+rápido — não use isso em produção sem TLS na frente).
 
 ## 7. Verificação (script)
 
 ```bash
 systemctl status proctor-dashboard --no-pager
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1/       # espera 401 sem credencial
-curl -sS -o /dev/null -w '%{http_code}\n' -u professor:<senha> http://127.0.0.1/   # espera 200
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8010/       # espera 401 sem credencial
+curl -sS -o /dev/null -w '%{http_code}\n' -u professor:<senha> http://127.0.0.1:8010/   # espera 200
 ```
 
-De fora da máquina, confirme que a porta está acessível de onde as NUCs vão
-estar amanhã — bloqueio de saída em rede de terceiros é comum:
+Isso confirma que a app subiu — mas ela só escuta local. De fora da máquina,
+quem confirma que as NUCs vão alcançar o painel é o nginx na frente (ver
+`docs/migracao_ec2_passo_a_passo_aws.md`, passos 6-7), não a app diretamente:
 
 ```bash
-curl -sS -o /dev/null -w '%{http_code}\n' http://<ip-ou-dns-do-ec2>/
+curl -sS -o /dev/null -w '%{http_code}\n' https://<subdominio-do-dashboard>/
 ```
 
 ## 8. Emitir um token por estação e apontar as NUCs
@@ -137,7 +144,7 @@ Em cada NUC (ver `docs/setup_nuc.md`, passo 4), `.env`:
 
 ```dotenv
 PROCTOR_DASHBOARD_ENABLED=true
-PROCTOR_DASHBOARD_BASE_URL=http://<ip-ou-dns-do-ec2>
+PROCTOR_DASHBOARD_BASE_URL=https://<subdominio-do-dashboard>
 PROCTOR_DASHBOARD_STATION_ID=nuc-01
 PROCTOR_DASHBOARD_STATION_TOKEN=<o token impresso acima>
 ```
@@ -150,8 +157,9 @@ no log (`journalctl -u proctor -f`), não na UI.
 
 ## Risco aceito por enquanto
 
-O tráfego entre NUC e dashboard (heartbeat, comandos, token de estação) roda
-em HTTP puro, sem TLS. O token viaja em texto claro dentro do header
-`X-Station-Token`. Aceitável para um teste pontual numa rede confiável; para
-uso continuado,
-colocar um nginx com certificado (Let's Encrypt) na frente resolve.
+Se você não estiver rodando atrás do nginx do passo 6 (ex: teste isolado com
+`PROCTOR_DASHBOARD_HOST=0.0.0.0`), o tráfego entre NUC e dashboard
+(heartbeat, comandos, token de estação) roda em HTTP puro, sem TLS — o token
+viaja em texto claro dentro do header `X-Station-Token`. Aceitável só para
+um teste pontual numa rede confiável; para uso continuado, o nginx +
+certificado (Let's Encrypt) do passo 6 é obrigatório, não opcional.

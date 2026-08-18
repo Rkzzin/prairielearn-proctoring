@@ -5,7 +5,12 @@ SERVICE_NAME="proctor-dashboard.service"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_USER="${SUDO_USER:-$(whoami)}"
 PYTHON_BIN="$PROJECT_DIR/venv/bin/python"
-PORT="${PROCTOR_DASHBOARD_PORT:-80}"
+# Default pensado para rodar atras de um nginx (mesma maquina ou compartilhado
+# com outro servico) fazendo TLS/virtual host — a app so escuta local. Para
+# expor a app direto (sem nginx, ex: teste rapido), passe
+# PROCTOR_DASHBOARD_HOST=0.0.0.0.
+HOST="${PROCTOR_DASHBOARD_HOST:-127.0.0.1}"
+PORT="${PROCTOR_DASHBOARD_PORT:-8010}"
 UNIT_PATH="/etc/systemd/system/$SERVICE_NAME"
 TMP_UNIT="$(mktemp)"
 
@@ -30,11 +35,9 @@ Type=simple
 User=$RUN_USER
 WorkingDirectory=$PROJECT_DIR
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$PYTHON_BIN -m uvicorn src.dashboard.app:create_app --factory --host 0.0.0.0 --port $PORT
+ExecStart=$PYTHON_BIN -m uvicorn src.dashboard.app:create_app --factory --host $HOST --port $PORT
 Restart=always
 RestartSec=3
-AmbientCapabilities=CAP_NET_BIND_SERVICE
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 [Install]
 WantedBy=multi-user.target

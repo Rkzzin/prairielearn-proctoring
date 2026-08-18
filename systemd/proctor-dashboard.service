@@ -1,3 +1,7 @@
+# Exemplo de referência — não é usado diretamente por
+# scripts/install_dashboard_service.sh, que gera o unit real com o
+# WorkingDirectory/host/porta corretos para a máquina (ver o script para os
+# defaults atuais). Este arquivo serve só de leitura rápida do formato.
 [Unit]
 Description=Proctor Station Teacher Dashboard
 After=network-online.target
@@ -6,9 +10,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=proctor
-WorkingDirectory=/opt/proctor
+WorkingDirectory=/home/proctor/proctor-station
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/proctor/venv/bin/python -m uvicorn src.dashboard.app:create_app --factory --host 0.0.0.0 --port 8010
+ExecStart=/home/proctor/proctor-station/venv/bin/python -m uvicorn src.dashboard.app:create_app --factory --host 127.0.0.1 --port 8010
 Restart=always
 RestartSec=3
 
