@@ -75,9 +75,11 @@ PROCTOR_DASHBOARD_STATION_NAME=Estação 1
 PROCTOR_DASHBOARD_ENABLED=true
 PROCTOR_DASHBOARD_BASE_URL=http://<host-do-dashboard>
 
-# Mesmo usuário/senha configurados no dashboard (Basic Auth)
-PROCTOR_DASHBOARD_ADMIN_USER=
-PROCTOR_DASHBOARD_ADMIN_PASSWORD=
+# Token desta estação — NÃO é a senha do professor. Emitido no dashboard com
+# scripts/issue_station_token.py <station_id>; copie o valor impresso lá.
+# Sem isso (ou com o token errado), o heartbeat recebe 401 e a estação nunca
+# aparece no painel — sem erro na UI, só no log (journalctl -u proctor -f).
+PROCTOR_DASHBOARD_STATION_TOKEN=
 
 # Só se a prova precisar sair por um proxy fixo — deixe vazio se não precisar
 PROCTOR_APP_PROXY_SERVER=

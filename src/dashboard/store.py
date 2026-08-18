@@ -382,6 +382,14 @@ class DashboardStore:
               password_hash TEXT NOT NULL
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS station_tokens (
+              station_id TEXT PRIMARY KEY,
+              token_hash TEXT NOT NULL,
+              label TEXT,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """,
         ):
             self._db.execute(statement)
         self._db.commit()
@@ -401,6 +409,25 @@ class DashboardStore:
                 "INSERT INTO credentials (username, password_hash) VALUES (%s, %s) "
                 "ON CONFLICT (username) DO NOTHING",
                 (username, password_hash),
+            )
+            self._db.commit()
+
+    def get_station_token_hash(self, station_id: str) -> str | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT token_hash FROM station_tokens WHERE station_id = %s",
+                (station_id,),
+            ).fetchone()
+        return row["token_hash"] if row else None
+
+    def set_station_token_hash(self, station_id: str, token_hash: str, *, label: str | None = None) -> None:
+        """Grava (ou sobrescreve) o hash do token de uma estação — reemitir revoga o anterior."""
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO station_tokens (station_id, token_hash, label) VALUES (%s, %s, %s) "
+                "ON CONFLICT (station_id) DO UPDATE SET token_hash = EXCLUDED.token_hash, "
+                "label = EXCLUDED.label, created_at = now()",
+                (station_id, token_hash, label),
             )
             self._db.commit()
 

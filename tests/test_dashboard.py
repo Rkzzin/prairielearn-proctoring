@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from src.core.config import AppConfig, DashboardConfig
 from src.core.states import known_station_statuses
 from src.dashboard.app import create_app
+from src.dashboard.auth import hash_password
 from src.dashboard.models import (
     ExamConfigPayload,
     EventSeverity,
@@ -26,6 +27,12 @@ from src.dashboard.store import DashboardStore
 def _make_app(tmp_path, database_url):
     config = AppConfig(data_dir=tmp_path, dashboard=DashboardConfig(database_url=database_url))
     return create_app(config=config)
+
+
+def _station_headers(app, station_id: str, token: str = "test-token") -> dict[str, str]:
+    """Emite (sobrescrevendo se já existir) um token pra `station_id` e retorna os headers de auth."""
+    app.state.store.set_station_token_hash(station_id, hash_password(token))
+    return {"X-Station-Id": station_id, "X-Station-Token": token}
 
 
 class FakeS3EnrollmentService:
@@ -109,7 +116,9 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
 
 @pytest.mark.asyncio
 async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_database_url):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
+    app = _make_app(tmp_path, dashboard_database_url)
+    station_headers = _station_headers(app, "nuc-01")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         config_payload = {
             "turma": "ES2025-T1",
             "assessment": "Quiz-03",
@@ -139,7 +148,7 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
             "seconds_remaining": None,
             "recent_events": [],
         }
-        response = await client.post("/api/heartbeats", json=heartbeat)
+        response = await client.post("/api/heartbeats", json=heartbeat, headers=station_headers)
 
     assert response.status_code == 200
     payload = response.json()
@@ -150,7 +159,9 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
 
 @pytest.mark.asyncio
 async def test_register_session_and_append_events(tmp_path, dashboard_database_url):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
+    app = _make_app(tmp_path, dashboard_database_url)
+    station_headers = _station_headers(app, "nuc-01")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         session_payload = SessionRecord(
             session_id="sess-1",
             station_id="nuc-01",
@@ -167,7 +178,7 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
             ],
         ).model_dump(mode="json")
 
-        create_response = await client.post("/api/sessions", json=session_payload)
+        create_response = await client.post("/api/sessions", json=session_payload, headers=station_headers)
         assert create_response.status_code == 201
 
         event_payload = [
@@ -179,7 +190,9 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
                 details={"ratio": 0.52},
             ).model_dump(mode="json")
         ]
-        event_response = await client.post("/api/sessions/sess-1/events", json=event_payload)
+        event_response = await client.post(
+            "/api/sessions/sess-1/events", json=event_payload, headers=station_headers
+        )
         assert event_response.status_code == 200
         assert event_response.json()["flags_count"] == 1
 
@@ -196,6 +209,113 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
         assert "session_id,station_id,turma,assessment,student_id,student_name" in csv_text
         assert "sess-1,nuc-01,ES2025-T1,Quiz-03,123,Alice" in csv_text
         assert "GAZE_LEFT" in csv_text
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_requires_valid_station_token(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    _station_headers(app, "nuc-01", token="correct-token")
+    heartbeat = {
+        "station_id": "nuc-01",
+        "station_name": "NUC Sala 1",
+        "status": "IDLE",
+        "student": None,
+        "active_session_id": None,
+        "assessment": None,
+        "turma": None,
+        "auto_start_enabled": True,
+        "seconds_remaining": None,
+        "recent_events": [],
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        no_token = await client.post("/api/heartbeats", json=heartbeat)
+        assert no_token.status_code == 401
+
+        wrong_token = await client.post(
+            "/api/heartbeats",
+            json=heartbeat,
+            headers={"X-Station-Id": "nuc-01", "X-Station-Token": "wrong-token"},
+        )
+        assert wrong_token.status_code == 401
+
+        ok = await client.post(
+            "/api/heartbeats",
+            json=heartbeat,
+            headers={"X-Station-Id": "nuc-01", "X-Station-Token": "correct-token"},
+        )
+        assert ok.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_rejects_station_id_mismatch_between_header_and_body(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    headers_for_nuc01 = _station_headers(app, "nuc-01")
+    heartbeat_claiming_nuc02 = {
+        "station_id": "nuc-02",
+        "station_name": "NUC Sala 2",
+        "status": "IDLE",
+        "student": None,
+        "active_session_id": None,
+        "assessment": None,
+        "turma": None,
+        "auto_start_enabled": True,
+        "seconds_remaining": None,
+        "recent_events": [],
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/heartbeats", json=heartbeat_claiming_nuc02, headers=headers_for_nuc01
+        )
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_finalize_session_rejects_token_of_another_station(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    owner_headers = _station_headers(app, "nuc-01")
+    intruder_headers = _station_headers(app, "nuc-02")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        session_payload = SessionRecord(
+            session_id="sess-owned",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            status=StationStatus.SESSION,
+        ).model_dump(mode="json")
+        create_response = await client.post("/api/sessions", json=session_payload, headers=owner_headers)
+        assert create_response.status_code == 201
+
+        intruder_response = await client.post("/api/sessions/sess-owned/finalize", headers=intruder_headers)
+        assert intruder_response.status_code == 403
+
+        owner_response = await client.post("/api/sessions/sess-owned/finalize", headers=owner_headers)
+        assert owner_response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_station_token_does_not_authenticate_professor_routes(tmp_path, dashboard_database_url):
+    config = AppConfig(
+        data_dir=tmp_path,
+        dashboard={
+            "admin_user": "prof",
+            "admin_password": "senha-forte",
+            "database_url": dashboard_database_url,
+        },
+    )
+    app = create_app(config=config)
+    station_headers = _station_headers(app, "nuc-01")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        home_response = await client.get("/", headers=station_headers)
+        clear_response = await client.post("/api/sessions/clear", headers=station_headers)
+
+    assert home_response.status_code == 401
+    assert clear_response.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -262,7 +382,9 @@ async def test_s3_enrollment_endpoint_processes_turma_and_records_successes(tmp_
 
 @pytest.mark.asyncio
 async def test_station_command_endpoints_enqueue_commands(tmp_path, dashboard_database_url):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
+    app = _make_app(tmp_path, dashboard_database_url)
+    station_headers = _station_headers(app, "nuc-01")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         stop_response = await client.post("/api/stations/nuc-01/session/stop")
         unblock_response = await client.post("/api/stations/nuc-01/session/unblock")
         heartbeat_response = await client.post(
@@ -279,6 +401,7 @@ async def test_station_command_endpoints_enqueue_commands(tmp_path, dashboard_da
                 "seconds_remaining": None,
                 "recent_events": [],
             },
+            headers=station_headers,
         )
 
     assert stop_response.status_code == 202
@@ -289,7 +412,9 @@ async def test_station_command_endpoints_enqueue_commands(tmp_path, dashboard_da
 
 @pytest.mark.asyncio
 async def test_autostart_command_endpoints_enqueue_toggle(tmp_path, dashboard_database_url):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
+    app = _make_app(tmp_path, dashboard_database_url)
+    station_headers = _station_headers(app, "nuc-01")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         enable_response = await client.post("/api/stations/nuc-01/autostart/enable")
         disable_response = await client.post("/api/stations/nuc-01/autostart/disable")
         heartbeat_response = await client.post(
@@ -306,6 +431,7 @@ async def test_autostart_command_endpoints_enqueue_toggle(tmp_path, dashboard_da
                 "seconds_remaining": None,
                 "recent_events": [],
             },
+            headers=station_headers,
         )
 
     assert enable_response.status_code == 202

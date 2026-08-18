@@ -257,9 +257,17 @@ Adicionar na tabela "Registro de decisões técnicas" (`MILESTONES.md:544`):
 
 ## Ordem sugerida de execução (PRs)
 
-1. **Postgres** (item 3) — é a base: a tabela de tokens do item 4 já nasce
+1. **Postgres** (item 3) ✅ — é a base: a tabela de tokens do item 4 já nasce
    nesse schema, evita criar em SQLite e reescrever depois.
-2. **Token por estação** (item 4) — depende do PR 1.
+2. **Token por estação** (item 4) ✅ — depende do PR 1. Implementado como
+   dependency do FastAPI (`Depends(require_station_token)`) nas 4 rotas que a
+   NUC chama, não como extensão do middleware de Basic Auth — evita
+   ambiguidade de path-matching entre `/api/sessions` (POST, estação) e
+   `/api/sessions` (GET, professor)/`/api/sessions/clear` (POST, professor).
+   `require_basic_auth` só ganhou um desvio explícito (`_is_station_route`)
+   pras 4 rotas da estação, sem mexer no resto. 26 testes de dashboard mais
+   2 de `dashboard_sync` cobrindo o fluxo novo, todos passando contra
+   Postgres real.
 3. **Porta interna + nginx template** (itens 1 e 2) — independente dos
    dois primeiros, mas só faz sentido habilitar o deploy depois deles.
 4. **Docs + `MILESTONES.md`** (item 5) — fecha o registro, referencia os

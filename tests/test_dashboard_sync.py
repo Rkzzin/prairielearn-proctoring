@@ -253,3 +253,28 @@ def test_dashboard_worker_registers_and_finalizes_completed_session():
     assert "POST /api/sessions" in paths
     assert "POST /api/sessions/sess-1/events" in paths
     assert "POST /api/sessions/sess-1/finalize" in paths
+
+
+def test_default_client_factory_sends_station_headers_when_token_configured():
+    config = DashboardConfig(
+        enabled=True,
+        base_url="http://dashboard.test",
+        station_id="nuc-07",
+        station_token="s3cr3t",
+    )
+    worker = DashboardHeartbeatWorker(config=config, session_manager=FakeSessionManager())
+
+    client = worker._default_client_factory()
+
+    assert client.headers["x-station-id"] == "nuc-07"
+    assert client.headers["x-station-token"] == "s3cr3t"
+
+
+def test_default_client_factory_omits_station_headers_without_token():
+    config = DashboardConfig(enabled=True, base_url="http://dashboard.test", station_id="nuc-07")
+    worker = DashboardHeartbeatWorker(config=config, session_manager=FakeSessionManager())
+
+    client = worker._default_client_factory()
+
+    assert "x-station-id" not in client.headers
+    assert "x-station-token" not in client.headers

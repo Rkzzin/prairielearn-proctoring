@@ -44,27 +44,32 @@ comentário completo.
 | Instala o serviço | `sudo bash scripts/install_systemd_service.sh` | `sudo bash scripts/install_dashboard_service.sh` |
 | Unit systemd | `proctor.service` | `proctor-dashboard.service` |
 | App ASGI | `src.api.server:app` | `src.dashboard.app:create_app` (`--factory`, ver por quê em `src/dashboard/app.py`) |
-| Porta padrão | `8000` (`--host 0.0.0.0`, só a rede local deveria alcançar) | `80` (`--host 0.0.0.0`, pensado para ser público — por isso tem Basic Auth) |
+| Porta padrão | `8000` (`--host 0.0.0.0`, só a rede local deveria alcançar) | `80` (`--host 0.0.0.0`, pensado para ser público — por isso professor e NUC têm autenticações separadas, Basic Auth e token de estação) |
 | Guia passo a passo | `docs/setup_nuc.md` | `docs/setup_dashboard.md` |
 | Hardware necessário | webcam UVC, sessão GNOME/X11, Chromium | nenhum — é só um servidor web |
 
 ## `.env` — o que pertence a cada papel
 
 O mesmo `.env.example` serve os dois, porque `AppConfig`/`DashboardConfig` são
-compartilhados (ex: `PROCTOR_DASHBOARD_ADMIN_USER`/`PASSWORD` são lidos tanto
-pelo dashboard, que semeia a credencial, quanto pela estação, que autentica
-saída com ela). Por papel:
+compartilhados, mas `PROCTOR_DASHBOARD_ADMIN_USER`/`PASSWORD` e
+`PROCTOR_DASHBOARD_STATION_TOKEN` **não** são a mesma credencial nos dois
+papéis — são autenticações separadas, ver `docs/setup_dashboard.md` passo 8.
+Por papel:
 
 - **Estação**: tudo em `PROCTOR_FACE_*`, `PROCTOR_GAZE_*`/`PROCTOR_ABSENCE_*`/
   `PROCTOR_MULTI_FACE_BLOCK`, `PROCTOR_REC_*`, `PROCTOR_APP_PROXY_SERVER`,
-  `PROCTOR_DASHBOARD_STATION_ID`/`STATION_NAME`/`BASE_URL`/`ENABLED`. AWS
-  credenciais para ler fotos e gravar em S3.
+  `PROCTOR_DASHBOARD_STATION_ID`/`STATION_NAME`/`BASE_URL`/`ENABLED`/
+  `STATION_TOKEN` (emitido no dashboard via `scripts/issue_station_token.py`,
+  autentica só o heartbeat/sessão desta estação — não é a senha do
+  professor). AWS credenciais para ler fotos e gravar em S3.
 - **Dashboard**: `AWS_*` (para gerar URLs pré-assinadas das gravações e rodar
-  o enrollment via S3), `PROCTOR_S3_*`, `PROCTOR_DASHBOARD_ADMIN_USER`/
-  `PASSWORD` (obrigatórios aqui — sem eles o painel fica sem autenticação).
+  o enrollment via S3), `PROCTOR_S3_*`, `PROCTOR_DASHBOARD_DATABASE_URL`
+  (obrigatório — sem ele o processo não sobe), `PROCTOR_DASHBOARD_ADMIN_USER`/
+  `PASSWORD` (obrigatórios aqui — sem eles o painel fica sem autenticação; é
+  só o login do professor, não autentica NUC nenhuma).
   `PROCTOR_FACE_*`/`PROCTOR_GAZE_*`/`PROCTOR_REC_*`/`PROCTOR_APP_PROXY_SERVER`/
-  `STATION_ID`/`STATION_NAME` não têm efeito nenhum no dashboard — ficam com o
-  default e podem ser ignorados.
+  `STATION_ID`/`STATION_NAME`/`STATION_TOKEN` não têm efeito nenhum no
+  dashboard — ficam com o default e podem ser ignorados.
 
 ## O que NÃO foi separado (de propósito)
 

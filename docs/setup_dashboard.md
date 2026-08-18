@@ -118,24 +118,40 @@ estar amanhã — bloqueio de saída em rede de terceiros é comum:
 curl -sS -o /dev/null -w '%{http_code}\n' http://<ip-ou-dns-do-ec2>/
 ```
 
-## 8. Apontar as NUCs para cá
+## 8. Emitir um token por estação e apontar as NUCs
+
+A senha do professor (`PROCTOR_DASHBOARD_ADMIN_USER/PASSWORD`) não autentica
+mais o heartbeat — cada NUC tem seu próprio token, emitido aqui no dashboard:
+
+```bash
+cd ~/proctor-station
+venv/bin/python scripts/issue_station_token.py nuc-01 --label "Sala 3, estação 1"
+```
+
+O token é impresso em texto puro **uma única vez** — copiar imediatamente,
+não fica recuperável depois (só o hash fica no Postgres). Repetir o comando
+pro mesmo `station_id` revoga o token anterior e emite um novo. Repetir para
+cada NUC.
 
 Em cada NUC (ver `docs/setup_nuc.md`, passo 4), `.env`:
 
 ```dotenv
 PROCTOR_DASHBOARD_ENABLED=true
 PROCTOR_DASHBOARD_BASE_URL=http://<ip-ou-dns-do-ec2>
-PROCTOR_DASHBOARD_ADMIN_USER=professor
-PROCTOR_DASHBOARD_ADMIN_PASSWORD=<a mesma senha>
+PROCTOR_DASHBOARD_STATION_ID=nuc-01
+PROCTOR_DASHBOARD_STATION_TOKEN=<o token impresso acima>
 ```
 
-Sem usuário/senha configurados na NUC, o heartbeat de saída recebe 401 do
-dashboard e a estação nunca aparece no painel — não é um erro silencioso, mas
-aparece só no log (`journalctl -u proctor -f`), não na UI.
+`PROCTOR_DASHBOARD_STATION_ID` precisa bater exatamente com o `station_id`
+usado ao emitir o token — o dashboard rejeita se um divergir do outro. Sem
+token (ou com o errado), o heartbeat de saída recebe 401 do dashboard e a
+estação nunca aparece no painel — não é um erro silencioso, mas aparece só
+no log (`journalctl -u proctor -f`), não na UI.
 
 ## Risco aceito por enquanto
 
-O tráfego entre NUC e dashboard (heartbeat, comandos, Basic Auth) roda em HTTP
-puro, sem TLS. A senha viaja em texto claro dentro do header `Authorization`.
-Aceitável para um teste pontual numa rede confiável; para uso continuado,
+O tráfego entre NUC e dashboard (heartbeat, comandos, token de estação) roda
+em HTTP puro, sem TLS. O token viaja em texto claro dentro do header
+`X-Station-Token`. Aceitável para um teste pontual numa rede confiável; para
+uso continuado,
 colocar um nginx com certificado (Let's Encrypt) na frente resolve.

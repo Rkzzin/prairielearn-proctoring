@@ -178,11 +178,12 @@ class DashboardHeartbeatWorker:
         return self._recent_events[session_id]
 
     def _default_client_factory(self) -> httpx.Client:
-        auth = None
-        if self._config.admin_user and self._config.admin_password:
-            auth = (self._config.admin_user, self._config.admin_password)
+        headers = {}
+        if self._config.station_token:
+            headers["X-Station-Id"] = self._config.station_id
+            headers["X-Station-Token"] = self._config.station_token
         return httpx.Client(
             base_url=self._config.base_url,
             timeout=self._config.timeout_sec,
-            auth=auth,
+            headers=headers,
         )

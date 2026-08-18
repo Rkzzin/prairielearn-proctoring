@@ -5,12 +5,13 @@ from __future__ import annotations
 import csv
 import hmac
 import json
+import re
 import anyio
 from datetime import timezone
 from io import StringIO
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -26,6 +27,18 @@ from src.dashboard.models import (
 )
 from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.store import DashboardStore
+
+#: Rotas que só a NUC chama — autenticadas por token de estação
+#: (`require_station_token`), não pela senha do professor. O middleware de
+#: Basic Auth abaixo pula exatamente estas.
+_STATION_EXACT_ROUTES = {("POST", "/api/heartbeats"), ("POST", "/api/sessions")}
+_STATION_SESSION_ACTION_RE = re.compile(r"^/api/sessions/[^/]+/(finalize|events)$")
+
+
+def _is_station_route(method: str, path: str) -> bool:
+    if (method, path) in _STATION_EXACT_ROUTES:
+        return True
+    return method == "POST" and bool(_STATION_SESSION_ACTION_RE.match(path))
 
 
 def create_app(config: AppConfig | None = None, store: DashboardStore | None = None) -> FastAPI:
@@ -55,6 +68,9 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
 
         @app.middleware("http")
         async def require_basic_auth(request: Request, call_next):
+            if _is_station_route(request.method, request.url.path):
+                return await call_next(request)
+
             stored_hash = dashboard_store.get_credential_hash(auth_username)
             credentials = parse_basic_auth(request.headers.get("authorization"))
             authenticated = (
@@ -69,6 +85,30 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
                     headers={"WWW-Authenticate": 'Basic realm="proctor-dashboard"'},
                 )
             return await call_next(request)
+
+    async def require_station_token(request: Request) -> str:
+        """Autentica a NUC por `X-Station-Id`/`X-Station-Token` — não pela senha do professor.
+
+        Retorna o `station_id` autenticado, pra as rotas conferirem que ele bate
+        com o que o corpo/sessão declara (uma estação não pode falar por outra).
+        """
+        station_id = request.headers.get("x-station-id")
+        token = request.headers.get("x-station-token")
+        token_hash = dashboard_store.get_station_token_hash(station_id) if station_id else None
+        authenticated = (
+            station_id is not None
+            and token is not None
+            and token_hash is not None
+            and verify_password(token, token_hash)
+        )
+        if not authenticated:
+            raise HTTPException(status_code=401, detail="Token de estação inválido.")
+        return station_id
+
+    def _ensure_station_owns_session(session_id: str, authenticated_station_id: str) -> None:
+        session = dashboard_store.get_session(session_id)
+        if session is not None and session.station_id != authenticated_station_id:
+            raise HTTPException(status_code=403, detail="Sessão pertence a outra estação.")
 
     def render_template(request: Request, template_name: str, **context: object) -> HTMLResponse:
         return templates.TemplateResponse(
@@ -171,7 +211,12 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         return JSONResponse({"removed": removed})
 
     @app.post("/api/heartbeats")
-    async def upsert_heartbeat(payload: StationHeartbeat) -> JSONResponse:
+    async def upsert_heartbeat(
+        payload: StationHeartbeat,
+        authenticated_station_id: str = Depends(require_station_token),
+    ) -> JSONResponse:
+        if payload.station_id != authenticated_station_id:
+            raise HTTPException(status_code=403, detail="station_id não bate com o token.")
         station = dashboard_store.upsert_station_heartbeat(payload)
         commands = dashboard_store.drain_commands(payload.station_id)
         return JSONResponse(
@@ -217,19 +262,33 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         )
 
     @app.post("/api/sessions")
-    async def register_session(payload: SessionRecord) -> JSONResponse:
+    async def register_session(
+        payload: SessionRecord,
+        authenticated_station_id: str = Depends(require_station_token),
+    ) -> JSONResponse:
+        if payload.station_id != authenticated_station_id:
+            raise HTTPException(status_code=403, detail="station_id não bate com o token.")
         session = dashboard_store.register_session(payload)
         return JSONResponse(session.model_dump(mode="json"), status_code=201)
 
     @app.post("/api/sessions/{session_id}/finalize")
-    async def finalize_session(session_id: str) -> JSONResponse:
+    async def finalize_session(
+        session_id: str,
+        authenticated_station_id: str = Depends(require_station_token),
+    ) -> JSONResponse:
+        _ensure_station_owns_session(session_id, authenticated_station_id)
         session = dashboard_store.finalize_session(session_id)
         if session is None:
             return JSONResponse({"detail": "Sessão não encontrada."}, status_code=404)
         return JSONResponse(session.model_dump(mode="json"))
 
     @app.post("/api/sessions/{session_id}/events")
-    async def append_session_events(session_id: str, payload: list[SessionEventPayload]) -> JSONResponse:
+    async def append_session_events(
+        session_id: str,
+        payload: list[SessionEventPayload],
+        authenticated_station_id: str = Depends(require_station_token),
+    ) -> JSONResponse:
+        _ensure_station_owns_session(session_id, authenticated_station_id)
         session = dashboard_store.append_events(session_id, payload)
         if session is None:
             return JSONResponse({"detail": "Sessão não encontrada."}, status_code=404)

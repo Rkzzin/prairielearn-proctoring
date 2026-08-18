@@ -264,17 +264,17 @@ class DashboardConfig(BaseSettings):
     admin_user: str | None = Field(
         default=None,
         description=(
-            "Usado dos dois lados: no dashboard, semeia a credencial (hash) no "
-            "banco no primeiro boot; na NUC, autentica as chamadas de heartbeat/"
-            "comando contra o dashboard. Mesmo usuário/senha nos dois papéis."
+            "Login do professor no painel (Basic Auth). Só o dashboard usa — "
+            "semeia a credencial (hash) no banco no primeiro boot. A NUC não usa "
+            "mais isso pra autenticar heartbeat/comando, ver `station_token`."
         ),
     )
     admin_password: str | None = Field(
         default=None,
         description=(
             "Senha em texto puro só nesta variável de ambiente. No dashboard vira "
-            "hash no banco no primeiro boot; pode ser removida do .env depois. Na "
-            "NUC continua sendo necessária a cada start para autenticar saída."
+            "hash no banco no primeiro boot; pode ser removida do .env depois. "
+            "Não tem efeito na NUC."
         ),
     )
     database_url: str | None = Field(
@@ -284,6 +284,16 @@ class DashboardConfig(BaseSettings):
             "postgresql://user:senha@127.0.0.1:5432/proctor_dashboard). Só o "
             "dashboard usa — não tem efeito na NUC. Obrigatório para subir o "
             "dashboard; ver docs/setup_dashboard.md."
+        ),
+    )
+    station_token: str | None = Field(
+        default=None,
+        description=(
+            "Segredo desta estação, emitido no dashboard via "
+            "scripts/issue_station_token.py e usado (com `station_id`) pra "
+            "autenticar heartbeat/sessão — não é a senha do professor. Só a NUC "
+            "usa; não tem efeito no dashboard. Obrigatório para o heartbeat "
+            "autenticar quando `enabled=true`."
         ),
     )
 
