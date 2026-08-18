@@ -10,10 +10,10 @@ precisa de GNOME, X11, câmera nem Chromium; é só um servidor web.
 - Ubuntu 24.04 (Server serve — não precisa de sessão gráfica).
 - Abra a porta `80/tcp` (ou a que você escolher) no security group / firewall
   para quem vai acessar o painel (professor e as NUCs). Como a autenticação é
-  usuário/senha (ver passo 4), não é obrigatório restringir por IP, mas reduz
+  usuário/senha (ver passo 5), não é obrigatório restringir por IP, mas reduz
   superfície se você souber de antemão a faixa de rede das NUCs.
 - Não é preciso restringir por IP de origem se as NUCs/professor acessarem de
-  redes variáveis — é exatamente o cenário para o qual a Basic Auth do passo 4
+  redes variáveis — é exatamente o cenário para o qual a Basic Auth do passo 5
   foi feita.
 
 ## 2. Clonar o repositório (manual)
@@ -35,7 +35,31 @@ bibliotecas numéricas — `dlib` ainda compila aqui, ver `docs/roles.md` sobre 
 porquê), cria o venv, instala `pip install -e ".[dashboard,dev]"`, cria o
 `.env` a partir do `.env.example` (se não existir) e roda a suíte de testes.
 
-## 4. Preencher o `.env` à mão (manual)
+## 4. Provisionar o Postgres (manual)
+
+O dashboard persiste tudo (estações, sessões, enrollments, configs,
+credenciais) em Postgres — não sobe sem um banco acessível. Numa máquina só
+para o dashboard, o mais simples é instalar nativo:
+
+```bash
+sudo apt update && sudo apt install -y postgresql
+sudo -u postgres psql -c "CREATE ROLE proctor_dashboard WITH LOGIN PASSWORD '<senha-forte>';"
+sudo -u postgres psql -c "CREATE DATABASE proctor_dashboard OWNER proctor_dashboard;"
+```
+
+O DSN resultante (`postgresql://proctor_dashboard:<senha>@127.0.0.1:5432/proctor_dashboard`)
+vai no `.env` no próximo passo. As tabelas são criadas automaticamente no
+primeiro boot do serviço — não precisa rodar migração manual.
+
+Se a EC2 já roda outro serviço (dividindo a máquina), ver
+`docs/migracao_ec2_passo_a_passo_aws.md` — lá o Postgres também é nativo na
+mesma instância, mas com um banco/role isolado do outro serviço.
+
+Para desenvolvimento local, `docker-compose.yml` na raiz do repo sobe um
+Postgres descartável (`docker compose up -d`), já compatível com o exemplo
+de DSN no `.env.example`.
+
+## 5. Preencher o `.env` à mão (manual)
 
 Os campos que importam para o dashboard (o resto do `.env.example` é herança
 compartilhada com a estação e não faz efeito aqui — ver `docs/roles.md`):
@@ -49,20 +73,24 @@ AWS_SECRET_ACCESS_KEY=
 PROCTOR_S3_BUCKET=proctor-station
 PROCTOR_S3_REGION=sa-east-1
 
+# OBRIGATÓRIO — sem isto o dashboard nem sobe (falha no boot com erro
+# explícito). DSN do banco criado no passo 4.
+PROCTOR_DASHBOARD_DATABASE_URL=postgresql://proctor_dashboard:<senha>@127.0.0.1:5432/proctor_dashboard
+
 # OBRIGATÓRIO — sem isto o painel fica acessível sem senha para qualquer um
 # que descubra o IP/porta. Mesmo usuário/senha que vai para as NUCs.
 PROCTOR_DASHBOARD_ADMIN_USER=professor
 PROCTOR_DASHBOARD_ADMIN_PASSWORD=<escolha uma senha forte>
 ```
 
-A senha é hasheada (PBKDF2) e gravada no SQLite do dashboard **no primeiro
+A senha é hasheada (PBKDF2) e gravada no Postgres do dashboard **no primeiro
 boot do serviço**. Depois disso, `PROCTOR_DASHBOARD_ADMIN_PASSWORD` pode ser
 removida do `.env` — só o hash no banco importa a partir daí. Trocar a senha
-depois exige apagar a linha correspondente na tabela `credentials` do
-`data/dashboard/dashboard.sqlite3` e reiniciar o serviço (não existe rota de
-"trocar senha" na UI ainda).
+depois exige apagar a linha correspondente na tabela `credentials` (ex:
+`DELETE FROM credentials WHERE username = 'professor';` via `psql`) e
+reiniciar o serviço (não existe rota de "trocar senha" na UI ainda).
 
-## 5. Instalar o serviço systemd (script)
+## 6. Instalar o serviço systemd (script)
 
 ```bash
 cd ~/proctor-station   # sempre cd antes — o script resolve import a partir do cwd
@@ -75,7 +103,7 @@ Isso cria e habilita `proctor-dashboard.service` na porta `80` por padrão
 O unit já ganha `AmbientCapabilities=CAP_NET_BIND_SERVICE`, necessário para
 abrir uma porta <1024 sem rodar como root.
 
-## 6. Verificação (script)
+## 7. Verificação (script)
 
 ```bash
 systemctl status proctor-dashboard --no-pager
@@ -90,7 +118,7 @@ estar amanhã — bloqueio de saída em rede de terceiros é comum:
 curl -sS -o /dev/null -w '%{http_code}\n' http://<ip-ou-dns-do-ec2>/
 ```
 
-## 7. Apontar as NUCs para cá
+## 8. Apontar as NUCs para cá
 
 Em cada NUC (ver `docs/setup_nuc.md`, passo 4), `.env`:
 

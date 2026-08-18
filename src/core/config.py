@@ -277,6 +277,15 @@ class DashboardConfig(BaseSettings):
             "NUC continua sendo necessária a cada start para autenticar saída."
         ),
     )
+    database_url: str | None = Field(
+        default=None,
+        description=(
+            "DSN do Postgres usado pelo DashboardStore (ex: "
+            "postgresql://user:senha@127.0.0.1:5432/proctor_dashboard). Só o "
+            "dashboard usa — não tem efeito na NUC. Obrigatório para subir o "
+            "dashboard; ver docs/setup_dashboard.md."
+        ),
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="PROCTOR_DASHBOARD_",

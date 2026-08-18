@@ -8,7 +8,7 @@ Type=simple
 User=proctor
 WorkingDirectory=/opt/proctor
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/opt/proctor/venv/bin/python -m uvicorn src.dashboard.app:app --host 0.0.0.0 --port 8010
+ExecStart=/opt/proctor/venv/bin/python -m uvicorn src.dashboard.app:create_app --factory --host 0.0.0.0 --port 8010
 Restart=always
 RestartSec=3
 

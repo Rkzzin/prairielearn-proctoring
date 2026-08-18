@@ -1,0 +1,12 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - proctor_dashboard_pg:/var/lib/postgresql/data
+
+volumes:
+  proctor_dashboard_pg:

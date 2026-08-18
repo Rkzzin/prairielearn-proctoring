@@ -30,7 +30,7 @@ Type=simple
 User=$RUN_USER
 WorkingDirectory=$PROJECT_DIR
 Environment=PYTHONUNBUFFERED=1
-ExecStart=$PYTHON_BIN -m uvicorn src.dashboard.app:app --host 0.0.0.0 --port $PORT
+ExecStart=$PYTHON_BIN -m uvicorn src.dashboard.app:create_app --factory --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=3
 AmbientCapabilities=CAP_NET_BIND_SERVICE

@@ -43,7 +43,7 @@ comentário completo.
 | Extra de dependências | `pip install -e ".[station,dev]"` | `pip install -e ".[dashboard,dev]"` |
 | Instala o serviço | `sudo bash scripts/install_systemd_service.sh` | `sudo bash scripts/install_dashboard_service.sh` |
 | Unit systemd | `proctor.service` | `proctor-dashboard.service` |
-| App ASGI | `src.api.server:app` | `src.dashboard.app:app` |
+| App ASGI | `src.api.server:app` | `src.dashboard.app:create_app` (`--factory`, ver por quê em `src/dashboard/app.py`) |
 | Porta padrão | `8000` (`--host 0.0.0.0`, só a rede local deveria alcançar) | `80` (`--host 0.0.0.0`, pensado para ser público — por isso tem Basic Auth) |
 | Guia passo a passo | `docs/setup_nuc.md` | `docs/setup_dashboard.md` |
 | Hardware necessário | webcam UVC, sessão GNOME/X11, Chromium | nenhum — é só um servidor web |

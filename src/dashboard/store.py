@@ -1,17 +1,16 @@
-"""Armazenamento do dashboard com cache em memória e persistência SQLite."""
+"""Armazenamento do dashboard com cache em memória e persistência Postgres."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-import sqlite3
 from copy import deepcopy
 from datetime import datetime, timezone
-from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
 import boto3
+import psycopg
+from psycopg.rows import dict_row
 
 from src.dashboard.models import (
     CommandRecord,
@@ -28,11 +27,13 @@ from src.dashboard.models import (
 
 
 class DashboardStore:
-    def __init__(self, data_dir: Path, app_config=None, s3_client=None):
-        self.data_dir = self._prepare_data_dir(data_dir)
-        self.db_path = self.data_dir / "dashboard.sqlite3"
-        self._db = sqlite3.connect(self.db_path, check_same_thread=False)
-        self._db.row_factory = sqlite3.Row
+    def __init__(self, database_url: str, *, app_config=None, s3_client=None):
+        if not database_url:
+            raise ValueError(
+                "PROCTOR_DASHBOARD_DATABASE_URL não configurado — obrigatório para "
+                "o dashboard (ver docs/setup_dashboard.md)."
+            )
+        self._db = psycopg.connect(database_url, row_factory=dict_row)
         self._app_cfg = app_config
         self._s3 = s3_client or self._default_s3_client()
         self._stations: dict[str, StationRecord] = {}
@@ -43,16 +44,6 @@ class DashboardStore:
         self._lock = Lock()
         self._init_db()
         self._load_from_db()
-
-    @staticmethod
-    def _prepare_data_dir(data_dir: Path) -> Path:
-        try:
-            data_dir.mkdir(parents=True, exist_ok=True)
-            return data_dir
-        except OSError:
-            fallback = Path(os.getcwd()) / ".localdata" / "dashboard"
-            fallback.mkdir(parents=True, exist_ok=True)
-            return fallback
 
     def snapshot(self) -> dict[str, object]:
         with self._lock:
@@ -360,36 +351,45 @@ class DashboardStore:
                 pass
 
     def _init_db(self) -> None:
-        self._db.executescript(
+        for statement in (
             """
             CREATE TABLE IF NOT EXISTS stations (
               station_id TEXT PRIMARY KEY,
-              payload TEXT NOT NULL
-            );
+              payload JSONB NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS sessions (
               session_id TEXT PRIMARY KEY,
-              payload TEXT NOT NULL
-            );
+              payload JSONB NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS enrollments (
               enrollment_id TEXT PRIMARY KEY,
-              payload TEXT NOT NULL
-            );
+              payload JSONB NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS configs (
-              id INTEGER PRIMARY KEY AUTOINCREMENT,
-              payload TEXT NOT NULL
-            );
+              id BIGSERIAL PRIMARY KEY,
+              payload JSONB NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS credentials (
               username TEXT PRIMARY KEY,
               password_hash TEXT NOT NULL
-            );
-            """
-        )
+            )
+            """,
+        ):
+            self._db.execute(statement)
         self._db.commit()
 
     def get_credential_hash(self, username: str) -> str | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT password_hash FROM credentials WHERE username = ?",
+                "SELECT password_hash FROM credentials WHERE username = %s",
                 (username,),
             ).fetchone()
         return row["password_hash"] if row else None
@@ -398,26 +398,27 @@ class DashboardStore:
         """Insere a credencial só se `username` ainda não existir (não sobrescreve)."""
         with self._lock:
             self._db.execute(
-                "INSERT OR IGNORE INTO credentials (username, password_hash) VALUES (?, ?)",
+                "INSERT INTO credentials (username, password_hash) VALUES (%s, %s) "
+                "ON CONFLICT (username) DO NOTHING",
                 (username, password_hash),
             )
             self._db.commit()
 
     def _load_from_db(self) -> None:
         self._stations = {
-            row["station_id"]: StationRecord.model_validate_json(row["payload"])
+            row["station_id"]: StationRecord.model_validate(row["payload"])
             for row in self._db.execute("SELECT station_id, payload FROM stations")
         }
         self._sessions = {
-            row["session_id"]: SessionRecord.model_validate_json(row["payload"])
+            row["session_id"]: SessionRecord.model_validate(row["payload"])
             for row in self._db.execute("SELECT session_id, payload FROM sessions")
         }
         self._enrollments = {
-            row["enrollment_id"]: EnrollmentRecord.model_validate_json(row["payload"])
+            row["enrollment_id"]: EnrollmentRecord.model_validate(row["payload"])
             for row in self._db.execute("SELECT enrollment_id, payload FROM enrollments")
         }
         self._configs = [
-            ExamConfigPayload.model_validate_json(row["payload"])
+            ExamConfigPayload.model_validate(row["payload"])
             for row in self._db.execute("SELECT payload FROM configs ORDER BY id DESC")
         ]
 
@@ -431,28 +432,31 @@ class DashboardStore:
 
     def _save_station(self, station: StationRecord) -> None:
         self._db.execute(
-            "INSERT OR REPLACE INTO stations (station_id, payload) VALUES (?, ?)",
+            "INSERT INTO stations (station_id, payload) VALUES (%s, %s::jsonb) "
+            "ON CONFLICT (station_id) DO UPDATE SET payload = EXCLUDED.payload",
             (station.station_id, station.model_dump_json()),
         )
         self._db.commit()
 
     def _save_session(self, session: SessionRecord) -> None:
         self._db.execute(
-            "INSERT OR REPLACE INTO sessions (session_id, payload) VALUES (?, ?)",
+            "INSERT INTO sessions (session_id, payload) VALUES (%s, %s::jsonb) "
+            "ON CONFLICT (session_id) DO UPDATE SET payload = EXCLUDED.payload",
             (session.session_id, session.model_dump_json()),
         )
         self._db.commit()
 
     def _save_enrollment(self, enrollment: EnrollmentRecord) -> None:
         self._db.execute(
-            "INSERT OR REPLACE INTO enrollments (enrollment_id, payload) VALUES (?, ?)",
+            "INSERT INTO enrollments (enrollment_id, payload) VALUES (%s, %s::jsonb) "
+            "ON CONFLICT (enrollment_id) DO UPDATE SET payload = EXCLUDED.payload",
             (enrollment.enrollment_id, enrollment.model_dump_json()),
         )
         self._db.commit()
 
     def _insert_config(self, config: ExamConfigPayload) -> None:
         self._db.execute(
-            "INSERT INTO configs (payload) VALUES (?)",
+            "INSERT INTO configs (payload) VALUES (%s::jsonb)",
             (config.model_dump_json(),),
         )
         self._db.commit()

@@ -36,9 +36,12 @@ station = []
 # Papel de DASHBOARD (professor): scripts/bootstrap_dashboard.sh instala isto.
 # Server web com HTMX/Jinja2 e upload de formulario (enrollment manual, hoje
 # removido, mas python-multipart segue sendo usado por outros forms do painel).
+# psycopg fala com o Postgres do DashboardStore (src/dashboard/store.py) — a
+# estacao (NUC) nao precisa, so o dashboard persiste dado.
 dashboard = [
     "jinja2>=3.1.4",
     "python-multipart>=0.0.9",
+    "psycopg[binary]>=3.1",
 ]
 dev = [
     "pytest>=8.0.0",

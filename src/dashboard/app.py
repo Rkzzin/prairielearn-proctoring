@@ -33,7 +33,7 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     dashboard_dir = Path(__file__).parent
     templates = Jinja2Templates(directory=str(dashboard_dir / "templates"))
     dashboard_store = store or DashboardStore(
-        app_config.data_dir / "dashboard",
+        app_config.dashboard.database_url,
         app_config=app_config,
     )
 
@@ -374,4 +374,7 @@ def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -
     return buffer.getvalue()
 
 
-app = create_app()
+# Sem instância `app` de módulo de propósito: create_app() abre uma conexão
+# Postgres de verdade (DashboardStore), então instanciar no import quebraria
+# qualquer import deste módulo sem PROCTOR_DASHBOARD_DATABASE_URL configurado
+# (testes incluídos). Rodar via `uvicorn src.dashboard.app:create_app --factory`.

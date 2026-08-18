@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.core.config import AppConfig
+from src.core.config import AppConfig, DashboardConfig
 from src.core.states import known_station_statuses
 from src.dashboard.app import create_app
 from src.dashboard.models import (
@@ -23,8 +23,8 @@ from src.dashboard.enrollment_service import S3EnrollmentStudent, S3EnrollmentSu
 from src.dashboard.store import DashboardStore
 
 
-def _make_app(tmp_path):
-    config = AppConfig(data_dir=tmp_path)
+def _make_app(tmp_path, database_url):
+    config = AppConfig(data_dir=tmp_path, dashboard=DashboardConfig(database_url=database_url))
     return create_app(config=config)
 
 
@@ -65,17 +65,21 @@ class FakeS3EnrollmentService:
 
 
 @pytest.mark.asyncio
-async def test_dashboard_has_no_auth_when_admin_user_unset(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_dashboard_has_no_auth_when_admin_user_unset(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         response = await client.get("/")
     assert response.status_code == 200
 
 
 @pytest.mark.asyncio
-async def test_dashboard_requires_basic_auth_when_admin_user_set(tmp_path):
+async def test_dashboard_requires_basic_auth_when_admin_user_set(tmp_path, dashboard_database_url):
     config = AppConfig(
         data_dir=tmp_path,
-        dashboard={"admin_user": "prof", "admin_password": "senha-forte"},
+        dashboard={
+            "admin_user": "prof",
+            "admin_password": "senha-forte",
+            "database_url": dashboard_database_url,
+        },
     )
     app = create_app(config=config)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -94,8 +98,8 @@ async def test_dashboard_requires_basic_auth_when_admin_user_set(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_dashboard_home_renders(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         response = await client.get("/")
 
     assert response.status_code == 200
@@ -104,8 +108,8 @@ async def test_dashboard_home_renders(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_returns_pending_config_command(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         config_payload = {
             "turma": "ES2025-T1",
             "assessment": "Quiz-03",
@@ -145,8 +149,8 @@ async def test_heartbeat_returns_pending_config_command(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_register_session_and_append_events(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_register_session_and_append_events(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         session_payload = SessionRecord(
             session_id="sess-1",
             station_id="nuc-01",
@@ -195,8 +199,8 @@ async def test_register_session_and_append_events(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_manual_enrollment_endpoint_is_removed(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_legacy_manual_enrollment_endpoint_is_removed(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         response = await client.post(
             "/api/enrollment",
             data={
@@ -212,8 +216,8 @@ async def test_legacy_manual_enrollment_endpoint_is_removed(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_enrollment_page_lists_s3_turmas(tmp_path):
-    app = _make_app(tmp_path)
+async def test_enrollment_page_lists_s3_turmas(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
     app.state.s3_enrollment_service = FakeS3EnrollmentService()
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
@@ -231,8 +235,8 @@ async def test_enrollment_page_lists_s3_turmas(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_s3_enrollment_endpoint_processes_turma_and_records_successes(tmp_path):
-    app = _make_app(tmp_path)
+async def test_s3_enrollment_endpoint_processes_turma_and_records_successes(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
     service = FakeS3EnrollmentService()
     app.state.s3_enrollment_service = service
 
@@ -257,8 +261,8 @@ async def test_s3_enrollment_endpoint_processes_turma_and_records_successes(tmp_
 
 
 @pytest.mark.asyncio
-async def test_station_command_endpoints_enqueue_commands(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_station_command_endpoints_enqueue_commands(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         stop_response = await client.post("/api/stations/nuc-01/session/stop")
         unblock_response = await client.post("/api/stations/nuc-01/session/unblock")
         heartbeat_response = await client.post(
@@ -284,8 +288,8 @@ async def test_station_command_endpoints_enqueue_commands(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_autostart_command_endpoints_enqueue_toggle(tmp_path):
-    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path)), base_url="http://testserver") as client:
+async def test_autostart_command_endpoints_enqueue_toggle(tmp_path, dashboard_database_url):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
         enable_response = await client.post("/api/stations/nuc-01/autostart/enable")
         disable_response = await client.post("/api/stations/nuc-01/autostart/disable")
         heartbeat_response = await client.post(
@@ -312,8 +316,8 @@ async def test_autostart_command_endpoints_enqueue_toggle(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path):
-    app = _make_app(tmp_path)
+async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
     app.state.s3_enrollment_service = FakeS3EnrollmentService()
     store = app.state.store
     store.add_enrollment(
@@ -365,8 +369,8 @@ def test_station_status_matches_canonical_state_vocabulary():
     assert {status.value for status in StationStatus} == known_station_statuses()
 
 
-def test_dashboard_store_persists_across_restarts(tmp_path):
-    store = DashboardStore(tmp_path / "dashboard")
+def test_dashboard_store_persists_across_restarts(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
     store.create_config(
         ExamConfigPayload(
             turma="ES2025-T1",
@@ -398,7 +402,7 @@ def test_dashboard_store_persists_across_restarts(tmp_path):
         )
     )
 
-    reloaded = DashboardStore(tmp_path / "dashboard")
+    reloaded = DashboardStore(dashboard_database_url)
     snapshot = reloaded.snapshot()
 
     assert snapshot["configs"][0].assessment == "Quiz-03"
@@ -406,8 +410,8 @@ def test_dashboard_store_persists_across_restarts(tmp_path):
     assert snapshot["sessions"][0].session_id == "sess-1"
 
 
-def test_dashboard_store_clear_sessions_removes_local_history(tmp_path):
-    store = DashboardStore(tmp_path / "dashboard")
+def test_dashboard_store_clear_sessions_removes_local_history(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
     store.add_enrollment(
         turma="ES2025-T1",
         student_id="123",
@@ -428,7 +432,7 @@ def test_dashboard_store_clear_sessions_removes_local_history(tmp_path):
     )
 
     removed = store.clear_sessions()
-    reloaded = DashboardStore(tmp_path / "dashboard")
+    reloaded = DashboardStore(dashboard_database_url)
 
     assert removed == 1
     assert reloaded.list_sessions() == []
@@ -436,8 +440,8 @@ def test_dashboard_store_clear_sessions_removes_local_history(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_clear_sessions_endpoint_removes_dashboard_history(tmp_path):
-    app = _make_app(tmp_path)
+async def test_clear_sessions_endpoint_removes_dashboard_history(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
     store = app.state.store
     store.register_session(
         SessionRecord(
@@ -460,8 +464,8 @@ async def test_clear_sessions_endpoint_removes_dashboard_history(tmp_path):
     assert sessions_response.json() == []
 
 
-def test_finalize_session_marks_history_completed_and_station_idle(tmp_path):
-    store = DashboardStore(tmp_path / "dashboard")
+def test_finalize_session_marks_history_completed_and_station_idle(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
     store.upsert_station_heartbeat(
         StationHeartbeat.model_validate(
             {
@@ -500,12 +504,12 @@ def test_finalize_session_marks_history_completed_and_station_idle(tmp_path):
     assert station.active_session_id is None
 
 
-def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path):
+def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path, dashboard_database_url):
     class FakeS3:
         def generate_presigned_url(self, _operation, Params, ExpiresIn):
             return f"https://signed.example/{Params['Bucket']}/{Params['Key']}?exp={ExpiresIn}"
 
-    store = DashboardStore(tmp_path / "dashboard", app_config=AppConfig(data_dir=tmp_path), s3_client=FakeS3())
+    store = DashboardStore(dashboard_database_url, app_config=AppConfig(data_dir=tmp_path), s3_client=FakeS3())
     store.register_session(
         SessionRecord(
             session_id="sess-s3",
