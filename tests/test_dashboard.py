@@ -478,7 +478,7 @@ async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path, 
     assert '<option value="ES2025-T1"' in response.text
     assert '<option value="ES2025-T2"' in response.text
     assert "LOCAL-ONLY" not in response.text
-    assert '<select name="target_station_ids" multiple' in response.text
+    assert '<input type="checkbox" name="target_station_ids" value="nuc-01"' in response.text
     assert 'NUC Sala 1 (nuc-01)' in response.text
     assert 'https://prairielearn.org/pl' in response.text
     assert 'prairielearn.org' in response.text
