@@ -1,9 +1,14 @@
 # Migração do dashboard para EC2 compartilhada — passo a passo do operador
 
+> **Arquivado — migração concluída (M8, ver `MILESTONES.md`).** Este
+> documento é o runbook de uma migração pontual que já foi executada; fica
+> aqui só como histórico/referência de troubleshooting. Para configurar ou
+> operar o dashboard hoje, use `docs/setup_dashboard.md`.
+
 Passo a passo manual (console AWS + SSH na instância) para colocar o
 dashboard no ar na EC2 já existente, compartilhada com outro serviço, atrás
 de nginx e num subdomínio próprio, com Postgres e token individual por
-estação. Pré-requisito: os PRs descritos em `docs/migracao_ec2_plano_dev.md`
+estação. Pré-requisito: os PRs descritos em `docs/archive/migracao_ec2_plano_dev.md`
 já mergeados (Postgres, token de estação, porta interna) — os passos 5 em
 diante abaixo não fazem sentido sem eles.
 

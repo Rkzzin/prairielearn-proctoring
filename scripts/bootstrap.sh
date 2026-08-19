@@ -207,7 +207,7 @@ echo "  7/8  Rodando testes"
 echo "=========================================="
 warn "tests/test_dashboard.py fica de fora — é do papel de DASHBOARD, não da"
 warn "estação (precisa de jinja2/psycopg do extra [dashboard] e de um Postgres"
-warn "rodando, nenhum dos dois faz parte do bootstrap da NUC). Ver docs/roles.md."
+warn "rodando, nenhum dos dois faz parte do bootstrap da NUC). Ver README.md."
 
 python3 -m pytest tests/ -v --tb=short --ignore=tests/test_dashboard.py
 PYTEST_EXIT=$?

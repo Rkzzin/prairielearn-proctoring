@@ -6,7 +6,7 @@
 #
 #  Diferença deliberada para scripts/bootstrap.sh (papel de ESTAÇÃO/NUC, só
 #  Ubuntu — NUCs físicas): nada de GNOME, X11, câmera, Chromium ou
-#  ferramentas de lockdown — o dashboard é só um servidor web. Ver docs/roles.md.
+#  ferramentas de lockdown — o dashboard é só um servidor web. Ver README.md.
 #
 #  Uso:
 #    chmod +x scripts/bootstrap_dashboard.sh
@@ -51,7 +51,7 @@ if command -v apt-get >/dev/null 2>&1; then
     log "Python 3.12 instalado"
 
     if sudo apt install -y -qq libopenblas-dev liblapack-dev > /dev/null 2>/dev/null; then
-        log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
+        log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver README.md)"
     else
         warn "libopenblas-dev/liblapack-dev indisponíveis — dlib compila sem elas (BLAS/LAPACK internos, mais lento, não é bloqueante)"
     fi
@@ -75,7 +75,7 @@ elif command -v dnf >/dev/null 2>&1; then
     log "Python 3.12 instalado"
 
     if sudo dnf install -y -q --allowerasing openblas-devel lapack-devel > /dev/null 2>/dev/null; then
-        log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver docs/roles.md)"
+        log "Bibliotecas numéricas instaladas (dlib compila mesmo aqui — ver README.md)"
     else
         warn "openblas-devel/lapack-devel indisponíveis — dlib compila sem elas (BLAS/LAPACK internos, mais lento, não é bloqueante)"
     fi

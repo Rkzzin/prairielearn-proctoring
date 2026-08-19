@@ -544,8 +544,8 @@ login entre alunos diferentes continua não validada.
 **Objetivo:** tirar o dashboard de teste local e colocá-lo no ar numa EC2 já
 existente, compartilhada com outro serviço via nginx, com storage e
 autenticação adequados para ficar exposto num subdomínio público. Planos
-completos em `docs/migracao_ec2_plano_dev.md` (mudanças de repositório) e
-`docs/migracao_ec2_passo_a_passo_aws.md` (portal AWS + shell na EC2).
+completos em `docs/archive/migracao_ec2_plano_dev.md` (mudanças de repositório) e
+`docs/archive/migracao_ec2_passo_a_passo_aws.md` (portal AWS + shell na EC2).
 
 Esta rodada é deliberadamente manual (console AWS + SSH), não Terraform —
 fecha o item de IaC pendente em M7 com uma decisão explícita, não um
@@ -569,7 +569,7 @@ EC2/ambiente justificar o investimento.
 - [x] Docs (`setup_dashboard.md`, `setup_nuc.md`, `roles.md`, `.env.example`)
       atualizadas para o storage e a autenticação novos.
 
-### Operador — portal AWS + EC2 (pendente, ver `docs/migracao_ec2_passo_a_passo_aws.md`)
+### Operador — portal AWS + EC2 (pendente, ver `docs/archive/migracao_ec2_passo_a_passo_aws.md`)
 
 - [ ] Validar capacidade da EC2 atual (`free -h`/`df -h`) e decidir
       t3.micro vs t3.small com o Postgres novo rodando.

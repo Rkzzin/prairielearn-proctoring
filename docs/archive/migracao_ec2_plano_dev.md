@@ -1,10 +1,15 @@
 # Migração do dashboard para EC2 compartilhada — plano de dev (repositório)
 
+> **Arquivado — migração concluída (M8, ver `MILESTONES.md`).** Este
+> documento é o plano de dev de uma migração pontual que já terminou; fica
+> aqui só como histórico/referência de troubleshooting. Para configurar ou
+> operar o dashboard hoje, use `docs/setup_dashboard.md`.
+
 Este é o plano do que muda **no código deste repositório** para o dashboard
 rodar atrás do nginx compartilhado na EC2. O passo a passo de infraestrutura
 (AWS, SSH, nginx, systemd na máquina) está em
-`docs/migracao_ec2_passo_a_passo_aws.md` — este documento aqui só cobre o que
-sai como commit.
+`docs/archive/migracao_ec2_passo_a_passo_aws.md` — este documento aqui só
+cobre o que sai como commit.
 
 Ponto de partida: o `.md` original do colega presumia que o dashboard ainda
 rodava localmente em cada NUC e precisava ganhar heartbeat pull, multi-estação
@@ -19,7 +24,7 @@ na mesma LAN. Isso já foi corrigido antes desta migração entrar em pauta, ver
 `DashboardStore.drain_commands` em `src/dashboard/store.py`.
 
 Também foi decidido manter **um repositório só** (não separar o dashboard),
-seguindo a razão já registrada em `docs/roles.md`: `dlib`/`opencv` continuam
+seguindo a razão já registrada em `README.md`: `dlib`/`opencv` continuam
 necessários nos dois papéis (o enrollment por S3 roda reconhecimento facial no
 próprio dashboard) e separar custaria sincronizar o contrato de heartbeat
 entre dois repos sem ganho real hoje.
@@ -220,7 +225,7 @@ por máquina, não algo pra repetir num `.env.example` compartilhado.
 `src/core/config.py` (`station_token` no lado NUC de `DashboardConfig`),
 `src/core/dashboard_sync.py` (headers no client), `scripts/issue_station_token.py`
 (novo), `.env.example`, `docs/setup_dashboard.md`, `docs/setup_nuc.md`,
-`docs/roles.md` (tabela de `.env` por papel).
+`README.md` (tabela de `.env` por papel).
 
 **Testes:** estender `tests/test_dashboard_auth.py` e `tests/test_dashboard.py`
 — heartbeat com token da própria estação passa; com token de outra estação
@@ -253,7 +258,7 @@ Adicionar na tabela "Registro de decisões técnicas" (`MILESTONES.md:544`):
 - Endpoint no painel pra rotacionar token de estação pela UI — só o script
   CLI por enquanto (ver item 4).
 - Separar o dashboard em outro repositório — decisão tomada, ver
-  `docs/roles.md` e o topo deste documento.
+  `README.md` e o topo deste documento.
 
 ## Ordem sugerida de execução (PRs)
 
@@ -274,4 +279,4 @@ Adicionar na tabela "Registro de decisões técnicas" (`MILESTONES.md:544`):
    PRs anteriores.
 
 Só depois de 1–3 mergeados o passo a passo em
-`docs/migracao_ec2_passo_a_passo_aws.md` pode ser seguido de ponta a ponta.
+`docs/archive/migracao_ec2_passo_a_passo_aws.md` pode ser seguido de ponta a ponta.

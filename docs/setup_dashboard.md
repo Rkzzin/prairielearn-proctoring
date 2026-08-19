@@ -1,7 +1,7 @@
 # Configurar o dashboard do zero (ex: EC2)
 
 Passo a passo para levar uma máquina Linux sem nada instalado até rodar
-`proctor-dashboard.service`. Ver `docs/roles.md` para o que diferencia este
+`proctor-dashboard.service`. Ver `README.md` para o que diferencia este
 papel do papel de estação (`docs/setup_nuc.md`) — em resumo, o dashboard não
 precisa de GNOME, X11, câmera nem Chromium; é só um servidor web.
 
@@ -34,7 +34,7 @@ chmod +x scripts/bootstrap_dashboard.sh
 ```
 
 Instala só o necessário para o papel de dashboard (build tools, Python 3.12,
-bibliotecas numéricas — `dlib` ainda compila aqui, ver `docs/roles.md` sobre o
+bibliotecas numéricas — `dlib` ainda compila aqui, ver `README.md` sobre o
 porquê), cria o venv, instala `pip install -e ".[dashboard,dev]"`, cria o
 `.env` a partir do `.env.example` (se não existir) e roda a suíte de testes.
 
@@ -77,7 +77,7 @@ vai no `.env` no próximo passo. As tabelas são criadas automaticamente no
 primeiro boot do serviço — não precisa rodar migração manual.
 
 Se a EC2 já roda outro serviço (dividindo a máquina), ver
-`docs/migracao_ec2_passo_a_passo_aws.md` — lá o Postgres também é nativo na
+`docs/archive/migracao_ec2_passo_a_passo_aws.md` — lá o Postgres também é nativo na
 mesma instância, mas com um banco/role isolado do outro serviço.
 
 Para desenvolvimento local, `docker-compose.yml` na raiz do repo sobe um
@@ -87,7 +87,7 @@ de DSN no `.env.example`.
 ## 5. Preencher o `.env` à mão (manual)
 
 Os campos que importam para o dashboard (o resto do `.env.example` é herança
-compartilhada com a estação e não faz efeito aqui — ver `docs/roles.md`):
+compartilhada com a estação e não faz efeito aqui — ver `README.md`):
 
 ```dotenv
 # Credenciais AWS — geram as URLs pré-assinadas das gravações e alimentam o
@@ -126,7 +126,7 @@ sudo bash scripts/install_dashboard_service.sh
 Isso cria e habilita `proctor-dashboard.service` escutando só em
 `127.0.0.1:8010` por padrão — pensado para rodar atrás de um nginx (mesma
 máquina ou compartilhado com outro serviço, ver
-`docs/migracao_ec2_passo_a_passo_aws.md`) que termina TLS e faz proxy pra
+`docs/archive/migracao_ec2_passo_a_passo_aws.md`) que termina TLS e faz proxy pra
 essa porta interna; `scripts/nginx/proctor-dashboard.conf` tem o template do
 server block. `PROCTOR_DASHBOARD_PORT`/`PROCTOR_DASHBOARD_HOST` no shell
 mudam isso se precisar (ex: `sudo env PROCTOR_DASHBOARD_HOST=0.0.0.0 bash
@@ -143,7 +143,7 @@ curl -sS -o /dev/null -w '%{http_code}\n' -u professor:<senha> http://127.0.0.1:
 
 Isso confirma que a app subiu — mas ela só escuta local. De fora da máquina,
 quem confirma que as NUCs vão alcançar o painel é o nginx na frente (ver
-`docs/migracao_ec2_passo_a_passo_aws.md`, passos 6-7), não a app diretamente:
+`docs/archive/migracao_ec2_passo_a_passo_aws.md`, passos 6-7), não a app diretamente:
 
 ```bash
 curl -sS -o /dev/null -w '%{http_code}\n' https://<subdominio-do-dashboard>/
