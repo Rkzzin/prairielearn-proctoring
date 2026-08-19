@@ -95,6 +95,14 @@ _GSETTINGS_KEYS = tuple(
         _GSettingsKey("org.gnome.desktop.interface", "enable-hot-corners", "false"),
         _GSettingsKey("org.gnome.shell.extensions.dash-to-dock", "show-show-apps-button", "false"),
         _GSettingsKey("org.gnome.shell.extensions.dash-to-dock", "dock-fixed", "false"),
+        # M7 trocou --kiosk por Chromium maximizado (abas/barra de endereço
+        # normais), o que deixa minimizar/maximizar/fechar da decoração da
+        # janela clicáveis com o mouse — o bloqueio de atalhos de teclado
+        # (Alt+F4, Ctrl+W etc., já bloqueados via xbindkeys) não cobre isso.
+        # ':' remove os três botões da decoração; sem eles não tem como o
+        # aluno tirar a janela de foco ou fechá-la sem um atalho já
+        # bloqueado.
+        _GSettingsKey("org.gnome.desktop.wm.preferences", "button-layout", "':'"),
     ]
 )
 
