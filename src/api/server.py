@@ -28,6 +28,7 @@ def create_app(
         session_manager=manager,
         interval_sec=app_config.auto_start_poll_sec,
         enabled=app_config.auto_start_enabled,
+        log_failures=True,
     )
 
     @asynccontextmanager
