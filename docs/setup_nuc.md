@@ -21,10 +21,13 @@ Cada passo indica se é **manual** (feito fora do repositório) ou **script**
 - Grave um ISO do **Ubuntu 24.04 Desktop** (não Server — o projeto depende de
   sessão gráfica GNOME) num pendrive e instale normalmente.
 - Crie o usuário operacional `proctor`.
-- **Confirme a sessão em X11, não Wayland**: a captura de tela usa `x11grab`, que
-  não funciona em Wayland. Na tela de login do GNOME, antes de digitar a senha,
-  clique no ícone de engrenagem e escolha **"Ubuntu on Xorg"**. Depois de logado,
-  confirme com:
+- **X11, não Wayland**: a captura de tela usa `x11grab`, que não funciona em
+  Wayland. O passo 3 (bootstrap) já desabilita o Wayland no GDM sozinho
+  (`WaylandEnable=false` em `/etc/gdm3/custom.conf`) — não precisa escolher
+  "Ubuntu on Xorg" na tela de login toda vez. Só é preciso **reiniciar a NUC**
+  depois do bootstrap pra isso valer (a sessão gráfica atual, se já estava
+  aberta, continua na Wayland/Xorg que ela tinha ao logar). Depois de
+  reiniciar, confirme com:
   ```bash
   echo $XDG_SESSION_TYPE   # deve imprimir "x11"
   ```
@@ -47,11 +50,12 @@ chmod +x scripts/bootstrap.sh
 
 O que ele faz, em ordem: instala pacotes apt (build tools, Python 3.12, FFmpeg,
 v4l-utils, alsa-utils, Chromium, ferramentas de lockdown X11), instala as policies
-de hardening do Chromium, confere se a sessão é X11 (avisa se não for), cria o
-venv, instala as dependências Python (`dlib` compila do source — 3 a 5 min), baixa
-os modelos dlib (~100 MB), cria o `.env` a partir do `.env.example` **se ainda não
-existir**, roda a suíte de testes e testa a câmera em modo headless (se já houver
-alguma `/dev/video*` disponível nesse momento).
+de hardening do Chromium, desabilita o Wayland no GDM (`WaylandEnable=false`,
+efeito só após reiniciar a NUC), cria o venv, instala as dependências Python
+(`dlib` compila do source — 3 a 5 min), baixa os modelos dlib (~100 MB), cria o
+`.env` a partir do `.env.example` **se ainda não existir**, roda a suíte de
+testes e testa a câmera em modo headless (se já houver alguma `/dev/video*`
+disponível nesse momento).
 
 Ele **não** detecta a webcam definitiva nem preenche credenciais — isso é
 proposital, ver passos 4 e 6.

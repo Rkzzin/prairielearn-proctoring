@@ -100,15 +100,37 @@ log "Policies de hardening do Chromium instaladas"
 # ── 2. Sessão gráfica ──
 echo ""
 echo "=========================================="
-echo "  2/8  Verificando sessão gráfica"
+echo "  2/8  Configurando sessão gráfica (X11)"
 echo "=========================================="
+echo "       (a prova depende de X11 — x11grab, wmctrl e xbindkeys não"
+echo "        funcionam em Wayland)"
+
+GDM_CONF="/etc/gdm3/custom.conf"
+if [ -f "$GDM_CONF" ]; then
+    if grep -qE '^\s*WaylandEnable\s*=\s*false' "$GDM_CONF"; then
+        log "GDM já configurado para X11 (WaylandEnable=false em $GDM_CONF)"
+    else
+        sudo cp "$GDM_CONF" "${GDM_CONF}.bak.$(date +%s)"
+        if grep -qE '^\s*#?\s*WaylandEnable\s*=' "$GDM_CONF"; then
+            sudo sed -i -E 's/^\s*#?\s*WaylandEnable\s*=.*/WaylandEnable=false/' "$GDM_CONF"
+        else
+            sudo sed -i '/^\[daemon\]/a WaylandEnable=false' "$GDM_CONF"
+        fi
+        log "GDM configurado para desabilitar Wayland (WaylandEnable=false em $GDM_CONF)"
+        warn "Só faz efeito depois de reiniciar o gdm3 (derruba a sessão gráfica"
+        warn "atual) ou reiniciar a NUC — reinicie a NUC antes da primeira prova."
+    fi
+else
+    warn "$GDM_CONF não encontrado — não parece ser uma instalação padrão do GDM3."
+    warn "Configure a sessão X11 manualmente (ver docs/setup_nuc.md, passo 1)."
+fi
 
 if [ "${XDG_SESSION_TYPE:-desconhecido}" != "x11" ]; then
-    warn "Sessão atual é '${XDG_SESSION_TYPE:-desconhecido}', não 'x11'."
-    warn "A prova depende de X11 (captura de tela via x11grab, wmctrl, xbindkeys)."
-    warn "Troque para 'Ubuntu on Xorg' na tela de login do GNOME antes de rodar a prova."
+    warn "Sessão atual deste terminal ainda é '${XDG_SESSION_TYPE:-desconhecido}' —"
+    warn "normal se o GDM acabou de ser reconfigurado agora. Reinicie a NUC e"
+    warn "confira de novo com: echo \$XDG_SESSION_TYPE"
 else
-    log "Sessão X11 confirmada"
+    log "Sessão X11 confirmada nesta sessão"
 fi
 
 # ── 3. Python venv ──

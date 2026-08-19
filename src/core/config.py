@@ -9,12 +9,22 @@ Veja .env.example para referência completa.
 
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Raiz do projeto (dois níveis acima deste arquivo: src/core/config.py)
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _ENV_FILE = _PROJECT_ROOT / ".env"
+
+# pydantic-settings só usa o .env para popular os campos que as classes
+# abaixo declaram — variáveis como as da AWS (lidas pelo boto3, não por
+# nenhuma classe Settings daqui) nunca chegavam ao processo. load_dotenv
+# preenche os.environ de verdade (sem sobrescrever variáveis de ambiente já
+# definidas, mesma prioridade descrita no docstring do módulo), então o
+# boto3 e qualquer outra lib que leia o ambiente direto também enxergam o
+# .env.
+load_dotenv(_ENV_FILE)
 
 
 class FaceConfig(BaseSettings):
