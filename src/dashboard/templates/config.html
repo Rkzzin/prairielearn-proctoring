@@ -1,81 +1,36 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel two-column">
-  <form class="form-card" id="config-form">
-    <h2>Nova prova</h2>
-    <label>Turma
-      <select name="turma">
-        {% for turma in known_turmas %}
-        <option value="{{ turma }}" {% if loop.first %}selected{% endif %}>{{ turma }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    {% if s3_turmas_error %}
-    <p class="empty">Não foi possível listar turmas no S3; usando turmas conhecidas localmente. {{ s3_turmas_error }}</p>
-    {% endif %}
-    <label>Assessment<input type="text" name="assessment" value="Quiz-03"></label>
-    <label>Timer (min)<input type="number" name="timer_minutes" value="45"></label>
-    <label>PrairieLearn URL<input type="url" name="prairielearn_url" value="https://prairielearn.org/pl"></label>
-    <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org
-login.microsoftonline.com</textarea></label>
-    <fieldset class="checkbox-group">
-      <legend>Estações alvo</legend>
-      {% for station in station_choices %}
-      <label class="checkbox">
-        <input type="checkbox" name="target_station_ids" value="{{ station.station_id }}" checked>
-        {{ station.station_name }} ({{ station.station_id }})
-      </label>
-      {% else %}
-      <p class="empty">Nenhuma estação conhecida ainda — aguarde o primeiro heartbeat.</p>
-      {% endfor %}
-    </fieldset>
-    <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
-    <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
-    <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="5.0"></label>
-    <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
-    <button type="button" onclick="submitConfig()">Distribuir configuração</button>
-  </form>
-
-  <section class="panel inset">
-    <h2>Configs recentes</h2>
-    {% if configs %}
-    <ul class="stack">
-      {% for config in configs %}
-      <li>
-        <strong>{{ config.assessment }}</strong> · {{ config.turma }}
-        <span>{{ config.target_station_ids|join(', ') or 'sem alvo' }}</span>
-      </li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p class="empty">Nenhuma configuração distribuída.</p>
-    {% endif %}
-  </section>
+<section class="panel">
+  <div class="panel-header">
+    <div>
+      <h2>Configurações distribuídas</h2>
+      <p>Distribuir uma configuração nova é feito por estação, no painel de <a href="/">Monitoramento</a> — esta página só lista o histórico do que já foi enviado.</p>
+    </div>
+    <button type="button" class="button-secondary" onclick="clearConfigs()">
+      Limpar histórico
+    </button>
+  </div>
+  {% if configs %}
+  <ul class="stack">
+    {% for config in configs %}
+    <li>
+      <strong>{{ config.assessment }}</strong> · {{ config.turma }}
+      <span>{{ config.target_station_ids|join(', ') or 'sem alvo' }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">Nenhuma configuração distribuída.</p>
+  {% endif %}
 </section>
 
 <script>
-async function submitConfig() {
-  const form = document.getElementById('config-form');
-  const data = new FormData(form);
-  const payload = {
-    turma: data.get('turma'),
-    assessment: data.get('assessment'),
-    timer_minutes: Number(data.get('timer_minutes')),
-    prairielearn_url: data.get('prairielearn_url'),
-    allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
-    auto_start: false,
-    target_station_ids: Array.from(form.querySelectorAll('[name="target_station_ids"]:checked')).map(input => input.value),
-    gaze_h_threshold: Number(data.get('gaze_h_threshold')),
-    gaze_duration_sec: Number(data.get('gaze_duration_sec')),
-    absence_timeout_sec: Number(data.get('absence_timeout_sec')),
-    multi_face_block: data.get('multi_face_block') === 'on',
-    s3_prefix: ''
-  };
-  const response = await fetch('/api/configs', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(payload)
-  });
+async function clearConfigs() {
+  const confirmed = window.confirm('Limpar o histórico local de configurações distribuídas? Isso não afeta o que já foi aplicado nas estações.');
+  if (!confirmed) {
+    return;
+  }
+  const response = await fetch('/api/configs/clear', {method: 'POST'});
   if (response.ok) {
     window.location.reload();
   }

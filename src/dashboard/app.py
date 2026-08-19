@@ -129,20 +129,14 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
 
     @app.get("/config", response_class=HTMLResponse)
     async def config_page(request: Request) -> HTMLResponse:
+        # Distribuir config agora é por estação, no modal do painel principal
+        # (ver _stations.html/dashboard.html) — esta página só lista o
+        # histórico do que já foi distribuído.
         snapshot = dashboard_store.snapshot()
-        s3_turmas_error = None
-        try:
-            known_turmas = request.app.state.s3_enrollment_service.list_turmas()
-        except Exception as exc:
-            s3_turmas_error = str(exc)
-            known_turmas = dashboard_store.list_known_turmas()
         return render_template(
             request,
             "config.html",
-            title="Configuração de prova",
-            known_turmas=known_turmas,
-            s3_turmas_error=s3_turmas_error,
-            station_choices=dashboard_store.list_station_choices(),
+            title="Configurações distribuídas",
             **snapshot,
         )
 
@@ -250,6 +244,29 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     async def disable_autostart(station_id: str) -> JSONResponse:
         command = dashboard_store.set_station_autostart(station_id, False)
         return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.post("/api/stations/{station_id}/enroll")
+    async def run_enroll(station_id: str, payload: dict) -> JSONResponse:
+        turma_ids = [str(t) for t in payload.get("turma_ids") or []]
+        if not turma_ids:
+            raise HTTPException(status_code=400, detail="turma_ids não pode ser vazio.")
+        command = dashboard_store.run_enroll(station_id, turma_ids)
+        return JSONResponse(command.model_dump(mode="json"), status_code=202)
+
+    @app.get("/api/s3-turmas")
+    async def list_s3_turmas(request: Request) -> JSONResponse:
+        try:
+            turmas = request.app.state.s3_enrollment_service.list_turmas()
+        except Exception as exc:
+            # S3 fora do ar: cai pro que o dashboard já viu antes (enrollments,
+            # configs, heartbeats), pra não deixar o professor sem opção nenhuma.
+            return JSONResponse({"turmas": dashboard_store.list_known_turmas(), "error": str(exc)})
+        return JSONResponse({"turmas": turmas, "error": None})
+
+    @app.post("/api/configs/clear")
+    async def clear_configs() -> JSONResponse:
+        removed = dashboard_store.clear_configs()
+        return JSONResponse({"removed": removed})
 
     @app.get("/api/reports/events.csv")
     async def export_events_csv(turma: str | None = None) -> StreamingResponse:

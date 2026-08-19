@@ -50,7 +50,189 @@
   </div>
 </section>
 
+<dialog id="exam-mode-modal" class="modal">
+  <h2>Entrar em modo prova — <span id="exam-mode-station-name"></span></h2>
+  <p>Manter a configuração atual desta estação ou distribuir uma nova antes de ativar?</p>
+  <div class="modal-actions">
+    <button type="button" onclick="chooseKeepConfig()">Manter configuração atual</button>
+    <button type="button" class="button-secondary" onclick="chooseNewConfig()">Criar nova configuração</button>
+  </div>
+  <button type="button" class="button-secondary modal-close" onclick="document.getElementById('exam-mode-modal').close()">Cancelar</button>
+</dialog>
+
+<dialog id="new-config-modal" class="modal">
+  <h2>Nova configuração — <span id="new-config-station-name"></span></h2>
+  <form class="form-card" id="new-config-form">
+    <label>Turma
+      <select name="turma" id="new-config-turma"></select>
+    </label>
+    <p class="empty" id="new-config-turma-error" style="display:none"></p>
+    <label>Assessment<input type="text" name="assessment" value="Quiz-03"></label>
+    <label>Timer (min)<input type="number" name="timer_minutes" value="45"></label>
+    <label>PrairieLearn URL<input type="url" name="prairielearn_url" value="https://prairielearn.org/pl"></label>
+    <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org
+login.microsoftonline.com</textarea></label>
+    <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
+    <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
+    <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="5.0"></label>
+    <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
+    <div class="modal-actions">
+      <button type="button" onclick="submitNewConfig()">Salvar configuração</button>
+      <button type="button" class="button-secondary" onclick="document.getElementById('new-config-modal').close()">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="enroll-modal" class="modal">
+  <h2>Rodar enroll — <span id="enroll-station-name"></span></h2>
+  <p>Baixa as fotos do S3 e gera o <code>.pkl</code> local nesta estação para cada turma marcada (reprocessa mesmo se já existir).</p>
+  <label class="checkbox"><input type="checkbox" id="enroll-select-all" onchange="toggleAllEnrollTurmas(this)"> Selecionar todas</label>
+  <fieldset class="checkbox-group" id="enroll-turma-list"></fieldset>
+  <p class="empty" id="enroll-turma-error" style="display:none"></p>
+  <div class="modal-actions">
+    <button type="button" onclick="submitEnroll()">Rodar enroll</button>
+    <button type="button" class="button-secondary" onclick="document.getElementById('enroll-modal').close()">Cancelar</button>
+  </div>
+</dialog>
+
 <script>
+let currentStationId = null;
+
+function openExamModeModal(stationId, stationName) {
+  currentStationId = stationId;
+  document.getElementById('exam-mode-station-name').textContent = stationName;
+  document.getElementById('exam-mode-modal').showModal();
+}
+
+function chooseKeepConfig() {
+  document.getElementById('exam-mode-modal').close();
+  issueAutoStartCommand(currentStationId, true);
+}
+
+async function chooseNewConfig() {
+  document.getElementById('exam-mode-modal').close();
+  const stationName = document.getElementById('exam-mode-station-name').textContent;
+  await openNewConfigModal(currentStationId, stationName);
+}
+
+async function fetchS3Turmas() {
+  const response = await fetch('/api/s3-turmas');
+  return response.json();
+}
+
+async function openNewConfigModal(stationId, stationName) {
+  currentStationId = stationId;
+  document.getElementById('new-config-station-name').textContent = stationName;
+  const select = document.getElementById('new-config-turma');
+  const errorEl = document.getElementById('new-config-turma-error');
+  select.innerHTML = '';
+  errorEl.style.display = 'none';
+
+  const {turmas, error} = await fetchS3Turmas();
+  if (error) {
+    errorEl.textContent = 'Não foi possível listar turmas no S3; usando turmas conhecidas localmente. ' + error;
+    errorEl.style.display = '';
+  }
+  for (const turma of turmas) {
+    const option = document.createElement('option');
+    option.value = turma;
+    option.textContent = turma;
+    select.appendChild(option);
+  }
+  document.getElementById('new-config-modal').showModal();
+}
+
+async function submitNewConfig() {
+  const form = document.getElementById('new-config-form');
+  const data = new FormData(form);
+  const payload = {
+    turma: data.get('turma'),
+    assessment: data.get('assessment'),
+    timer_minutes: Number(data.get('timer_minutes')),
+    prairielearn_url: data.get('prairielearn_url'),
+    allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
+    auto_start: false,
+    target_station_ids: [currentStationId],
+    gaze_h_threshold: Number(data.get('gaze_h_threshold')),
+    gaze_duration_sec: Number(data.get('gaze_duration_sec')),
+    absence_timeout_sec: Number(data.get('absence_timeout_sec')),
+    multi_face_block: data.get('multi_face_block') === 'on',
+    s3_prefix: ''
+  };
+  const response = await fetch('/api/configs', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (response.ok) {
+    document.getElementById('new-config-modal').close();
+    if (window.htmx) {
+      htmx.ajax('GET', '/partials/stations', '#stations-panel');
+    }
+  }
+}
+
+async function openEnrollModal(stationId, stationName) {
+  currentStationId = stationId;
+  document.getElementById('enroll-station-name').textContent = stationName;
+  document.getElementById('enroll-select-all').checked = false;
+  const list = document.getElementById('enroll-turma-list');
+  const errorEl = document.getElementById('enroll-turma-error');
+  list.innerHTML = '';
+  errorEl.style.display = 'none';
+
+  const {turmas, error} = await fetchS3Turmas();
+  if (error) {
+    errorEl.textContent = 'Não foi possível listar turmas no S3; usando turmas conhecidas localmente. ' + error;
+    errorEl.style.display = '';
+  }
+  if (turmas.length === 0) {
+    errorEl.textContent = 'Nenhuma turma encontrada.';
+    errorEl.style.display = '';
+  }
+  for (const turma of turmas) {
+    const label = document.createElement('label');
+    label.className = 'checkbox';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'enroll_turma_ids';
+    input.value = turma;
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(turma));
+    list.appendChild(label);
+  }
+  document.getElementById('enroll-modal').showModal();
+}
+
+function toggleAllEnrollTurmas(checkbox) {
+  document.querySelectorAll('#enroll-turma-list input[name="enroll_turma_ids"]').forEach((input) => {
+    input.checked = checkbox.checked;
+  });
+}
+
+async function submitEnroll() {
+  const turmaIds = Array.from(
+    document.querySelectorAll('#enroll-turma-list input[name="enroll_turma_ids"]:checked')
+  ).map((input) => input.value);
+  if (turmaIds.length === 0) {
+    const errorEl = document.getElementById('enroll-turma-error');
+    errorEl.textContent = 'Selecione ao menos uma turma.';
+    errorEl.style.display = '';
+    return;
+  }
+  const response = await fetch(`/api/stations/${currentStationId}/enroll`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({turma_ids: turmaIds})
+  });
+  if (response.ok) {
+    document.getElementById('enroll-modal').close();
+    if (window.htmx) {
+      htmx.ajax('GET', '/partials/stations', '#stations-panel');
+    }
+  }
+}
+
 async function issueStationCommand(stationId, action) {
   const endpoint = action === 'unblock'
     ? `/api/stations/${stationId}/session/unblock`

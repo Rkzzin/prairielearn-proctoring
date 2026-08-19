@@ -103,11 +103,6 @@ class DashboardStore:
             turmas.update(station.turma for station in self._stations.values() if station.turma)
         return sorted(turmas)
 
-    def list_station_choices(self) -> list[StationRecord]:
-        with self._lock:
-            stations = sorted(self._stations.values(), key=lambda item: item.station_name.lower())
-            return [station.model_copy(deep=True) for station in stations]
-
     def get_session(self, session_id: str) -> SessionRecord | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -138,6 +133,9 @@ class DashboardStore:
             station.turma = payload.turma
             if payload.auto_start_enabled is not None:
                 station.auto_start_enabled = payload.auto_start_enabled
+            if payload.enroll_status is not None:
+                station.enroll_status = payload.enroll_status
+                station.enroll_message = payload.enroll_message
             station.seconds_remaining = payload.seconds_remaining
             station.last_seen_at = datetime.now(timezone.utc)
             station.last_event = payload.last_event
@@ -295,6 +293,45 @@ class DashboardStore:
 
         self._broadcast()
         return result
+
+    def run_enroll(self, station_id: str, turma_ids: list[str]) -> CommandRecord:
+        """Manda a NUC rodar `scripts/enroll.py --force` para cada turma listada.
+
+        Roda de verdade na estação (dlib local, .pkl local) — o enroll via S3
+        do próprio dashboard (`/enrollment`) só registra o enrollment no banco
+        do dashboard, não gera o .pkl que a NUC usa para identificar aluno.
+        """
+        with self._lock:
+            station = self._stations.get(station_id)
+            if station is None:
+                station = StationRecord(station_id=station_id, station_name=station_id)
+                self._stations[station_id] = station
+            station.enroll_status = "queued"
+            station.enroll_message = f"{len(turma_ids)} turma(s) na fila"
+            command = CommandRecord(
+                command_id=str(uuid4()),
+                station_id=station_id,
+                command_type=CommandType.RUN_ENROLL,
+                issued_at=datetime.now(timezone.utc),
+                payload={"turma_ids": turma_ids},
+            )
+            station.pending_commands.append(command)
+            result = command.model_copy(deep=True)
+            self._save_station(station)
+
+        self._broadcast()
+        return result
+
+    def clear_configs(self) -> int:
+        """Remove o histórico local de configs distribuídas — não afeta as NUCs."""
+        with self._lock:
+            removed = len(self._configs)
+            self._configs.clear()
+            self._db.execute("DELETE FROM configs")
+            self._db.commit()
+
+        self._broadcast()
+        return removed
 
     def drain_commands(self, station_id: str) -> list[CommandRecord]:
         with self._lock:

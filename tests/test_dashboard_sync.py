@@ -195,6 +195,79 @@ def test_dashboard_worker_enabling_autostart_enters_exam_mode():
     assert manager.enter_mode_calls == 1
 
 
+class FakeEnrollRunner:
+    def __init__(self):
+        self.started_with: list[list[str]] = []
+        self._status = "idle"
+        self._message = ""
+
+    def start(self, turma_ids):
+        self.started_with.append(list(turma_ids))
+        self._status = "running"
+
+    def status_dict(self):
+        return {"enroll_status": self._status, "enroll_message": self._message}
+
+
+def test_dashboard_worker_run_enroll_command_starts_the_runner():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "station": {"station_id": "nuc-01"},
+                "commands": [
+                    {
+                        "command_type": "RUN_ENROLL",
+                        "payload": {"turma_ids": ["ES2026-T1", "ES2026-T2"]},
+                    }
+                ],
+            },
+        )
+
+    manager = FakeSessionManager()
+    enroll_runner = FakeEnrollRunner()
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        enroll_runner=enroll_runner,
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://dashboard.test",
+        ),
+    )
+
+    worker.run_once()
+
+    assert enroll_runner.started_with == [["ES2026-T1", "ES2026-T2"]]
+
+
+def test_heartbeat_payload_includes_enroll_status():
+    seen_payloads: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_payloads.append(json.loads(request.read().decode()))
+        return httpx.Response(200, json={"station": {"station_id": "nuc-01"}, "commands": []})
+
+    manager = FakeSessionManager()
+    enroll_runner = FakeEnrollRunner()
+    enroll_runner._status = "running"
+    enroll_runner._message = "1/2 — processando 'ES2026-T2'"
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        enroll_runner=enroll_runner,
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(handler),
+            base_url="http://dashboard.test",
+        ),
+    )
+
+    worker.run_once()
+
+    assert seen_payloads[0]["enroll_status"] == "running"
+    assert seen_payloads[0]["enroll_message"] == "1/2 — processando 'ES2026-T2'"
+
+
 def test_dashboard_worker_registers_and_finalizes_completed_session():
     requests: list[tuple[str, dict | None]] = []
 

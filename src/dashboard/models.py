@@ -36,6 +36,7 @@ class CommandType(str, Enum):
     SET_AUTOSTART = "SET_AUTOSTART"
     STOP_SESSION = "STOP_SESSION"
     UNBLOCK_SESSION = "UNBLOCK_SESSION"
+    RUN_ENROLL = "RUN_ENROLL"
 
 
 class EventSeverity(str, Enum):
@@ -124,6 +125,10 @@ class StationHeartbeat(BaseModel):
     seconds_remaining: int | None = None
     last_event: SessionEventPayload | None = None
     recent_events: list[SessionEventPayload] = Field(default_factory=list)
+    #: Status do job de enroll em background disparado por RUN_ENROLL — ver
+    #: src/core/enroll_runner.py. None quando a NUC não reporta (versão antiga).
+    enroll_status: str | None = None
+    enroll_message: str | None = None
 
 
 class StationRecord(BaseModel):
@@ -142,6 +147,8 @@ class StationRecord(BaseModel):
     recent_events: list[SessionEventPayload] = Field(default_factory=list)
     pending_commands: list[CommandRecord] = Field(default_factory=list)
     assigned_config: ExamConfigPayload | None = None
+    enroll_status: str | None = None
+    enroll_message: str | None = None
 
     def effective_status(self, now: datetime | None = None, offline_after_sec: int = 15) -> StationStatus:
         reference = now or datetime.now(timezone.utc)

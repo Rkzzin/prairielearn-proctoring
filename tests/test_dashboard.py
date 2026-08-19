@@ -442,31 +442,16 @@ async def test_autostart_command_endpoints_enqueue_toggle(tmp_path, dashboard_da
 
 
 @pytest.mark.asyncio
-async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path, dashboard_database_url):
+async def test_config_page_lists_history_without_a_form(tmp_path, dashboard_database_url):
+    """Distribuir config é por estação, no modal do painel — /config só lista o histórico."""
     app = _make_app(tmp_path, dashboard_database_url)
-    app.state.s3_enrollment_service = FakeS3EnrollmentService()
     store = app.state.store
-    store.add_enrollment(
-        turma="LOCAL-ONLY",
-        student_id="123",
-        student_name="Alice Silva",
-        source="upload",
-        file_names=["alice.jpg"],
-    )
-    store.upsert_station_heartbeat(
-        StationHeartbeat.model_validate(
-            {
-                "station_id": "nuc-01",
-                "station_name": "NUC Sala 1",
-                "status": "IDLE",
-                "student": None,
-                "active_session_id": None,
-                "assessment": None,
-                "turma": None,
-                "auto_start_enabled": True,
-                "seconds_remaining": None,
-                "recent_events": [],
-            }
+    store.create_config(
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            prairielearn_url="https://prairielearn.org/pl",
+            target_station_ids=["nuc-01"],
         )
     )
 
@@ -474,15 +459,113 @@ async def test_config_page_renders_known_turmas_and_station_dropdowns(tmp_path, 
         response = await client.get("/config")
 
     assert response.status_code == 200
-    assert '<select name="turma">' in response.text
-    assert '<option value="ES2025-T1"' in response.text
-    assert '<option value="ES2025-T2"' in response.text
-    assert "LOCAL-ONLY" not in response.text
-    assert '<input type="checkbox" name="target_station_ids" value="nuc-01"' in response.text
-    assert 'NUC Sala 1 (nuc-01)' in response.text
-    assert 'https://prairielearn.org/pl' in response.text
-    assert 'prairielearn.org' in response.text
-    assert 'name="auto_start"' not in response.text
+    assert "<form" not in response.text
+    assert '<select name="turma">' not in response.text
+    assert "ES2025-T1" in response.text
+    assert "Quiz-03" in response.text
+    assert "nuc-01" in response.text
+    assert "limparConfigs" in response.text or "clearConfigs" in response.text
+
+
+@pytest.mark.asyncio
+async def test_clear_configs_endpoint_removes_dashboard_history(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    store = app.state.store
+    store.create_config(
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            prairielearn_url="https://prairielearn.org/pl",
+            target_station_ids=["nuc-01"],
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/api/configs/clear")
+        config_page = await client.get("/config")
+
+    assert response.status_code == 200
+    assert response.json() == {"removed": 1}
+    assert "ES2025-T1" not in config_page.text
+
+
+@pytest.mark.asyncio
+async def test_s3_turmas_endpoint_returns_list(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.s3_enrollment_service = FakeS3EnrollmentService()
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/api/s3-turmas")
+
+    assert response.status_code == 200
+    assert response.json() == {"turmas": ["ES2025-T1", "ES2025-T2"], "error": None}
+
+
+@pytest.mark.asyncio
+async def test_s3_turmas_endpoint_falls_back_to_known_turmas_on_s3_error(tmp_path, dashboard_database_url):
+    class BrokenS3EnrollmentService:
+        def list_turmas(self):
+            raise RuntimeError("Unable to locate credentials")
+
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.s3_enrollment_service = BrokenS3EnrollmentService()
+    app.state.store.add_enrollment(
+        turma="LOCAL-ONLY",
+        student_id="123",
+        student_name="Alice Silva",
+        source="upload",
+        file_names=["alice.jpg"],
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/api/s3-turmas")
+
+    body = response.json()
+    assert body["turmas"] == ["LOCAL-ONLY"]
+    assert "Unable to locate credentials" in body["error"]
+
+
+@pytest.mark.asyncio
+async def test_run_enroll_endpoint_enqueues_command_delivered_over_heartbeat(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    station_headers = _station_headers(app, "nuc-01")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/stations/nuc-01/enroll",
+            json={"turma_ids": ["ES2025-T1", "ES2025-T2"]},
+        )
+        heartbeat_response = await client.post(
+            "/api/heartbeats",
+            json={
+                "station_id": "nuc-01",
+                "station_name": "NUC Sala 1",
+                "status": "IDLE",
+                "student": None,
+                "active_session_id": None,
+                "assessment": None,
+                "turma": None,
+                "auto_start_enabled": False,
+                "seconds_remaining": None,
+                "recent_events": [],
+            },
+            headers=station_headers,
+        )
+
+    assert response.status_code == 202
+    commands = heartbeat_response.json()["commands"]
+    assert [item["command_type"] for item in commands] == ["RUN_ENROLL"]
+    assert commands[0]["payload"]["turma_ids"] == ["ES2025-T1", "ES2025-T2"]
+
+
+@pytest.mark.asyncio
+async def test_run_enroll_endpoint_rejects_empty_turma_list(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/api/stations/nuc-01/enroll", json={"turma_ids": []})
+
+    assert response.status_code == 400
 
 
 def test_station_status_matches_canonical_state_vocabulary():
@@ -534,6 +617,62 @@ def test_dashboard_store_persists_across_restarts(dashboard_database_url):
     assert snapshot["configs"][0].assessment == "Quiz-03"
     assert snapshot["enrollments"][0].student_name == "Alice Silva"
     assert snapshot["sessions"][0].session_id == "sess-1"
+
+
+def test_dashboard_store_run_enroll_enqueues_command_and_sets_queued_status(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+
+    command = store.run_enroll("nuc-01", ["ES2025-T1", "ES2025-T2"])
+
+    assert command.command_type == "RUN_ENROLL"
+    assert command.payload["turma_ids"] == ["ES2025-T1", "ES2025-T2"]
+    station = store.get_station("nuc-01")
+    assert station.enroll_status == "queued"
+
+
+def test_dashboard_store_heartbeat_persists_enroll_status(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+
+    store.upsert_station_heartbeat(
+        StationHeartbeat.model_validate(
+            {
+                "station_id": "nuc-01",
+                "station_name": "NUC Sala 1",
+                "status": "IDLE",
+                "student": None,
+                "active_session_id": None,
+                "assessment": None,
+                "turma": None,
+                "auto_start_enabled": False,
+                "seconds_remaining": None,
+                "recent_events": [],
+                "enroll_status": "done",
+                "enroll_message": "2 turma(s) processada(s)",
+            }
+        )
+    )
+
+    station = store.get_station("nuc-01")
+    assert station.enroll_status == "done"
+    assert station.enroll_message == "2 turma(s) processada(s)"
+
+
+def test_dashboard_store_clear_configs_removes_local_history(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    store.create_config(
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            prairielearn_url="https://prairielearn.org/pl",
+            target_station_ids=["nuc-01"],
+        )
+    )
+
+    removed = store.clear_configs()
+    reloaded = DashboardStore(dashboard_database_url)
+
+    assert removed == 1
+    assert reloaded.snapshot()["configs"] == []
 
 
 def test_dashboard_store_clear_sessions_removes_local_history(dashboard_database_url):
