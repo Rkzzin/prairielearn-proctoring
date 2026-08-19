@@ -10,6 +10,11 @@ from src.core.config import AppConfig
 print(AppConfig().api_port)
 PY
 )"
+DATA_DIR="$("$PYTHON_BIN" - <<'PY'
+from src.core.config import AppConfig
+print(AppConfig().data_dir)
+PY
+)"
 UNIT_PATH="/etc/systemd/system/$SERVICE_NAME"
 TMP_UNIT="$(mktemp)"
 
@@ -17,6 +22,15 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "Python da virtualenv não encontrado em $PYTHON_BIN" >&2
   exit 1
 fi
+
+# PROCTOR_APP_DATA_DIR (default /opt/proctor/data) costuma ficar fora do
+# diretorio do projeto, em caminho que so root pode criar (/opt e' 755
+# root:root). Sem isto, a primeira sessao falha ao criar
+# {data_dir}/sessions/{id}/... com Permission denied assim que a
+# identificacao termina, e o auto-start faz rollback pro "waiting student"
+# sem nunca chegar a gravar nada.
+mkdir -p "$DATA_DIR"
+chown -R "$RUN_USER":"$RUN_USER" "$DATA_DIR"
 
 cat >"$TMP_UNIT" <<EOF
 [Unit]
