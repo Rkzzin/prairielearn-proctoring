@@ -301,6 +301,32 @@ def test_chromium_stop_terminates_remaining_processes_for_profile(monkeypatch, t
     assert signals == [(9876, signal.SIGTERM), (9876, signal.SIGKILL)]
 
 
+def test_chromium_start_terminates_existing_browser_processes(monkeypatch, tmp_path):
+    proc = DummyProc()
+    terminated = []
+
+    monkeypatch.setattr("src.kiosk.chromium._find_chromium", lambda: "/usr/bin/chromium")
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.Popen", lambda *args, **kwargs: proc)
+    monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
+    monkeypatch.setattr(ChromiumKiosk, "_find_chromium_processes", lambda self: [100, 200])
+    monkeypatch.setattr(ChromiumKiosk, "_wait_pids_exit", lambda self, pids, timeout: None)
+    monkeypatch.setattr(ChromiumKiosk, "_pid_exists", staticmethod(lambda _pid: False))
+    monkeypatch.setattr(
+        ChromiumKiosk,
+        "_signal_pid",
+        staticmethod(lambda pid, sig: terminated.append((pid, sig))),
+    )
+
+    kiosk = ChromiumKiosk(
+        profile_dir=tmp_path / "proctor-chromium-profile",
+        extension_dir=tmp_path / "extension",
+        cleanup_profile_on_stop=False,
+    )
+    kiosk.start("https://example.com/exam")
+
+    assert terminated == [(100, signal.SIGTERM), (200, signal.SIGTERM)]
+
+
 def test_chromium_profile_process_match_requires_exact_user_data_dir(tmp_path):
     profile_dir = str((tmp_path / "proctor-chromium-profile").resolve())
 

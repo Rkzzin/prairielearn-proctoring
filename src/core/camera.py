@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 #: A abertura saudável custa ~2,85 s, então 5000 ms dá ~2x de margem e ainda
 #: corta o pior caso de 30 s para ~5 s (verificado: URL morta bloqueia 5,06 s).
 PREVIEW_OPEN_TIMEOUT_MS = 5000
+PREVIEW_READ_TIMEOUT_MS = 2000
 
 
 def open_video_capture(source: int | str) -> Any:
@@ -58,15 +59,19 @@ def open_video_capture(source: int | str) -> Any:
     string é rede (preview UDP) e ganha teto de abertura, para não bloquear a
     thread que estiver chamando.
 
-    Não define ``CAP_PROP_READ_TIMEOUT_MSEC`` de propósito: durante a sessão o
-    ``read()`` bloqueante é o que mantém a continuidade de frames, e limitá-lo
-    mudaria a dinâmica do loop de proctoring sem necessidade.
+    O preview também recebe timeout de leitura. Sem isso, um UDP congelado
+    bloqueia o loop de proctoring indefinidamente e impede detectar ausência.
     """
     if isinstance(source, str):
         return cv2.VideoCapture(
             source,
             cv2.CAP_FFMPEG,
-            [cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, PREVIEW_OPEN_TIMEOUT_MS],
+            [
+                cv2.CAP_PROP_OPEN_TIMEOUT_MSEC,
+                PREVIEW_OPEN_TIMEOUT_MS,
+                cv2.CAP_PROP_READ_TIMEOUT_MSEC,
+                PREVIEW_READ_TIMEOUT_MS,
+            ],
         )
     return cv2.VideoCapture(source)
 
@@ -150,7 +155,10 @@ class SessionCamera:
                 candidate = self._open(source)
                 ret, frame = candidate.read()
                 if ret and frame is not None:
-                    self._handle = candidate
+                    with self._lock:
+                        previous = self._handle
+                        self._handle = candidate
+                    _release_quietly(previous)
                     return candidate
                 _release_quietly(candidate)
             except CameraError as exc:

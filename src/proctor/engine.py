@@ -154,19 +154,19 @@ class ProctorEngine:
     #  Loop principal
     # ──────────────────────────────────────────────
 
-    def update(self, frame: np.ndarray) -> ProctorState:
+    def update(self, frame: np.ndarray | None) -> ProctorState:
         """Processa um frame BGR e retorna o estado atual da FSM.
 
         Deve ser chamado a cada frame capturado da webcam.
 
         Args:
-            frame: Imagem BGR (OpenCV).
+            frame: Imagem BGR (OpenCV), ou ``None`` quando o preview falha.
 
         Returns:
             ProctorState atual após processar o frame.
         """
         self._frame_count += 1
-        gaze_data = self._gaze.process_frame(frame)
+        gaze_data = self._gaze.process_frame(frame) if frame is not None else None
         self._transition(gaze_data)
         return self.state
 

@@ -106,6 +106,7 @@ class ChromiumKiosk:
 
         self._last_url = url
         self._last_allowlist = list(allowlist or [])
+        self._terminate_existing_chromium_processes()
         profile_dir = self._ensure_profile_dir()
         allowlist_config = build_allowlist_config(
             start_url=url,
@@ -238,6 +239,74 @@ class ChromiumKiosk:
             self._signal_pid(pid, signal.SIGKILL)
         if remaining:
             self._wait_profile_processes(remaining, timeout=2)
+
+    def _terminate_existing_chromium_processes(self) -> None:
+        """Encerra browsers Chromium remanescentes antes de abrir uma prova nova."""
+        pids = self._find_chromium_processes()
+        if not pids:
+            return
+
+        logger.warning("Encerrando %d processo(s) Chromium anterior(es)", len(pids))
+        for pid in pids:
+            self._signal_pid(pid, signal.SIGTERM)
+        self._wait_pids_exit(pids, timeout=3)
+
+        remaining = [pid for pid in pids if self._pid_exists(pid)]
+        for pid in remaining:
+            self._signal_pid(pid, signal.SIGKILL)
+        self._wait_pids_exit(remaining, timeout=2)
+
+    @staticmethod
+    def _pid_exists(pid: int) -> bool:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        return True
+
+    def _wait_pids_exit(self, pids: list[int], *, timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        pending = set(pids)
+        while pending and time.monotonic() < deadline:
+            pending = {pid for pid in pending if self._pid_exists(pid)}
+            if pending:
+                time.sleep(0.05)
+
+    @staticmethod
+    def _is_chromium_command(args: list[str]) -> bool:
+        if not args:
+            return False
+        return Path(args[0]).name.lower() in {
+            "chrome",
+            "chromium",
+            "chromium-browser",
+            "google-chrome",
+            "google-chrome-stable",
+        }
+
+    def _find_chromium_processes(self) -> list[int]:
+        current_pid = os.getpid()
+        pids: list[int] = []
+        proc_root = Path("/proc")
+        if not proc_root.exists():
+            return pids
+
+        for entry in proc_root.iterdir():
+            if not entry.name.isdigit():
+                continue
+            pid = int(entry.name)
+            if pid == current_pid:
+                continue
+            try:
+                raw = (entry / "cmdline").read_bytes()
+            except OSError:
+                continue
+            args = [part.decode("utf-8", errors="ignore") for part in raw.split(b"\0") if part]
+            if self._is_chromium_command(args):
+                pids.append(pid)
+        return pids
 
     def _find_profile_processes(self) -> list[int]:
         if self._profile_dir is None:

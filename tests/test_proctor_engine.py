@@ -164,6 +164,10 @@ class TestGazeFSM:
 
 
 class TestAbsenceFSM:
+    def test_missing_preview_frame_enters_absence(self, engine: ProctorEngine):
+        state = engine.update(None)
+        assert state == ProctorState.ABSENCE
+
     def test_no_face_enters_absence(self, engine: ProctorEngine):
         state = _feed(engine, None)
         assert state == ProctorState.ABSENCE

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
+import time
 from collections import deque
 from datetime import datetime, timezone
 
@@ -54,6 +55,15 @@ class FakeCamera:
 
     def release(self):
         self.released = True
+
+
+class RepeatingCamera(FakeCamera):
+    def __init__(self, frame):
+        super().__init__([])
+        self.frame = frame
+
+    def read(self):
+        return True, self.frame
 
 
 class FakeRecognizer:
@@ -299,7 +309,7 @@ def test_session_manager_start_and_stop_manual_session():
 
 def test_session_manager_switches_from_device_camera_to_capture_preview():
     direct_camera = FakeCamera(["identify-frame"])
-    preview_camera = FakeCamera(["loop-frame"])
+    preview_camera = RepeatingCamera("loop-frame")
     opened_sources = []
 
     def video_capture_factory(source):
@@ -332,6 +342,45 @@ def test_session_manager_switches_from_device_camera_to_capture_preview():
 
     manager.stop_session(reason="test")
     assert preview_camera.released is True
+
+
+def test_session_manager_reconnects_preview_after_consecutive_failed_reads():
+    direct_camera = FakeCamera(["identify-frame"])
+    initial_preview = FakeCamera(["preview-open-frame"])
+    recovered_preview = RepeatingCamera("recovered-open-frame")
+    opened_sources = []
+
+    def video_capture_factory(source):
+        opened_sources.append(source)
+        if isinstance(source, str):
+            return initial_preview if opened_sources.count(source) == 1 else recovered_preview
+        return direct_camera
+
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, _overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=[],
+        video_capture_factory=video_capture_factory,
+    )
+    manager.update_config(turma_id="ES2025-T1")
+    manager.start_session()
+
+    for _ in range(100):
+        if opened_sources.count(manager._capture.preview_url) >= 2:
+            break
+        time.sleep(0.01)
+
+    assert opened_sources.count(manager._capture.preview_url) >= 2
+    assert initial_preview.released is True
+    assert manager._camera.is_open is True
+    manager.stop_session(reason="done")
 
 
 def test_session_manager_generated_session_id_includes_student_name(monkeypatch):
