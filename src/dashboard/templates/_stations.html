@@ -27,13 +27,14 @@
     </p>
     {% endif %}
     {% set station_busy = station.status.value in ["IDENTIFYING", "SESSION", "BLOCKED", "UPLOADING"] %}
+    {% set exam_mode_active = station.auto_start_enabled or station.mode == "WAITING_STUDENT" or station.status.value == "WAITING_STUDENT" %}
     <div class="actions">
       <button
         type="button"
         class="button-secondary"
-        onclick="{{ 'issueAutoStartCommand(\'' + station.station_id + '\', false)' if station.auto_start_enabled else 'openExamModeModal(\'' + station.station_id + '\', \'' + station.station_name + '\')' }}"
+        onclick="{{ 'issueAutoStartCommand(\'' + station.station_id + '\', false)' if exam_mode_active else 'openExamModeModal(\'' + station.station_id + '\', \'' + station.station_name + '\')' }}"
       >
-        {{ "Sair do modo prova" if station.auto_start_enabled else "Entrar em modo prova" }}
+        {{ "Sair do modo prova" if exam_mode_active else "Entrar em modo prova" }}
       </button>
       <button
         type="button"

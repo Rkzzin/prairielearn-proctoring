@@ -115,6 +115,27 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
 
 
 @pytest.mark.asyncio
+async def test_station_partial_offers_exit_when_station_reports_waiting_student(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.WAITING_STUDENT,
+            mode="WAITING_STUDENT",
+            auto_start_enabled=False,
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/partials/stations")
+
+    assert response.status_code == 200
+    assert "Sair do modo prova" in response.text
+    assert "/autostart/disable" in response.text
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_database_url):
     app = _make_app(tmp_path, dashboard_database_url)
     station_headers = _station_headers(app, "nuc-01")
@@ -126,6 +147,7 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
             "prairielearn_url": "https://prairielearn.org/pl",
             "allowlist": ["prairielearn.org"],
             "auto_start": True,
+            "allow_repeat_attempts": False,
             "target_station_ids": ["nuc-01"],
             "gaze_h_threshold": 0.35,
             "gaze_duration_sec": 3.0,
@@ -155,6 +177,7 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
     assert payload["station"]["station_id"] == "nuc-01"
     assert payload["commands"][0]["command_type"] == "APPLY_CONFIG"
     assert payload["commands"][0]["payload"]["assessment"] == "Quiz-03"
+    assert payload["commands"][0]["payload"]["allow_repeat_attempts"] is False
 
 
 @pytest.mark.asyncio

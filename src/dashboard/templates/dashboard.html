@@ -76,6 +76,7 @@ login.microsoftonline.com</textarea></label>
     <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
     <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="5.0"></label>
     <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
+    <label class="checkbox"><input type="checkbox" name="allow_repeat_attempts" checked> Permitir mais de uma tentativa por aluno</label>
     <div class="modal-actions">
       <button type="button" onclick="submitNewConfig()">Salvar configuração</button>
       <button type="button" class="button-secondary" onclick="document.getElementById('new-config-modal').close()">Cancelar</button>
@@ -152,6 +153,7 @@ async function submitNewConfig() {
     prairielearn_url: data.get('prairielearn_url'),
     allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
     auto_start: false,
+    allow_repeat_attempts: data.get('allow_repeat_attempts') === 'on',
     target_station_ids: [currentStationId],
     gaze_h_threshold: Number(data.get('gaze_h_threshold')),
     gaze_duration_sec: Number(data.get('gaze_duration_sec')),

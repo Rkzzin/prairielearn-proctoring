@@ -95,6 +95,7 @@ class ExamConfigPayload(BaseModel):
     prairielearn_url: str
     allowlist: list[str] = Field(default_factory=list)
     auto_start: bool = True
+    allow_repeat_attempts: bool = True
     target_station_ids: list[str] = Field(default_factory=list)
     gaze_h_threshold: float = 0.35
     gaze_duration_sec: float = 3.0
