@@ -174,6 +174,8 @@ class FakeOverlay:
         self.blocked_shown: list[str | None] = []
         self.waiting_shown: list[str | None] = []
         self.waiting_hidden = 0
+        self.confirmations: list[dict[str, object]] = []
+        self.confirmations_hidden = 0
         self.hide_calls = 0
         self.stopped = False
 
@@ -185,6 +187,12 @@ class FakeOverlay:
 
     def hide_waiting(self):
         self.waiting_hidden += 1
+
+    def show_identity_confirmation(self, **kwargs):
+        self.confirmations.append(kwargs)
+
+    def hide_identity_confirmation(self):
+        self.confirmations_hidden += 1
 
     def show_blocked(self, reason=None):
         self.blocked_shown.append(reason)
@@ -214,6 +222,7 @@ def _make_manager(
     frames,
     reidentify_fn=None,
     video_capture_factory=None,
+    confirmation_fn=lambda _student_id, _student_name, _timeout_sec: True,
 ):
     fake_recognizer = FakeRecognizer(identify_results)
     fake_engine = FakeEngine(engine_states)
@@ -243,6 +252,7 @@ def _make_manager(
         lockdown_factory=lambda: fake_lockdown,
         video_capture_factory=video_capture_factory or (lambda _index: fake_camera),
         reidentify_fn=reidentify_fn or (lambda **_kwargs: True),
+        confirmation_fn=confirmation_fn,
         s3_probe=lambda: True,
         sleep_fn=lambda _seconds: None,
     )
@@ -546,8 +556,74 @@ def test_exam_mode_waiting_overlay_and_autostart_flow():
     assert lockdown.disabled is False
 
 
+def test_session_manager_requires_identity_confirmation_before_starting_components():
+    confirmation_calls = []
+
+    def confirm(student_id, student_name, timeout_sec):
+        confirmation_calls.append((student_id, student_name, timeout_sec))
+        return True
+
+    manager, _recognizer, engine, capture, uploader, kiosk, _overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="alice01",
+                student_name="Alice Silva",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame", "loop-frame"],
+        confirmation_fn=confirm,
+    )
+    manager.update_config(turma_id="ES2025-T1")
+
+    manager.start_session()
+
+    assert confirmation_calls == [("alice01", "Alice Silva", 60.0)]
+    assert engine.started is True
+    assert capture.started is True
+    assert uploader.started is True
+    assert kiosk.started is True
+    manager.stop_session(reason="done")
+
+
+def test_cancelled_identity_confirmation_returns_to_waiting_screen():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="alice01",
+                student_name="Alice Silva",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[],
+        frames=["identify-frame"],
+        confirmation_fn=lambda _student_id, _student_name, _timeout_sec: False,
+    )
+    manager.update_config(turma_id="ES2025-T1", auto_start=True)
+    manager.enter_exam_mode()
+
+    with pytest.raises(SessionError, match="cancelada ou expirada"):
+        manager.start_session()
+
+    assert manager.state == SessionState.IDLE
+    assert manager.mode == StationMode.WAITING_STUDENT
+    assert overlay.waiting_shown == [None]
+    assert lockdown.enabled is True
+    assert camera.released is False
+
+
+def test_pre_exam_confirmation_response_requires_pending_confirmation():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+
+    with pytest.raises(SessionError, match="pendente"):
+        manager.respond_to_pre_exam_confirmation(accepted=True)
+
+
 def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
-    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, _camera = _make_manager(
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, camera = _make_manager(
         identify_results=[],
         engine_states=[],
         frames=[],
@@ -562,6 +638,8 @@ def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
 
     assert enter_status["mode"] == StationMode.WAITING_STUDENT.value
     assert overlay.waiting_shown == [None]
+    assert manager._camera.is_open is True
+    assert camera.released is False
 
     exit_status = manager.exit_exam_mode()
 

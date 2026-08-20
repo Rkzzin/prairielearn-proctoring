@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from src.core.session import SessionError, SessionManager
@@ -37,6 +37,10 @@ class StartSessionRequest(BaseModel):
 def build_router(manager: SessionManager) -> APIRouter:
     router = APIRouter()
 
+    def require_local_overlay(request: Request) -> None:
+        if request.client and request.client.host not in {"127.0.0.1", "::1"}:
+            raise HTTPException(status_code=403, detail="Confirmação disponível somente no overlay local.")
+
     @router.get("/health")
     def health() -> dict[str, Any]:
         return manager.get_health()
@@ -67,6 +71,24 @@ def build_router(manager: SessionManager) -> APIRouter:
             return manager.unblock_session()
         except SessionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @router.post("/pre-exam/confirmation/accept")
+    def accept_pre_exam_confirmation(request: Request) -> dict[str, str]:
+        require_local_overlay(request)
+        try:
+            manager.respond_to_pre_exam_confirmation(accepted=True)
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"status": "accepted"}
+
+    @router.post("/pre-exam/confirmation/cancel")
+    def cancel_pre_exam_confirmation(request: Request) -> dict[str, str]:
+        require_local_overlay(request)
+        try:
+            manager.respond_to_pre_exam_confirmation(accepted=False)
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"status": "cancelled"}
 
     @router.post("/exam-mode/prepare")
     def prepare_exam_mode() -> dict[str, Any]:

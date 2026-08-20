@@ -15,6 +15,7 @@ class SessionOverlay:
         self._controls_proc: subprocess.Popen | None = None
         self._blocked_proc: subprocess.Popen | None = None
         self._waiting_proc: subprocess.Popen | None = None
+        self._confirmation_proc: subprocess.Popen | None = None
         self._guard_proc: subprocess.Popen | None = None
 
     def show_waiting(self, message: str | None = None) -> None:
@@ -35,6 +36,40 @@ class SessionOverlay:
     def hide_waiting(self) -> None:
         self._terminate(self._waiting_proc)
         self._waiting_proc = None
+
+    def show_identity_confirmation(
+        self,
+        *,
+        student_id: str,
+        student_name: str,
+        timeout_sec: float,
+    ) -> None:
+        if self._confirmation_proc and self._confirmation_proc.poll() is None:
+            return
+        base_url = f"http://127.0.0.1:{self._api_port}/pre-exam/confirmation"
+        self._confirmation_proc = self._spawn(
+            [
+                sys.executable,
+                "-m",
+                "src.kiosk.overlay_app",
+                "--mode",
+                "confirmation",
+                "--student-id",
+                student_id,
+                "--student-name",
+                student_name,
+                "--timeout-sec",
+                str(timeout_sec),
+                "--confirm-url",
+                f"{base_url}/accept",
+                "--cancel-url",
+                f"{base_url}/cancel",
+            ]
+        )
+
+    def hide_identity_confirmation(self) -> None:
+        self._terminate(self._confirmation_proc)
+        self._confirmation_proc = None
 
     def start_controls(self) -> None:
         self.start_guard()
@@ -91,6 +126,7 @@ class SessionOverlay:
 
     def stop(self) -> None:
         self.hide_waiting()
+        self.hide_identity_confirmation()
         self.hide_blocked()
         self.hide_guard()
         self._terminate(self._controls_proc)

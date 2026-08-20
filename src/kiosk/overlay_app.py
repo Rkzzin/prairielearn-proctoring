@@ -276,6 +276,138 @@ def _waiting_mode(message: str) -> int:
     return 0
 
 
+def _confirmation_mode(
+    student_id: str,
+    student_name: str,
+    timeout_sec: float,
+    confirm_url: str,
+    cancel_url: str,
+) -> int:
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.title("Confirmação antes da prova")
+    root.attributes("-fullscreen", True)
+    root.attributes("-topmost", True)
+    root.configure(bg="#0f1f1a")
+
+    container = tk.Frame(root, bg="#0f1f1a", padx=60, pady=40)
+    container.place(relx=0.5, rely=0.5, anchor="center")
+
+    tk.Label(
+        container,
+        text="Confirme sua identidade antes de iniciar a prova",
+        fg="white",
+        bg="#0f1f1a",
+        wraplength=1000,
+        justify="center",
+        font=("Helvetica", 28, "bold"),
+    ).pack(pady=(0, 22))
+    tk.Label(
+        container,
+        text=f"Aluno: {student_name}\nUsuário: {student_id}",
+        fg="#b9dcc4",
+        bg="#0f1f1a",
+        justify="center",
+        font=("Helvetica", 18, "bold"),
+    ).pack(pady=(0, 24))
+
+    notice = (
+        "Durante esta prova serão coletados e processados, exclusivamente para fins de "
+        "proctoring: imagem da câmera, áudio ambiente, atividade do teclado e gravação da tela.\n\n"
+        "Não tente burlar o sistema. Esta estação é destinada somente à realização da prova "
+        "e seu uso é monitorado.\n\n"
+        "Não é permitida consulta, interação com outra pessoa ou uso de celular durante a prova."
+    )
+    tk.Label(
+        container,
+        text=notice,
+        fg="#d7e4d5",
+        bg="#0f1f1a",
+        wraplength=1050,
+        justify="left",
+        font=("Helvetica", 16),
+    ).pack(pady=(0, 22))
+
+    confirmed = tk.BooleanVar(value=False)
+    confirm_button: tk.Button
+    remaining_label = tk.Label(container, fg="#f2c9ad", bg="#0f1f1a", font=("Helvetica", 14))
+
+    def set_confirm_enabled() -> None:
+        confirm_button.configure(state="normal" if confirmed.get() else "disabled")
+
+    tk.Checkbutton(
+        container,
+        text="Confirmo que sou o aluno identificado acima e desejo iniciar a prova.",
+        variable=confirmed,
+        command=set_confirm_enabled,
+        fg="white",
+        bg="#0f1f1a",
+        activeforeground="white",
+        activebackground="#0f1f1a",
+        selectcolor="#1d4d36",
+        font=("Helvetica", 14, "bold"),
+    ).pack(pady=(0, 18))
+
+    buttons = tk.Frame(container, bg="#0f1f1a")
+    buttons.pack()
+
+    finished = False
+
+    def respond(url: str) -> None:
+        nonlocal finished
+        if finished:
+            return
+        finished = True
+        _send_stop_request(url)
+        root.destroy()
+
+    tk.Button(
+        buttons,
+        text="Cancelar",
+        command=lambda: respond(cancel_url),
+        bg="#3b4348",
+        fg="white",
+        activebackground="#4a5459",
+        activeforeground="white",
+        relief="flat",
+        padx=24,
+        pady=12,
+        font=("Helvetica", 13, "bold"),
+    ).pack(side="left", padx=(0, 12))
+    confirm_button = tk.Button(
+        buttons,
+        text="Iniciar prova",
+        command=lambda: respond(confirm_url),
+        state="disabled",
+        bg="#287a4d",
+        fg="white",
+        activebackground="#1f633e",
+        activeforeground="white",
+        relief="flat",
+        padx=24,
+        pady=12,
+        font=("Helvetica", 13, "bold"),
+    )
+    confirm_button.pack(side="left")
+    remaining_label.pack(pady=(18, 0))
+
+    deadline = root.tk.call("clock", "seconds") + max(1, int(timeout_sec))
+
+    def update_countdown() -> None:
+        remaining = max(0, deadline - root.tk.call("clock", "seconds"))
+        remaining_label.configure(text=f"Tempo para responder: {remaining}s")
+        if remaining <= 0:
+            respond(cancel_url)
+            return
+        root.after(250, update_countdown)
+
+    root.protocol("WM_DELETE_WINDOW", lambda: respond(cancel_url))
+    root.after(0, update_countdown)
+    root.mainloop()
+    return 0
+
+
 def _guard_mode(height: int) -> int:
     import tkinter as tk
 
@@ -295,10 +427,15 @@ def _guard_mode(height: int) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Overlay da estação de prova")
-    parser.add_argument("--mode", choices=["controls", "blocked", "waiting", "guard"], required=True)
+    parser.add_argument("--mode", choices=["controls", "blocked", "waiting", "confirmation", "guard"], required=True)
     parser.add_argument("--stop-url", default="http://127.0.0.1:8000/session/stop")
     parser.add_argument("--reason", default="")
     parser.add_argument("--message", default="Sente-se e olhe para a camera para iniciar a prova.")
+    parser.add_argument("--student-id", default="")
+    parser.add_argument("--student-name", default="")
+    parser.add_argument("--timeout-sec", type=float, default=60.0)
+    parser.add_argument("--confirm-url", default="http://127.0.0.1:8000/pre-exam/confirmation/accept")
+    parser.add_argument("--cancel-url", default="http://127.0.0.1:8000/pre-exam/confirmation/cancel")
     parser.add_argument("--guard-height", type=int, default=32)
     args = parser.parse_args(argv)
 
@@ -308,6 +445,14 @@ def main(argv: list[str] | None = None) -> int:
         return _controls_mode(args.stop_url)
     if args.mode == "waiting":
         return _waiting_mode(args.message)
+    if args.mode == "confirmation":
+        return _confirmation_mode(
+            args.student_id,
+            args.student_name,
+            args.timeout_sec,
+            args.confirm_url,
+            args.cancel_url,
+        )
     if args.mode == "guard":
         return _guard_mode(args.guard_height)
     return _blocked_mode(args.reason)

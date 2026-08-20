@@ -94,6 +94,7 @@ DASHBOARD_PROCTOR_FIELD_CASTS = {
 
 #: Campos que são roteamento interno do dashboard e nunca chegam à estação.
 DASHBOARD_ROUTING_FIELDS = frozenset({"target_station_ids"})
+PRE_EXAM_CONFIRMATION_TIMEOUT_SEC = 60.0
 
 
 @dataclass
@@ -174,6 +175,7 @@ class SessionManager:
         lockdown_factory: Callable[..., Any] | None = None,
         video_capture_factory: Callable[[int], Any] | None = None,
         reidentify_fn: Callable[..., bool] | None = None,
+        confirmation_fn: Callable[[str, str, float], bool] | None = None,
         s3_probe: Callable[[], bool] | None = None,
         sleep_fn: Callable[[float], None] | None = None,
     ):
@@ -197,6 +199,7 @@ class SessionManager:
             lambda: Lockdown(display=self._rec_cfg.display, allow_browser_shortcuts=True)
         )
         self._reidentify_fn = reidentify_fn or run_reidentify
+        self._confirmation_fn = confirmation_fn or self._wait_for_student_confirmation
         self._s3_probe = s3_probe or self._default_s3_probe
         self._sleep = sleep_fn or time.sleep
 
@@ -228,6 +231,9 @@ class SessionManager:
         self._kiosk = None
         self._overlay = None
         self._waiting_overlay = None
+        self._confirmation_overlay = None
+        self._confirmation_response: bool | None = None
+        self._confirmation_event: threading.Event | None = None
         self._lockdown = None
         self._block_handled = False
         self._original_cpu_set: set[int] | None = None
@@ -358,8 +364,7 @@ class SessionManager:
                 raise SessionError(f"Não é possível entrar em modo prova em {self._state.value}")
             self._write_browser_allowlist_config(self._next_config)
             self._ensure_exam_lockdown_enabled()
-            if self._next_config.auto_start and self._next_config.turma_id:
-                self._ensure_identification_camera_open()
+            self._ensure_identification_camera_open()
             self._mode = StationMode.WAITING_STUDENT
             self._show_waiting_overlay()
             return self.get_status()
@@ -409,6 +414,14 @@ class SessionManager:
             return None
         return build_session_payload(target=target, station_id=self._next_config.station_id)
 
+    def respond_to_pre_exam_confirmation(self, *, accepted: bool) -> None:
+        """Recebe a decisão do overlay local sem bloquear a thread de início."""
+        event = self._confirmation_event
+        if event is None:
+            raise SessionError("Não há confirmação de aluno pendente")
+        self._confirmation_response = accepted
+        event.set()
+
     def start_session(
         self,
         *,
@@ -450,6 +463,20 @@ class SessionManager:
                     raise SessionError(
                         "Aluno já concluiu esta prova nesta estação; aguardando outro aluno ou nova configuração"
                     )
+                # A resposta é humana e pode levar até um minuto. Não retenha o
+                # lock da estação nesse período: health/status e a API local
+                # precisam continuar disponíveis para o operador e o dashboard.
+                self._lock.release()
+                try:
+                    confirmed = self._confirmation_fn(
+                        identified_id,
+                        identified_name,
+                        PRE_EXAM_CONFIRMATION_TIMEOUT_SEC,
+                    )
+                finally:
+                    self._lock.acquire()
+                if not confirmed:
+                    raise SessionError("Confirmação do aluno cancelada ou expirada")
                 self._hide_waiting_overlay()
                 runtime_session_id = cfg.session_id or self._make_session_id(
                     cfg.turma_id,
@@ -820,6 +847,41 @@ class SessionManager:
             if message is None:
                 return
         self._waiting_overlay.show_waiting(message)
+
+    def _wait_for_student_confirmation(
+        self,
+        student_id: str,
+        student_name: str,
+        timeout_sec: float,
+    ) -> bool:
+        """Exibe a confirmação e aguarda a resposta do overlay por no máximo um minuto."""
+        event = threading.Event()
+        self._confirmation_response = None
+        self._confirmation_event = event
+        self._hide_waiting_overlay()
+        self._confirmation_overlay = self._overlay_factory()
+        accepted = False
+        try:
+            self._confirmation_overlay.show_identity_confirmation(
+                student_id=student_id,
+                student_name=student_name,
+                timeout_sec=timeout_sec,
+            )
+            event.wait(timeout=timeout_sec)
+            accepted = self._confirmation_response is True
+            return accepted
+        finally:
+            if self._confirmation_overlay is not None:
+                self._confirmation_overlay.hide_identity_confirmation()
+            self._confirmation_overlay = None
+            if (
+                not accepted
+                and self._mode == StationMode.WAITING_STUDENT
+                and self._state == SessionState.IDENTIFYING
+            ):
+                self._show_waiting_overlay()
+            self._confirmation_response = None
+            self._confirmation_event = None
 
     def _write_browser_allowlist_config(self, config: SessionConfig) -> None:
         allowlist_config = build_allowlist_config(

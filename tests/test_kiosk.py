@@ -628,3 +628,30 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     assert procs[1].terminated is True
     assert procs[2].terminated is True
     assert procs[3].terminated is True
+
+
+def test_session_overlay_starts_identity_confirmation(monkeypatch):
+    calls = []
+
+    def fake_popen(cmd, env, stdout, stderr):
+        calls.append((cmd, env))
+        return DummyProc(pid=10)
+
+    monkeypatch.setattr("src.kiosk.overlay.subprocess.Popen", fake_popen)
+    overlay = SessionOverlay(display=":5", api_port=8123)
+
+    overlay.show_identity_confirmation(
+        student_id="alice01",
+        student_name="Alice Silva",
+        timeout_sec=60,
+    )
+
+    cmd, env = calls[0]
+    assert cmd[3:5] == ["--mode", "confirmation"]
+    assert "--student-id" in cmd and cmd[cmd.index("--student-id") + 1] == "alice01"
+    assert "--student-name" in cmd and cmd[cmd.index("--student-name") + 1] == "Alice Silva"
+    assert cmd[cmd.index("--confirm-url") + 1] == "http://127.0.0.1:8123/pre-exam/confirmation/accept"
+    assert cmd[cmd.index("--cancel-url") + 1] == "http://127.0.0.1:8123/pre-exam/confirmation/cancel"
+    assert env["DISPLAY"] == ":5"
+
+    overlay.hide_identity_confirmation()
