@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import boto3
+import cv2
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
@@ -78,6 +79,7 @@ DASHBOARD_CONFIG_FIELD_MAP = {
     "prairielearn_url": "prairielearn_url",
     "allowlist": "allowlist",
     "auto_start": "auto_start",
+    "allow_repeat_attempts": "allow_repeat_attempts",
     "s3_prefix": "s3_prefix",
 }
 
@@ -109,6 +111,7 @@ class SessionConfig:
     station_id: str = "nuc-local"
     station_name: str = "NUC Local"
     auto_start: bool = False
+    allow_repeat_attempts: bool = True
     no_record: bool = False
     no_kiosk: bool = False
     reidentify_timeout_sec: float = 60.0
@@ -234,6 +237,8 @@ class SessionManager:
         self._confirmation_overlay = None
         self._confirmation_response: bool | None = None
         self._confirmation_event: threading.Event | None = None
+        self._latest_camera_frame: Any | None = None
+        self._camera_preview_lock = threading.Lock()
         self._lockdown = None
         self._block_handled = False
         self._original_cpu_set: set[int] | None = None
@@ -422,6 +427,18 @@ class SessionManager:
         self._confirmation_response = accepted
         event.set()
 
+    def get_camera_preview_jpeg(self) -> bytes | None:
+        """Retorna um JPEG recente para os overlays locais, sem abrir outra webcam."""
+        if self.state == SessionState.IDLE:
+            self._read_camera_frame()
+        with self._camera_preview_lock:
+            frame = self._latest_camera_frame
+            if frame is None:
+                return None
+            frame = self._copy_camera_frame(frame)
+        ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
+        return encoded.tobytes() if ok else None
+
     def start_session(
         self,
         *,
@@ -459,6 +476,7 @@ class SessionManager:
                     assessment=cfg.assessment,
                     student_id=identified_id,
                     auto_start=cfg.auto_start,
+                    allow_repeat_attempts=cfg.allow_repeat_attempts,
                 ):
                     raise SessionError(
                         "Aluno já concluiu esta prova nesta estação; aguardando outro aluno ou nova configuração"
@@ -618,7 +636,7 @@ class SessionManager:
             if not self._ensure_browser_running():
                 break
             try:
-                ret, frame = self._camera.read()
+                ret, frame = self._read_camera_frame()
             except Exception as exc:  # pragma: no cover - hardware/driver path
                 logger.error("Falha ao ler câmera: %s", exc)
                 break
@@ -655,6 +673,7 @@ class SessionManager:
         ok = self._reidentify_fn(
             recognizer=self._recognizer,
             cap=self._camera.handle,
+            read_frame=self._read_camera_frame,
             expected_student_id=self._runtime.student_id,
             timeout_sec=self._next_config.reidentify_timeout_sec,
             required_matches=self._next_config.reidentify_matches,
@@ -673,6 +692,11 @@ class SessionManager:
                 self._block_handled = False
                 if self._state != SessionState.UPLOADING:
                     self._set_state(SessionState.SESSION)
+        else:
+            # O aluno pode voltar depois do timeout. Mantém o browser bloqueado,
+            # mas libera o próximo frame para iniciar outra reidentificação.
+            with self._lock:
+                self._block_handled = False
 
     def _identify_student(
         self,
@@ -684,7 +708,7 @@ class SessionManager:
 
         max_attempts = self._face_cfg.max_identification_attempts
         for _ in range(max_attempts):
-            ret, frame = self._camera.read()
+            ret, frame = self._read_camera_frame()
             if not ret or frame is None:
                 continue
             result = self._recognizer.identify(frame)
@@ -711,6 +735,19 @@ class SessionManager:
 
     def _release_camera(self) -> None:
         self._camera.release()
+        with self._camera_preview_lock:
+            self._latest_camera_frame = None
+
+    def _read_camera_frame(self) -> tuple[bool, Any]:
+        ret, frame = self._camera.read()
+        if ret and frame is not None:
+            with self._camera_preview_lock:
+                self._latest_camera_frame = self._copy_camera_frame(frame)
+        return ret, frame
+
+    @staticmethod
+    def _copy_camera_frame(frame: Any) -> Any:
+        return frame.copy() if hasattr(frame, "copy") else frame
 
     def _camera_ok(self) -> bool:
         return self._camera.probe()
@@ -805,8 +842,9 @@ class SessionManager:
         assessment: str,
         student_id: str,
         auto_start: bool,
+        allow_repeat_attempts: bool,
     ) -> bool:
-        if not auto_start or self._last_session is None:
+        if allow_repeat_attempts or not auto_start or self._last_session is None:
             return False
         return (
             self._last_session.student_id == student_id

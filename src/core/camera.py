@@ -17,6 +17,7 @@ A fábrica de captura é injetável, o que é o que permite testar sem hardware.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Callable
 
@@ -96,25 +97,29 @@ class SessionCamera:
         self._factory = capture_factory or open_video_capture
         self._sleep = sleep_fn or time.sleep
         self._handle: Any | None = None
+        self._lock = threading.RLock()
 
     # ── estado ────────────────────────────────────────────────
 
     @property
     def handle(self) -> Any | None:
         """Handle atual, ou ``None``. Passado direto para a re-identificação."""
-        return self._handle
+        with self._lock:
+            return self._handle
 
     @property
     def is_open(self) -> bool:
-        if self._handle is None:
-            return False
-        return _is_opened(self._handle)
+        with self._lock:
+            if self._handle is None:
+                return False
+            return _is_opened(self._handle)
 
     def read(self) -> tuple[bool, Any]:
         """Lê um frame da fonte atual."""
-        if self._handle is None:
-            return False, None
-        return self._handle.read()
+        with self._lock:
+            if self._handle is None:
+                return False, None
+            return self._handle.read()
 
     # ── aquisição ─────────────────────────────────────────────
 
@@ -124,12 +129,13 @@ class SessionCamera:
         Idempotente: se já há um handle aberto, reaproveita — é isso que evita
         o liga/desliga da webcam a cada tentativa de auto-start.
         """
-        if self._handle is not None:
-            if _is_opened(self._handle):
-                return self._handle
-            self.release()
-        self._handle = self._open(self._cfg.camera_index)
-        return self._handle
+        with self._lock:
+            if self._handle is not None:
+                if _is_opened(self._handle):
+                    return self._handle
+                self.release()
+            self._handle = self._open(self._cfg.camera_index)
+            return self._handle
 
     def open_preview(self, source: str, timeout_sec: float = 5.0) -> Any:
         """Abre o preview publicado pelo FFmpeg, com retry até ``timeout_sec``.
@@ -156,9 +162,10 @@ class SessionCamera:
 
     def release(self) -> None:
         """Fecha o handle atual, se houver. Único ponto de liberação."""
-        if self._handle is not None:
-            _release_quietly(self._handle)
-        self._handle = None
+        with self._lock:
+            if self._handle is not None:
+                _release_quietly(self._handle)
+            self._handle = None
 
     # ── diagnóstico ───────────────────────────────────────────
 

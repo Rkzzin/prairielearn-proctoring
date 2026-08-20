@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 import cv2
 
@@ -35,10 +35,11 @@ logger = logging.getLogger(__name__)
 
 def run_reidentify(
     recognizer: FaceRecognizer,
-    cap: cv2.VideoCapture,
+    cap: cv2.VideoCapture | None,
     expected_student_id: str,
     timeout_sec: float = 60.0,
     required_matches: int = 3,
+    read_frame: Callable[[], tuple[bool, Any]] | None = None,
 ) -> bool:
     """Tenta re-identificar o aluno na câmera.
 
@@ -63,7 +64,12 @@ def run_reidentify(
     consecutive = 0
 
     while time.time() - t0 < timeout_sec:
-        ret, frame = cap.read()
+        if read_frame is not None:
+            ret, frame = read_frame()
+        elif cap is not None:
+            ret, frame = cap.read()
+        else:
+            raise ValueError("cap ou read_frame é obrigatório")
         if not ret or frame is None:
             continue
 

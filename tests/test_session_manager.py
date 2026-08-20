@@ -391,6 +391,45 @@ def test_session_manager_transitions_to_blocked_and_auto_unblocks():
     manager.stop_session(reason="done")
 
 
+def test_session_manager_retries_reidentification_after_timeout():
+    class RetryReidentify:
+        def __init__(self):
+            self.calls = 0
+            self.event = threading.Event()
+
+        def __call__(self, **_kwargs):
+            self.calls += 1
+            if self.calls == 2:
+                self.event.set()
+                return True
+            return False
+
+    reidentify = RetryReidentify()
+    manager, _recognizer, engine, _capture, _uploader, kiosk, overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.BLOCKED, ProctorState.BLOCKED, ProctorState.NORMAL],
+        frames=["identify-frame", "blocked-frame-1", "blocked-frame-2", "resume-frame"],
+        reidentify_fn=reidentify,
+    )
+    manager.update_config(turma_id="ES2025-T1")
+
+    manager.start_session()
+
+    assert reidentify.event.wait(timeout=1.0) is True
+    assert reidentify.calls == 2
+    assert kiosk.unblocked is True
+    assert overlay.hide_calls == 1
+    assert engine.unblocked is True
+    manager.stop_session(reason="done")
+
+
 def test_session_manager_manual_unblock():
     manager, _recognizer, engine, _capture, _uploader, kiosk, overlay, _lockdown, _camera = _make_manager(
         identify_results=[
@@ -622,6 +661,19 @@ def test_pre_exam_confirmation_response_requires_pending_confirmation():
         manager.respond_to_pre_exam_confirmation(accepted=True)
 
 
+def test_camera_preview_encodes_latest_frame(monkeypatch):
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager._latest_camera_frame = "camera-frame"
+
+    class Encoded:
+        def tobytes(self):
+            return b"jpeg-data"
+
+    monkeypatch.setattr("src.core.session.cv2.imencode", lambda *_args: (True, Encoded()))
+
+    assert manager.get_camera_preview_jpeg() == b"jpeg-data"
+
+
 def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
     manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, camera = _make_manager(
         identify_results=[],
@@ -729,6 +781,7 @@ def test_autostart_worker_does_not_restart_same_student_after_completion():
         turma_id="ES2025-T1",
         assessment="Quiz-03",
         auto_start=True,
+        allow_repeat_attempts=False,
     )
     manager._last_session = SessionRuntime(
         session_id="completed",
@@ -752,6 +805,40 @@ def test_autostart_worker_does_not_restart_same_student_after_completion():
     assert overlay.waiting_shown == [None]
     assert overlay.waiting_hidden == 0
     assert _camera.released is False
+
+
+def test_autostart_allows_same_student_again_by_default():
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, _overlay, _lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            ),
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame", "loop-frame"],
+    )
+    manager.update_config(turma_id="ES2025-T1", assessment="Quiz-03", auto_start=True)
+    manager._last_session = SessionRuntime(
+        session_id="completed",
+        turma_id="ES2025-T1",
+        assessment="Quiz-03",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        stopped_at=datetime.now(timezone.utc),
+        state=SessionState.IDLE,
+        prairielearn_url="https://prairielearn.org/pl",
+    )
+    manager.enter_exam_mode()
+
+    SessionAutoStartWorker(session_manager=manager, enabled=True).run_once()
+
+    assert manager.state in {SessionState.SESSION, SessionState.BLOCKED}
+    manager.stop_session(reason="done")
 
 
 def test_autostart_keeps_waiting_camera_open_between_failed_attempts():

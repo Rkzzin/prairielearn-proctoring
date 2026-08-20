@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from src.core.session import SessionError, SessionManager
@@ -53,6 +53,14 @@ def build_router(manager: SessionManager) -> APIRouter:
     def session_view() -> dict[str, Any]:
         session = manager.get_session()
         return {"session": session}
+
+    @router.get("/camera-preview.jpg")
+    def camera_preview(request: Request) -> Response:
+        require_local_overlay(request)
+        image = manager.get_camera_preview_jpeg()
+        if image is None:
+            raise HTTPException(status_code=404, detail="Preview da câmera indisponível")
+        return Response(content=image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @router.post("/session/start", status_code=status.HTTP_201_CREATED)
     def start_session(payload: StartSessionRequest) -> dict[str, Any]:

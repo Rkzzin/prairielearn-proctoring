@@ -617,11 +617,14 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     overlay.start_controls()
     overlay.show_blocked("ABSENCE")
 
-    assert calls[0][0][-4:-2] == ["--mode", "waiting"]
+    assert calls[0][0][3:5] == ["--mode", "waiting"]
+    assert calls[0][0][-2:] == ["--preview-url", "http://127.0.0.1:8123/camera-preview.jpg"]
     assert calls[0][1]["DISPLAY"] == ":5"
     assert calls[1][0][-2:] == ["--mode", "guard"]
     assert calls[2][0][-4:] == ["--mode", "controls", "--stop-url", "http://127.0.0.1:8123/session/stop"]
-    assert calls[3][0][-4:] == ["--mode", "blocked", "--reason", "ABSENCE"]
+    assert calls[3][0][3:5] == ["--mode", "blocked"]
+    assert calls[3][0][calls[3][0].index("--reason") + 1] == "ABSENCE"
+    assert calls[3][0][-2:] == ["--preview-url", "http://127.0.0.1:8123/camera-preview.jpg"]
 
     overlay.stop()
     assert procs[0].terminated is True
@@ -652,6 +655,7 @@ def test_session_overlay_starts_identity_confirmation(monkeypatch):
     assert "--student-name" in cmd and cmd[cmd.index("--student-name") + 1] == "Alice Silva"
     assert cmd[cmd.index("--confirm-url") + 1] == "http://127.0.0.1:8123/pre-exam/confirmation/accept"
     assert cmd[cmd.index("--cancel-url") + 1] == "http://127.0.0.1:8123/pre-exam/confirmation/cancel"
+    assert cmd[cmd.index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
     assert env["DISPLAY"] == ":5"
 
     overlay.hide_identity_confirmation()

@@ -185,7 +185,38 @@ def _controls_mode(stop_url: str) -> int:
     return 0
 
 
-def _blocked_mode(reason: str) -> int:
+def _add_camera_preview(
+    parent,
+    *,
+    preview_url: str,
+    bg: str,
+    max_size: tuple[int, int] = (480, 360),
+) -> None:
+    import tkinter as tk
+    from io import BytesIO
+
+    from PIL import Image, ImageTk
+
+    label = tk.Label(parent, text="Carregando câmera...", fg="#d7e4d5", bg=bg, font=("Helvetica", 13))
+    label.pack(pady=(0, 20))
+
+    def refresh() -> None:
+        try:
+            with urllib.request.urlopen(preview_url, timeout=0.5) as response:
+                image = Image.open(BytesIO(response.read())).convert("RGB")
+            image.thumbnail(max_size)
+            photo = ImageTk.PhotoImage(image)
+            label.configure(image=photo, text="", relief="solid", bd=2)
+            label.image = photo
+        except (OSError, urllib.error.URLError, TimeoutError):
+            label.configure(image="", text="Câmera indisponível", relief="flat", bd=0)
+            label.image = None
+        parent.after(150, refresh)
+
+    parent.after(0, refresh)
+
+
+def _blocked_mode(reason: str, preview_url: str) -> int:
     import tkinter as tk
 
     root = tk.Tk()
@@ -215,6 +246,8 @@ def _blocked_mode(reason: str) -> int:
     )
     subtitle.pack(pady=(0, 16))
 
+    _add_camera_preview(container, preview_url=preview_url, bg="#1d1f21")
+
     if reason:
         reason_label = tk.Label(
             container,
@@ -229,7 +262,7 @@ def _blocked_mode(reason: str) -> int:
     return 0
 
 
-def _waiting_mode(message: str) -> int:
+def _waiting_mode(message: str, preview_url: str) -> int:
     import tkinter as tk
 
     root = tk.Tk()
@@ -272,6 +305,8 @@ def _waiting_mode(message: str) -> int:
     )
     subtitle.pack()
 
+    _add_camera_preview(container, preview_url=preview_url, bg="#0f1f1a")
+
     root.mainloop()
     return 0
 
@@ -282,6 +317,7 @@ def _confirmation_mode(
     timeout_sec: float,
     confirm_url: str,
     cancel_url: str,
+    preview_url: str,
 ) -> int:
     import tkinter as tk
 
@@ -311,6 +347,13 @@ def _confirmation_mode(
         justify="center",
         font=("Helvetica", 18, "bold"),
     ).pack(pady=(0, 24))
+
+    _add_camera_preview(
+        container,
+        preview_url=preview_url,
+        bg="#0f1f1a",
+        max_size=(320, 240),
+    )
 
     notice = (
         "Durante esta prova serão coletados e processados, exclusivamente para fins de "
@@ -431,6 +474,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--stop-url", default="http://127.0.0.1:8000/session/stop")
     parser.add_argument("--reason", default="")
     parser.add_argument("--message", default="Sente-se e olhe para a camera para iniciar a prova.")
+    parser.add_argument("--preview-url", default="http://127.0.0.1:8000/camera-preview.jpg")
     parser.add_argument("--student-id", default="")
     parser.add_argument("--student-name", default="")
     parser.add_argument("--timeout-sec", type=float, default=60.0)
@@ -444,7 +488,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "controls":
         return _controls_mode(args.stop_url)
     if args.mode == "waiting":
-        return _waiting_mode(args.message)
+        return _waiting_mode(args.message, args.preview_url)
     if args.mode == "confirmation":
         return _confirmation_mode(
             args.student_id,
@@ -452,10 +496,11 @@ def main(argv: list[str] | None = None) -> int:
             args.timeout_sec,
             args.confirm_url,
             args.cancel_url,
+            args.preview_url,
         )
     if args.mode == "guard":
         return _guard_mode(args.guard_height)
-    return _blocked_mode(args.reason)
+    return _blocked_mode(args.reason, args.preview_url)
 
 
 if __name__ == "__main__":
