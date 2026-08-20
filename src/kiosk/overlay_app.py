@@ -216,6 +216,12 @@ def _add_camera_preview(
     parent.after(0, refresh)
 
 
+def _violation_report_message(reason: str) -> str | None:
+    if reason.strip().upper() in {"ABSENCE", "MULTI_FACE"}:
+        return "Essa violação foi registrada e reportada."
+    return None
+
+
 def _blocked_mode(reason: str, preview_url: str) -> int:
     import tkinter as tk
 
@@ -245,6 +251,19 @@ def _blocked_mode(reason: str, preview_url: str) -> int:
         font=("Helvetica", 18),
     )
     subtitle.pack(pady=(0, 16))
+
+    report_message = _violation_report_message(reason)
+    if report_message:
+        report_label = tk.Label(
+            container,
+            text=report_message,
+            fg="#ffb4a9",
+            bg="#1d1f21",
+            font=("Helvetica", 16, "bold"),
+            wraplength=700,
+            justify="center",
+        )
+        report_label.pack(pady=(0, 16))
 
     _add_camera_preview(container, preview_url=preview_url, bg="#1d1f21")
 

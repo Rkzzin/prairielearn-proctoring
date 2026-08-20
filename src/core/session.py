@@ -240,6 +240,9 @@ class SessionManager:
         self._latest_camera_frame: Any | None = None
         self._camera_preview_lock = threading.Lock()
         self._last_camera_frame_at: float | None = None
+        self._preview_recovery_lock = threading.Lock()
+        self._preview_watchdog_stop = threading.Event()
+        self._preview_watchdog: threading.Thread | None = None
         self._lockdown = None
         self._block_handled = False
         self._original_cpu_set: set[int] | None = None
@@ -529,6 +532,7 @@ class SessionManager:
                     self._release_camera()
                     self._capture.start()
                     self._open_preview_camera(self._capture.preview_url)
+                    self._start_preview_watchdog()
                     self._apply_runtime_cpu_affinity()
                 self._lockdown.enable()
                 if self._kiosk is not None:
@@ -633,7 +637,6 @@ class SessionManager:
             return self.get_status()
 
     def _session_loop(self) -> None:
-        failed_reads = 0
         while not self._stop_event.is_set():
             if not self._ensure_browser_running():
                 break
@@ -647,14 +650,8 @@ class SessionManager:
                 state = self._engine.update(None)
                 if state == ProctorState.BLOCKED:
                     self._handle_blocked()
-                failed_reads += 1
-                if failed_reads >= 3:
-                    self._recover_preview_camera()
-                    failed_reads = 0
-                self._sleep(0.01)
+                self._sleep(0.1)
                 continue
-
-            failed_reads = 0
 
             state = self._engine.update(frame)
             if state == ProctorState.BLOCKED:
@@ -681,8 +678,6 @@ class SessionManager:
             if self._overlay is not None:
                 self._overlay.show_blocked(reason)
 
-        if self._preview_is_stale():
-            self._recover_preview_camera()
         ok = self._reidentify_fn(
             recognizer=self._recognizer,
             cap=self._camera.handle,
@@ -742,12 +737,41 @@ class SessionManager:
     def _open_preview_camera(self, source: str, timeout_sec: float = 5.0):
         """Troca a fonte de vídeo para o preview publicado pelo FFmpeg."""
         try:
-            return self._camera.open_preview(source, timeout_sec=timeout_sec)
+            handle = self._camera.open_preview(source, timeout_sec=timeout_sec)
+            with self._camera_preview_lock:
+                self._last_camera_frame_at = time.monotonic()
+            return handle
         except CameraError as exc:
             raise SessionError(str(exc)) from exc
 
+    def _start_preview_watchdog(self) -> None:
+        if self._preview_watchdog and self._preview_watchdog.is_alive():
+            return
+        self._preview_watchdog_stop.clear()
+        self._preview_watchdog = threading.Thread(
+            target=self._preview_watchdog_loop,
+            name="preview-watchdog",
+            daemon=True,
+        )
+        self._preview_watchdog.start()
+
+    def _stop_preview_watchdog(self) -> None:
+        self._preview_watchdog_stop.set()
+        thread = self._preview_watchdog
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2)
+        self._preview_watchdog = None
+
+    def _preview_watchdog_loop(self) -> None:
+        while not self._preview_watchdog_stop.wait(0.5):
+            if self._capture is None or not self._preview_is_stale(timeout_sec=3.0):
+                continue
+            self._recover_preview_camera()
+
     def _recover_preview_camera(self) -> None:
         if self._capture is None:
+            return
+        if not self._preview_recovery_lock.acquire(blocking=False):
             return
         try:
             logger.warning("Preview UDP sem frames; reconectando o proctoring")
@@ -757,6 +781,8 @@ class SessionManager:
             self._open_preview_camera(self._capture.preview_url)
         except SessionError as exc:
             logger.warning("Falha ao reconectar preview UDP: %s", exc)
+        finally:
+            self._preview_recovery_lock.release()
 
     def _release_camera(self) -> None:
         self._camera.release()
@@ -772,10 +798,10 @@ class SessionManager:
                 self._last_camera_frame_at = time.monotonic()
         return ret, frame
 
-    def _preview_is_stale(self) -> bool:
+    def _preview_is_stale(self, *, timeout_sec: float = 1.0) -> bool:
         with self._camera_preview_lock:
             last_frame_at = self._last_camera_frame_at
-        return last_frame_at is None or time.monotonic() - last_frame_at >= 1.0
+        return last_frame_at is None or time.monotonic() - last_frame_at >= timeout_sec
 
     @staticmethod
     def _copy_camera_frame(frame: Any) -> Any:
@@ -1081,6 +1107,7 @@ class SessionManager:
         em vez de ``stop()``.
         """
         policy = policy or ShutdownPolicy.full_teardown()
+        self._stop_preview_watchdog()
 
         for name in self._SESSION_SCOPED_COMPONENTS:
             component = getattr(self, name)

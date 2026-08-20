@@ -122,9 +122,16 @@ class SessionCamera:
     def read(self) -> tuple[bool, Any]:
         """Lê um frame da fonte atual."""
         with self._lock:
-            if self._handle is None:
+            handle = self._handle
+        if handle is None:
+            return False, None
+        ret, frame = handle.read()
+        # Um recovery pode ter trocado o handle enquanto a leitura bloqueava.
+        # Nunca entregue um frame da fonte antiga à engine.
+        with self._lock:
+            if handle is not self._handle:
                 return False, None
-            return self._handle.read()
+        return ret, frame
 
     # ── aquisição ─────────────────────────────────────────────
 

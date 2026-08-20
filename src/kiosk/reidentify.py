@@ -71,6 +71,7 @@ def run_reidentify(
         else:
             raise ValueError("cap ou read_frame é obrigatório")
         if not ret or frame is None:
+            time.sleep(0.05)
             continue
 
         result = recognizer.identify(frame)

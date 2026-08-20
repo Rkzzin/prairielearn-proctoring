@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-import time
 from collections import deque
 from datetime import datetime, timezone
 
@@ -344,7 +343,7 @@ def test_session_manager_switches_from_device_camera_to_capture_preview():
     assert preview_camera.released is True
 
 
-def test_session_manager_reconnects_preview_after_consecutive_failed_reads():
+def test_session_manager_reconnects_stale_preview():
     direct_camera = FakeCamera(["identify-frame"])
     initial_preview = FakeCamera(["preview-open-frame"])
     recovered_preview = RepeatingCamera("recovered-open-frame")
@@ -371,11 +370,7 @@ def test_session_manager_reconnects_preview_after_consecutive_failed_reads():
     )
     manager.update_config(turma_id="ES2025-T1")
     manager.start_session()
-
-    for _ in range(100):
-        if opened_sources.count(manager._capture.preview_url) >= 2:
-            break
-        time.sleep(0.01)
+    manager._recover_preview_camera()
 
     assert opened_sources.count(manager._capture.preview_url) >= 2
     assert initial_preview.released is True

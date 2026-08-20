@@ -8,6 +8,7 @@ from src.core.models import IdentifyResult, IdentifyStatus
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
+from src.kiosk.overlay_app import _violation_report_message
 from src.kiosk.reidentify import run_reidentify
 
 
@@ -35,6 +36,14 @@ class DummyProc:
     def kill(self) -> None:
         self.killed = True
         self.returncode = -9
+
+
+def test_blocked_overlay_reports_absence_and_multiple_faces():
+    expected = "Essa violação foi registrada e reportada."
+
+    assert _violation_report_message("ABSENCE") == expected
+    assert _violation_report_message("MULTI_FACE") == expected
+    assert _violation_report_message("GAZE") is None
 
 
 class FakeCapture:
