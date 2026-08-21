@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from enum import Enum
 from typing import Any, Callable
 
 import cv2
@@ -80,6 +81,13 @@ class CameraError(RuntimeError):
     """Falha ao obter uma fonte de vídeo utilizável."""
 
 
+class CameraSource(str, Enum):
+    CLOSED = "closed"
+    DEVICE = "device"
+    EXTERNAL = "external"
+    PREVIEW = "preview"
+
+
 class SessionCamera:
     """Dono do handle de vídeo usado por identificação e proctoring.
 
@@ -103,6 +111,8 @@ class SessionCamera:
         self._sleep = sleep_fn or time.sleep
         self._handle: Any | None = None
         self._lock = threading.RLock()
+        self._read_lock = threading.Lock()
+        self._source = CameraSource.CLOSED
 
     # ── estado ────────────────────────────────────────────────
 
@@ -115,23 +125,25 @@ class SessionCamera:
     @property
     def is_open(self) -> bool:
         with self._lock:
+            if self._source == CameraSource.EXTERNAL:
+                return True
             if self._handle is None:
                 return False
             return _is_opened(self._handle)
 
+    @property
+    def source(self) -> CameraSource:
+        with self._lock:
+            return self._source
+
     def read(self) -> tuple[bool, Any]:
         """Lê um frame da fonte atual."""
-        with self._lock:
-            handle = self._handle
-        if handle is None:
-            return False, None
-        ret, frame = handle.read()
-        # Um recovery pode ter trocado o handle enquanto a leitura bloqueava.
-        # Nunca entregue um frame da fonte antiga à engine.
-        with self._lock:
-            if handle is not self._handle:
+        with self._read_lock:
+            with self._lock:
+                handle = self._handle
+            if handle is None:
                 return False, None
-        return ret, frame
+            return handle.read()
 
     # ── aquisição ─────────────────────────────────────────────
 
@@ -141,13 +153,26 @@ class SessionCamera:
         Idempotente: se já há um handle aberto, reaproveita — é isso que evita
         o liga/desliga da webcam a cada tentativa de auto-start.
         """
-        with self._lock:
-            if self._handle is not None:
-                if _is_opened(self._handle):
+        with self._read_lock:
+            with self._lock:
+                if (
+                    self._source == CameraSource.DEVICE
+                    and self._handle is not None
+                    and _is_opened(self._handle)
+                ):
                     return self._handle
-                self.release()
-            self._handle = self._open(self._cfg.camera_index)
-            return self._handle
+                _release_quietly(self._handle)
+                self._handle = self._open(self._cfg.camera_index)
+                self._source = CameraSource.DEVICE
+                return self._handle
+
+    def handoff_to_external(self) -> None:
+        """Reserva o dispositivo para o FFmpeg sem permitir probes concorrentes."""
+        with self._read_lock:
+            with self._lock:
+                _release_quietly(self._handle)
+                self._handle = None
+                self._source = CameraSource.EXTERNAL
 
     def open_preview(self, source: str, timeout_sec: float = 5.0) -> Any:
         """Abre o preview publicado pelo FFmpeg, com retry até ``timeout_sec``.
@@ -162,10 +187,12 @@ class SessionCamera:
                 candidate = self._open(source)
                 ret, frame = candidate.read()
                 if ret and frame is not None:
-                    with self._lock:
-                        previous = self._handle
-                        self._handle = candidate
-                    _release_quietly(previous)
+                    with self._read_lock:
+                        with self._lock:
+                            previous = self._handle
+                            self._handle = candidate
+                            self._source = CameraSource.PREVIEW
+                        _release_quietly(previous)
                     return candidate
                 _release_quietly(candidate)
             except CameraError as exc:
@@ -177,10 +204,11 @@ class SessionCamera:
 
     def release(self) -> None:
         """Fecha o handle atual, se houver. Único ponto de liberação."""
-        with self._lock:
-            if self._handle is not None:
+        with self._read_lock:
+            with self._lock:
                 _release_quietly(self._handle)
-            self._handle = None
+                self._handle = None
+                self._source = CameraSource.CLOSED
 
     # ── diagnóstico ───────────────────────────────────────────
 
@@ -191,18 +219,21 @@ class SessionCamera:
         descartável — de propósito, para não roubar o dispositivo do FFmpeg
         durante uma sessão gravada.
         """
-        if self._handle is not None:
+        with self._lock:
+            if self._source == CameraSource.EXTERNAL:
+                return True
+            if self._handle is not None:
+                try:
+                    return _is_opened(self._handle)
+                except Exception:
+                    return False
             try:
-                return _is_opened(self._handle)
+                candidate = self._factory(self._cfg.camera_index)
+                ok = _is_opened(candidate)
+                _release_quietly(candidate)
+                return bool(ok)
             except Exception:
                 return False
-        try:
-            candidate = self._factory(self._cfg.camera_index)
-            ok = _is_opened(candidate)
-            _release_quietly(candidate)
-            return bool(ok)
-        except Exception:
-            return False
 
     # ── interno ───────────────────────────────────────────────
 

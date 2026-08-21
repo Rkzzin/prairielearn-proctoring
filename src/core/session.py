@@ -237,16 +237,19 @@ class SessionManager:
         self._confirmation_overlay = None
         self._confirmation_response: bool | None = None
         self._confirmation_event: threading.Event | None = None
+        self._identified_student_id: str | None = None
         self._latest_camera_frame: Any | None = None
         self._camera_preview_lock = threading.Lock()
         self._camera_read_active = threading.Event()
         self._last_camera_frame_at: float | None = None
         self._preview_recovery_lock = threading.Lock()
+        self._camera_recovering = threading.Event()
         self._preview_watchdog_stop = threading.Event()
         self._preview_watchdog: threading.Thread | None = None
         self._browser_guard_stop = threading.Event()
         self._browser_guard: threading.Thread | None = None
         self._browser_guard_overlay = None
+        self._browser_ready = False
         self._lockdown = None
         self._block_handled = False
         self._original_cpu_set: set[int] | None = None
@@ -324,6 +327,51 @@ class SessionManager:
             "camera_ok": camera_ok,
             "s3_ok": s3_ok,
         }
+
+    def get_exam_checks(self) -> dict[str, Any]:
+        with self._lock:
+            student_identified = self._identified_student_id is not None or self._runtime is not None
+            block_reason = self._runtime.block_reason if self._runtime else None
+            browser_ok = self._browser_ready
+            webcam_ok = self._camera.is_open
+            blocked = self._state == SessionState.BLOCKED
+            reason_label = {
+                "ABSENCE": "ausência detectada",
+                "MULTI_FACE": "múltiplos rostos",
+                "GAZE": "olhar fora do permitido",
+                "BROWSER_EXIT": "Chromium encerrado",
+            }.get(block_reason, block_reason or "")
+            presence_ok = student_identified and block_reason != "ABSENCE"
+            faces_ok = student_identified and block_reason not in {"ABSENCE", "MULTI_FACE"}
+            gaze_ok = student_identified and block_reason != "GAZE"
+            checks = [
+                {
+                    "key": "session",
+                    "label": f"Sessão bloqueada: {reason_label}" if blocked else "Sessão liberada",
+                    "state": "fail" if blocked else "ok",
+                },
+                {"key": "webcam", "label": "Webcam detectada", "state": "ok" if webcam_ok else "fail"},
+                {"key": "student", "label": "Aluno identificado", "state": "ok" if student_identified else "pending"},
+                {
+                    "key": "presence",
+                    "label": "Aluno ausente" if block_reason == "ABSENCE" else "Aluno presente",
+                    "state": "ok" if presence_ok else ("fail" if block_reason == "ABSENCE" else "pending"),
+                },
+                {
+                    "key": "faces",
+                    "label": "Rosto não detectado" if block_reason == "ABSENCE" else "Rosto único",
+                    "state": "ok" if faces_ok else ("fail" if block_reason in {"ABSENCE", "MULTI_FACE"} else "pending"),
+                },
+                {"key": "gaze", "label": "Olhar dentro do permitido", "state": "ok" if gaze_ok else ("fail" if block_reason == "GAZE" else "pending")},
+                {"key": "chromium", "label": "Chromium protegido", "state": "ok" if browser_ok else "fail"},
+            ]
+            return {
+                "ready": all(check["state"] == "ok" for check in checks),
+                "state": self._state.value,
+                "block_reason": block_reason,
+                "seconds_remaining": self._seconds_remaining(),
+                "checks": checks,
+            }
 
     def apply_dashboard_config(self, payload: dict[str, Any]) -> SessionConfig:
         """Traduz um ``ExamConfigPayload`` do dashboard para a config local.
@@ -493,6 +541,7 @@ class SessionManager:
                     raise SessionError(
                         "Aluno já concluiu esta prova nesta estação; aguardando outro aluno ou nova configuração"
                     )
+                self._identified_student_id = identified_id
                 # A resposta é humana e pode levar até um minuto. Não retenha o
                 # lock da estação nesse período: health/status e a API local
                 # precisam continuar disponíveis para o operador e o dashboard.
@@ -543,7 +592,7 @@ class SessionManager:
                 if self._uploader is not None:
                     self._uploader.start()
                 if self._capture is not None:
-                    self._release_camera()
+                    self._camera.handoff_to_external()
                     self._capture.start()
                     self._open_preview_camera(self._capture.preview_url)
                     self._start_preview_watchdog()
@@ -575,6 +624,7 @@ class SessionManager:
                 )
                 return self.get_status()
             except Exception:
+                logger.exception("Falha ao iniciar sessão")
                 self._shutdown_components(
                     ShutdownPolicy.for_failed_start(
                         mode=self._mode,
@@ -583,6 +633,7 @@ class SessionManager:
                 )
                 self._restore_runtime_cpu_affinity()
                 self._runtime = None
+                self._identified_student_id = None
                 self._thread = None
                 self._block_handled = False
                 self._set_state(SessionState.IDLE)
@@ -628,6 +679,7 @@ class SessionManager:
                 runtime.stopped_at = datetime.now(timezone.utc)
                 self._last_session = runtime
             self._runtime = None
+            self._identified_student_id = None
             self._thread = None
             self._block_handled = False
             self._set_state(SessionState.IDLE)
@@ -666,6 +718,9 @@ class SessionManager:
                 break
 
             if not ret or frame is None:
+                if self._camera_recovering.is_set():
+                    self._sleep(0.1)
+                    continue
                 state = self._engine.update(None)
                 if state == ProctorState.BLOCKED:
                     self._handle_blocked()
@@ -781,8 +836,10 @@ class SessionManager:
         if self._kiosk is None:
             self._kiosk = self._kiosk_factory()
         if getattr(self._kiosk, "is_running", False):
+            self._browser_ready = True
             return
         self._kiosk.start(config.prairielearn_url, allowlist=config.allowlist)
+        self._browser_ready = bool(getattr(self._kiosk, "is_running", True))
 
     def _start_browser_guard(self) -> None:
         if self._browser_guard and self._browser_guard.is_alive():
@@ -801,6 +858,7 @@ class SessionManager:
         if thread and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=2)
         self._browser_guard = None
+        self._browser_ready = False
         self._hide_browser_guard_overlay()
 
     def _browser_guard_loop(self) -> None:
@@ -810,6 +868,8 @@ class SessionManager:
             if not active_exam:
                 continue
             browser_ok = self._ensure_exam_browser_fullscreen()
+            with self._lock:
+                self._browser_ready = browser_ok
             if browser_ok:
                 self._hide_browser_guard_overlay()
             else:
@@ -863,15 +923,19 @@ class SessionManager:
             return
         if not self._preview_recovery_lock.acquire(blocking=False):
             return
+        self._camera_recovering.set()
         try:
             logger.warning("Preview UDP sem frames; reconectando o proctoring")
-            # O socket UDP antigo precisa fechar antes de criar o novo leitor;
-            # caso contrário ele continua sendo o consumidor do stream local.
-            self._release_camera(clear_preview=False)
+            self._camera.handoff_to_external()
+            ensure_webcam = getattr(self._capture, "ensure_webcam_running", None)
+            if callable(ensure_webcam) and not ensure_webcam():
+                logger.warning("Stream de webcam ainda indisponível; mantendo sessão ativa")
+                return
             self._open_preview_camera(self._capture.preview_url)
         except SessionError as exc:
             logger.warning("Falha ao reconectar preview UDP: %s", exc)
         finally:
+            self._camera_recovering.clear()
             self._preview_recovery_lock.release()
 
     def _release_camera(self, *, clear_preview: bool = True) -> None:
@@ -1171,6 +1235,7 @@ class SessionManager:
                 logger.warning("Falha ao relançar Chromium: %s", exc)
 
         with self._lock:
+            self._browser_ready = False
             if self._runtime is not None:
                 self._runtime.block_reason = "BROWSER_EXIT"
                 self._runtime.notes.setdefault("operational_events", []).append(

@@ -29,9 +29,11 @@ class SessionOverlay:
                 "--mode",
                 "waiting",
                 "--message",
-                message or "Sente-se e olhe para a camera para iniciar a prova.",
+                message or "Vamos preparar sua avaliação",
                 "--preview-url",
                 self._camera_preview_url,
+                "--status-url",
+                self._status_url,
             ]
         )
 
@@ -68,6 +70,8 @@ class SessionOverlay:
                 f"{base_url}/cancel",
                 "--preview-url",
                 self._camera_preview_url,
+                "--status-url",
+                self._status_url,
             ]
         )
 
@@ -89,6 +93,8 @@ class SessionOverlay:
                 "controls",
                 "--stop-url",
                 stop_url,
+                "--status-url",
+                self._status_url,
             ]
         )
 
@@ -123,6 +129,8 @@ class SessionOverlay:
                 reason or "",
                 "--preview-url",
                 self._camera_preview_url,
+                "--status-url",
+                self._status_url,
             ]
         )
 
@@ -152,6 +160,10 @@ class SessionOverlay:
     @property
     def _camera_preview_url(self) -> str:
         return f"http://127.0.0.1:{self._api_port}/camera-preview.jpg"
+
+    @property
+    def _status_url(self) -> str:
+        return f"http://127.0.0.1:{self._api_port}/exam-checks"
 
     @staticmethod
     def _terminate(proc: subprocess.Popen | None) -> None:

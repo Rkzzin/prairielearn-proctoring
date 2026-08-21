@@ -45,6 +45,10 @@ def build_router(manager: SessionManager) -> APIRouter:
     def health() -> dict[str, Any]:
         return manager.get_health()
 
+    @router.get("/exam-checks")
+    def exam_checks() -> dict[str, Any]:
+        return manager.get_exam_checks()
+
     @router.get("/status")
     def status_view() -> dict[str, Any]:
         return manager.get_status()

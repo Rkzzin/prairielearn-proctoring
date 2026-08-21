@@ -139,9 +139,13 @@ class RecorderConfig(BaseSettings):
         default=True,
         description="Gravar áudio ambiente do microfone da webcam junto com o vídeo da webcam.",
     )
+    webcam_audio_input_format: str = Field(
+        default="pulse",
+        description="Backend de entrada de áudio do FFmpeg; 'pulse' compartilha o microfone via PipeWire.",
+    )
     webcam_audio_device: str = Field(
-        default="hw:CARD=C920,DEV=0",
-        description="Dispositivo ALSA de captura do microfone da webcam para o ffmpeg.",
+        default="default",
+        description="Dispositivo de captura de áudio para o FFmpeg.",
     )
     webcam_audio_bitrate: str = Field(
         default="96k",

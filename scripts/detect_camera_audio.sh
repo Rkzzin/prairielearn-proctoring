@@ -73,13 +73,13 @@ fi
 if [ -n "$CARD_LINE" ]; then
     CARD_NAME="$(echo "$CARD_LINE" | sed -E 's/^card [0-9]+: ([^ ]+).*/\1/')"
     if [ -n "$CARD_NAME" ]; then
-        sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=hw:CARD=${CARD_NAME},DEV=0#" .env
-        log "Microfone da webcam detectado: hw:CARD=${CARD_NAME},DEV=0"
+        sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=default#" .env
+        log "Microfone da webcam detectado: ${CARD_NAME}; usando Pulse default para compartilhar via PipeWire"
     fi
 else
     warn "Nenhum card ALSA de webcam identificado automaticamente."
     warn "Confira manualmente: arecord -l"
-    warn "e ajuste PROCTOR_REC_WEBCAM_AUDIO_DEVICE no .env (formato hw:CARD=<nome>,DEV=0) à mão."
+    warn "e ajuste PROCTOR_REC_WEBCAM_AUDIO_DEVICE no .env à mão."
 fi
 
 echo ""

@@ -120,10 +120,10 @@ bash scripts/detect_camera_audio.sh
 
 Ele detecta o `/dev/videoN` que fala MJPG (o nó de captura de imagem de verdade —
 webcams UVC costumam expor mais de um `/dev/videoN`) e o card ALSA de áudio da
-webcam, e ajusta `PROCTOR_FACE_CAMERA_INDEX` / `PROCTOR_REC_WEBCAM_AUDIO_DEVICE`
-no `.env`. Se ele não achar nada automaticamente, ele avisa e mostra o comando
-manual (`v4l2-ctl --list-devices`, `arecord -l`) — confira e ajuste à mão nesse
-caso.
+webcam, ajusta `PROCTOR_FACE_CAMERA_INDEX` e usa a fonte Pulse `default` para o
+áudio. Isso permite que o FFmpeg compartilhe o microfone via PipeWire.
+Se ele não achar nada automaticamente, ele avisa e mostra o comando manual
+(`v4l2-ctl --list-devices`, `arecord -l`) — confira e ajuste à mão nesse caso.
 
 Rode este script de novo sempre que a webcam for trocada ou reconectada numa
 porta USB diferente.

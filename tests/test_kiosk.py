@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import signal
 import subprocess
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -10,7 +11,14 @@ from src.core.models import IdentifyResult, IdentifyStatus
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
-from src.kiosk.overlay_app import _show_preview_during_block, _violation_report_message
+from src.kiosk.overlay_app import (
+    _blocked_reason_message,
+    _format_clock_time,
+    _format_remaining_time,
+    _show_preview_during_block,
+    _status_summary,
+    _violation_report_message,
+)
 from src.kiosk.reidentify import run_reidentify
 
 
@@ -41,7 +49,7 @@ class DummyProc:
 
 
 def test_blocked_overlay_reports_absence_and_multiple_faces():
-    expected = "Essa violação foi registrada e reportada."
+    expected = "Esta ocorrência foi registrada automaticamente para a equipe responsável."
 
     assert _violation_report_message("ABSENCE") == expected
     assert _violation_report_message("MULTI_FACE") == expected
@@ -53,6 +61,40 @@ def test_blocked_overlay_hides_preview_for_proctoring_violations():
     assert _show_preview_during_block("GAZE") is False
     assert _show_preview_during_block("MULTI_FACE") is False
     assert _show_preview_during_block("BROWSER_EXIT") is True
+
+
+def test_blocked_overlay_explains_absence():
+    assert _blocked_reason_message("ABSENCE") == "Ausência detectada. Volte para a frente da câmera."
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"state": "BLOCKED", "checks": []}, ("Avaliação pausada", "fail")),
+        ({"state": "SESSION", "checks": [{"state": "fail"}]}, ("Atenção necessária", "fail")),
+        ({"state": "SESSION", "checks": [{"state": "ok"}]}, ("Monitoramento ativo", "ok")),
+        ({"state": "IDENTIFYING", "checks": [{"state": "pending"}]}, ("Preparando o ambiente", "pending")),
+    ],
+)
+def test_compact_status_summary(payload, expected):
+    assert _status_summary(payload) == expected
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (None, None),
+        (0, "00:00"),
+        (65, "01:05"),
+        (3661, "01:01:01"),
+    ],
+)
+def test_format_remaining_time(seconds, expected):
+    assert _format_remaining_time(seconds) == expected
+
+
+def test_format_clock_time():
+    assert _format_clock_time(datetime(2026, 8, 21, 15, 42, 7)) == "15:42:07"
 
 
 class FakeCapture:
@@ -686,13 +728,16 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     overlay.show_blocked("ABSENCE")
 
     assert calls[0][0][3:5] == ["--mode", "waiting"]
-    assert calls[0][0][-2:] == ["--preview-url", "http://127.0.0.1:8123/camera-preview.jpg"]
+    assert calls[0][0][calls[0][0].index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
+    assert calls[0][0][calls[0][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"
     assert calls[0][1]["DISPLAY"] == ":5"
     assert calls[1][0][-2:] == ["--mode", "guard"]
-    assert calls[2][0][-4:] == ["--mode", "controls", "--stop-url", "http://127.0.0.1:8123/session/stop"]
+    assert calls[2][0][calls[2][0].index("--stop-url") + 1] == "http://127.0.0.1:8123/session/stop"
+    assert calls[2][0][calls[2][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"
     assert calls[3][0][3:5] == ["--mode", "blocked"]
     assert calls[3][0][calls[3][0].index("--reason") + 1] == "ABSENCE"
-    assert calls[3][0][-2:] == ["--preview-url", "http://127.0.0.1:8123/camera-preview.jpg"]
+    assert calls[3][0][calls[3][0].index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
+    assert calls[3][0][calls[3][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"
 
     overlay.stop()
     assert procs[0].terminated is True

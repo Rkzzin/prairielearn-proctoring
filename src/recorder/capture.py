@@ -99,6 +99,7 @@ class Capture:
 
         self._procs: dict[str, subprocess.Popen] = {}
         self._monitor_threads: dict[str, threading.Thread] = {}
+        self._stream_lock = threading.Lock()
         self._running = False
         self._stop_event = threading.Event()
         self._notified_segments: set[Path] = set()
@@ -123,7 +124,7 @@ class Capture:
         self._stop_event.clear()
         self._notified_segments.clear()
         self._running = True
-        self._start_webcam_stream()
+        self._start_webcam_with_fallback()
         self._start_screen_stream()
         logger.info("Gravação iniciada — sessão '%s'", self.session_id)
 
@@ -173,11 +174,35 @@ class Capture:
     def preview_url(self) -> str:
         return self._preview_url
 
+    def ensure_webcam_running(self) -> bool:
+        """Reinicia o stream de webcam sem derrubar a captura de tela/sessão."""
+        with self._stream_lock:
+            if not self._running:
+                return False
+            proc = self._procs.get("webcam")
+            if proc is not None and proc.poll() is None:
+                return True
+            try:
+                self._start_webcam_with_fallback()
+                return True
+            except RuntimeError as exc:
+                logger.error("Não foi possível recuperar stream de webcam: %s", exc)
+                return False
+
     # ──────────────────────────────────────────────
     #  Streams FFmpeg
     # ──────────────────────────────────────────────
 
-    def _start_webcam_stream(self) -> None:
+    def _start_webcam_with_fallback(self) -> None:
+        try:
+            self._start_webcam_stream()
+        except RuntimeError as exc:
+            if not self._rec_cfg.webcam_audio_enabled:
+                raise
+            logger.warning("Áudio indisponível (%s); reiniciando webcam somente com vídeo", exc)
+            self._start_webcam_stream(audio_enabled=False)
+
+    def _start_webcam_stream(self, *, audio_enabled: bool | None = None) -> None:
         """Inicia FFmpeg de webcam capturando /dev/videoN diretamente."""
         w = self._face_cfg.camera_width
         h = self._face_cfg.camera_height
@@ -186,7 +211,9 @@ class Capture:
         pattern = str(self._rec_dir / "webcam_%03d.mp4")
         video_device = f"/dev/video{self._face_cfg.camera_index}"
         input_format = self._rec_cfg.webcam_input_format.strip()
-        audio_enabled = self._rec_cfg.webcam_audio_enabled
+        if audio_enabled is None:
+            audio_enabled = self._rec_cfg.webcam_audio_enabled
+        audio_input_format = self._rec_cfg.webcam_audio_input_format.strip()
         audio_device = self._rec_cfg.webcam_audio_device.strip()
         ffmpeg_threads = max(1, self._rec_cfg.ffmpeg_threads)
         preview_fps = max(1, self._rec_cfg.preview_fps)
@@ -212,7 +239,7 @@ class Capture:
         ])
         if audio_enabled and audio_device:
             cmd.extend([
-                "-f", "alsa",
+                "-f", audio_input_format,
                 "-thread_queue_size", "512",
                 "-i", audio_device,
             ])
@@ -262,15 +289,19 @@ class Capture:
             preview_sink,
         ])
 
+        env = os.environ.copy()
+        if audio_enabled and audio_input_format == "pulse":
+            env.setdefault("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             preexec_fn=self._build_affinity_preexec_fn("webcam"),
+            env=env,
         )
         self._procs["webcam"] = proc
+        self._ensure_process_started("webcam", proc, timeout_sec=2.5)
         self._start_monitor_threads("webcam", proc)
-        self._ensure_process_started("webcam", proc)
         logger.info("Stream webcam iniciado (v4l2 %s → %s)", video_device, pattern)
 
     def _start_screen_stream(self) -> None:

@@ -11,6 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from src.api.routes import ConfigUpdateRequest
 from src.api.server import create_app
 from src.core.autostart import SessionAutoStartWorker
+from src.core.camera import CameraSource, SessionCamera
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.models import IdentifyResult, IdentifyStatus
 from src.core.session import (
@@ -350,6 +351,65 @@ def test_session_manager_switches_from_device_camera_to_capture_preview():
     assert preview_camera.released is True
 
 
+def test_camera_handoff_prevents_probe_from_reopening_physical_device():
+    opened_sources = []
+
+    def capture_factory(source):
+        opened_sources.append(source)
+        return RepeatingCamera("frame")
+
+    camera = SessionCamera(
+        face_config=FaceConfig(models_dir="models", encodings_dir="data/encodings", camera_index=0),
+        capture_factory=capture_factory,
+    )
+    device = camera.open_device()
+
+    camera.handoff_to_external()
+
+    assert device.released is True
+    assert camera.source == CameraSource.EXTERNAL
+    assert camera.probe() is True
+    assert opened_sources == [0]
+
+
+def test_camera_moves_from_external_owner_to_preview_without_device_probe():
+    opened_sources = []
+
+    def capture_factory(source):
+        opened_sources.append(source)
+        return RepeatingCamera("frame")
+
+    camera = SessionCamera(
+        face_config=FaceConfig(models_dir="models", encodings_dir="data/encodings", camera_index=0),
+        capture_factory=capture_factory,
+    )
+    camera.open_device()
+    camera.handoff_to_external()
+
+    preview = camera.open_preview("udp://preview")
+
+    assert camera.source == CameraSource.PREVIEW
+    assert camera.handle is preview
+    assert opened_sources == [0, "udp://preview"]
+
+
+def test_exam_checks_do_not_repair_browser_from_request_thread():
+    class StoppedKiosk:
+        is_running = False
+
+        def relaunch(self):
+            pytest.fail("reparo deve ficar restrito ao browser guard")
+
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager._kiosk = StoppedKiosk()
+    manager._browser_ready = False
+
+    checks = manager.get_exam_checks()
+
+    chromium = next(check for check in checks["checks"] if check["key"] == "chromium")
+    assert chromium["state"] == "fail"
+
+
 def test_session_manager_reconnects_stale_preview():
     direct_camera = FakeCamera(["identify-frame"])
     initial_preview = FakeCamera(["preview-open-frame"])
@@ -507,6 +567,41 @@ def test_session_manager_manual_unblock():
     assert kiosk.unblocked is True
     assert overlay.hide_calls == 1
     manager.stop_session(reason="done")
+
+
+def test_exam_checks_expose_absence_block_and_presence_failure():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="ES2025-T1",
+        assessment="Quiz-01",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.BLOCKED,
+        prairielearn_url="https://pl.test/exam",
+        block_reason="ABSENCE",
+    )
+    manager._state = SessionState.BLOCKED
+    manager._browser_ready = True
+    manager._camera.open_device()
+
+    payload = manager.get_exam_checks()
+    checks = {check["key"]: check for check in payload["checks"]}
+
+    assert payload["state"] == "BLOCKED"
+    assert payload["block_reason"] == "ABSENCE"
+    assert 0 < payload["seconds_remaining"] <= 45 * 60
+    assert payload["ready"] is False
+    assert checks["session"] == {
+        "key": "session",
+        "label": "Sessão bloqueada: ausência detectada",
+        "state": "fail",
+    }
+    assert checks["presence"]["label"] == "Aluno ausente"
+    assert checks["presence"]["state"] == "fail"
+    assert checks["faces"]["state"] == "fail"
 
 
 def test_session_manager_resets_to_idle_after_identification_failure():

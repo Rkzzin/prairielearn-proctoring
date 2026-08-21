@@ -241,8 +241,8 @@ def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, m
     cmd = commands[0]
     assert "-filter_complex" in cmd
     assert "-f" in cmd
-    assert "alsa" in cmd
-    assert "hw:CARD=C920,DEV=0" in cmd
+    assert "pulse" in cmd
+    assert "default" in cmd
     assert "-map" in cmd
     assert "1:a:0" in cmd
     assert "-c:a" in cmd
@@ -306,9 +306,29 @@ def test_capture_webcam_ffmpeg_command_can_disable_audio(tmp_path: Path, monkeyp
     capture._start_webcam_stream()
 
     cmd = commands[0]
-    assert "alsa" not in cmd
+    assert "pulse" not in cmd
     assert "1:a:0" not in cmd
     assert "-c:a" not in cmd
+
+
+def test_capture_retries_webcam_without_audio_when_audio_start_fails(tmp_path: Path, monkeypatch):
+    capture = Capture(
+        session_id="sess-audio-fallback",
+        app_config=AppConfig(data_dir=tmp_path),
+        recorder_config=RecorderConfig(webcam_audio_enabled=True),
+    )
+    attempts = []
+
+    def start_webcam(*, audio_enabled=None):
+        attempts.append(audio_enabled)
+        if audio_enabled is None:
+            raise RuntimeError("audio unavailable")
+
+    monkeypatch.setattr(capture, "_start_webcam_stream", start_webcam)
+
+    capture._start_webcam_with_fallback()
+
+    assert attempts == [None, False]
 
 
 def test_capture_ensure_process_started_raises_if_ffmpeg_exits_early(tmp_path: Path, monkeypatch):
