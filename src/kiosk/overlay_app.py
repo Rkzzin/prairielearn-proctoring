@@ -222,6 +222,10 @@ def _violation_report_message(reason: str) -> str | None:
     return None
 
 
+def _show_preview_during_block(reason: str) -> bool:
+    return reason.strip().upper() not in {"ABSENCE", "GAZE", "MULTI_FACE"}
+
+
 def _blocked_mode(reason: str, preview_url: str) -> int:
     import tkinter as tk
 
@@ -265,7 +269,8 @@ def _blocked_mode(reason: str, preview_url: str) -> int:
         )
         report_label.pack(pady=(0, 16))
 
-    _add_camera_preview(container, preview_url=preview_url, bg="#1d1f21")
+    if _show_preview_during_block(reason):
+        _add_camera_preview(container, preview_url=preview_url, bg="#1d1f21")
 
     if reason:
         reason_label = tk.Label(

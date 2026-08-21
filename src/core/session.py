@@ -239,10 +239,14 @@ class SessionManager:
         self._confirmation_event: threading.Event | None = None
         self._latest_camera_frame: Any | None = None
         self._camera_preview_lock = threading.Lock()
+        self._camera_read_active = threading.Event()
         self._last_camera_frame_at: float | None = None
         self._preview_recovery_lock = threading.Lock()
         self._preview_watchdog_stop = threading.Event()
         self._preview_watchdog: threading.Thread | None = None
+        self._browser_guard_stop = threading.Event()
+        self._browser_guard: threading.Thread | None = None
+        self._browser_guard_overlay = None
         self._lockdown = None
         self._block_handled = False
         self._original_cpu_set: set[int] | None = None
@@ -374,7 +378,9 @@ class SessionManager:
             self._write_browser_allowlist_config(self._next_config)
             self._ensure_exam_lockdown_enabled()
             self._ensure_identification_camera_open()
+            self._prewarm_browser(self._next_config)
             self._mode = StationMode.WAITING_STUDENT
+            self._start_browser_guard()
             self._show_waiting_overlay()
             return self.get_status()
 
@@ -387,6 +393,7 @@ class SessionManager:
                 logger.warning("Falha ao parar sessão durante saída do modo prova: %s", exc)
                 stop_error = exc
         with self._lock:
+            self._stop_browser_guard()
             self._hide_waiting_overlay()
             self._disable_exam_lockdown()
             self._release_camera()
@@ -404,6 +411,7 @@ class SessionManager:
             thread.join(timeout=3)
 
         with self._lock:
+            self._stop_browser_guard()
             if self._runtime is not None:
                 self._runtime.notes["stop_reason"] = "recover_exam_mode"
                 self._runtime.stopped_at = datetime.now(timezone.utc)
@@ -515,12 +523,18 @@ class SessionManager:
                     started_at=datetime.now(timezone.utc),
                     state=SessionState.SESSION,
                     prairielearn_url=cfg.prairielearn_url,
+                    notes={"exam_mode_active": self._mode == StationMode.WAITING_STUDENT},
                 )
 
                 self._uploader = None if cfg.no_record else self._uploader_factory(runtime_session_id)
                 self._prepare_runtime_cpu_affinity()
                 self._capture = None if cfg.no_record else self._capture_factory(runtime_session_id)
-                self._kiosk = None if cfg.no_kiosk else self._kiosk_factory()
+                if cfg.no_kiosk:
+                    if self._kiosk is not None:
+                        self._kiosk.stop()
+                    self._kiosk = None
+                elif self._kiosk is None:
+                    self._kiosk = self._kiosk_factory()
                 self._overlay = self._overlay_factory()
                 if self._lockdown is None:
                     self._lockdown = self._lockdown_factory()
@@ -535,7 +549,7 @@ class SessionManager:
                     self._start_preview_watchdog()
                     self._apply_runtime_cpu_affinity()
                 self._lockdown.enable()
-                if self._kiosk is not None:
+                if self._kiosk is not None and not getattr(self._kiosk, "is_running", False):
                     self._kiosk.start(cfg.prairielearn_url, allowlist=cfg.allowlist)
                 if self._overlay is not None:
                     self._overlay.start_controls()
@@ -575,6 +589,7 @@ class SessionManager:
                 if self._mode == StationMode.SESSION:
                     self._mode = StationMode.EXAM_READY
                 elif self._mode == StationMode.WAITING_STUDENT:
+                    self._prewarm_browser(cfg)
                     self._show_waiting_overlay()
                 raise
 
@@ -598,10 +613,13 @@ class SessionManager:
                 mode=self._mode,
                 auto_start=self._next_config.auto_start,
                 reason=reason,
+                exam_mode_active=bool(runtime and runtime.notes.get("exam_mode_active")),
             )
             # keep_lockdown é, por construção, o mesmo predicado de "volta para
             # WAITING_STUDENT" — usado nas duas decisões abaixo de propósito.
             keep_waiting = policy.keep_lockdown
+            if keep_waiting:
+                self._show_waiting_overlay("Preparando a próxima sessão...")
             self._shutdown_components(policy)
             self._restore_runtime_cpu_affinity()
             if runtime is not None:
@@ -617,6 +635,7 @@ class SessionManager:
                 self._mode = StationMode.WAITING_STUDENT if keep_waiting else StationMode.EXAM_READY
                 if self._mode == StationMode.WAITING_STUDENT:
                     self._ensure_identification_camera_open()
+                    self._prewarm_browser(self._next_config)
                     self._show_waiting_overlay()
             return self.get_status()
 
@@ -755,6 +774,73 @@ class SessionManager:
         )
         self._preview_watchdog.start()
 
+    def _prewarm_browser(self, config: SessionConfig) -> None:
+        """Abre a prova atrás do overlay enquanto a estação espera o aluno."""
+        if config.no_kiosk:
+            return
+        if self._kiosk is None:
+            self._kiosk = self._kiosk_factory()
+        if getattr(self._kiosk, "is_running", False):
+            return
+        self._kiosk.start(config.prairielearn_url, allowlist=config.allowlist)
+
+    def _start_browser_guard(self) -> None:
+        if self._browser_guard and self._browser_guard.is_alive():
+            return
+        self._browser_guard_stop.clear()
+        self._browser_guard = threading.Thread(
+            target=self._browser_guard_loop,
+            name="browser-fullscreen-guard",
+            daemon=True,
+        )
+        self._browser_guard.start()
+
+    def _stop_browser_guard(self) -> None:
+        self._browser_guard_stop.set()
+        thread = self._browser_guard
+        if thread and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2)
+        self._browser_guard = None
+        self._hide_browser_guard_overlay()
+
+    def _browser_guard_loop(self) -> None:
+        while not self._browser_guard_stop.wait(1.0):
+            with self._lock:
+                active_exam = self._mode in {StationMode.WAITING_STUDENT, StationMode.SESSION}
+            if not active_exam:
+                continue
+            browser_ok = self._ensure_exam_browser_fullscreen()
+            if browser_ok:
+                self._hide_browser_guard_overlay()
+            else:
+                self._show_browser_guard_overlay("BROWSER_NOT_FULLSCREEN")
+
+    def _ensure_exam_browser_fullscreen(self) -> bool:
+        kiosk = self._kiosk
+        if kiosk is None:
+            return False
+        if not getattr(kiosk, "is_running", True):
+            self._show_browser_guard_overlay("BROWSER_EXIT")
+            relaunch = getattr(kiosk, "relaunch", None)
+            if not callable(relaunch) or not relaunch():
+                return False
+        ensure_fullscreen = getattr(kiosk, "ensure_fullscreen", None)
+        return True if not callable(ensure_fullscreen) else bool(ensure_fullscreen())
+
+    def _show_browser_guard_overlay(self, reason: str) -> None:
+        with self._lock:
+            if self._browser_guard_overlay is None:
+                self._browser_guard_overlay = self._overlay_factory()
+            self._browser_guard_overlay.show_blocked(reason)
+
+    def _hide_browser_guard_overlay(self) -> None:
+        with self._lock:
+            if self._browser_guard_overlay is None:
+                return
+            self._browser_guard_overlay.hide_blocked()
+            self._browser_guard_overlay.stop()
+            self._browser_guard_overlay = None
+
     def _stop_preview_watchdog(self) -> None:
         self._preview_watchdog_stop.set()
         thread = self._preview_watchdog
@@ -764,7 +850,11 @@ class SessionManager:
 
     def _preview_watchdog_loop(self) -> None:
         while not self._preview_watchdog_stop.wait(0.5):
-            if self._capture is None or not self._preview_is_stale(timeout_sec=3.0):
+            if (
+                self._capture is None
+                or self._camera_read_active.is_set()
+                or not self._preview_is_stale(timeout_sec=3.0)
+            ):
                 continue
             self._recover_preview_camera()
 
@@ -793,7 +883,11 @@ class SessionManager:
             self._last_camera_frame_at = None
 
     def _read_camera_frame(self) -> tuple[bool, Any]:
-        ret, frame = self._camera.read()
+        self._camera_read_active.set()
+        try:
+            ret, frame = self._camera.read()
+        finally:
+            self._camera_read_active.clear()
         if ret and frame is not None:
             with self._camera_preview_lock:
                 self._latest_camera_frame = self._copy_camera_frame(frame)
@@ -1110,6 +1204,8 @@ class SessionManager:
         """
         policy = policy or ShutdownPolicy.full_teardown()
         self._stop_preview_watchdog()
+        if not policy.keep_lockdown:
+            self._stop_browser_guard()
 
         for name in self._SESSION_SCOPED_COMPONENTS:
             component = getattr(self, name)

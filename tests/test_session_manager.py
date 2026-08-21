@@ -139,6 +139,7 @@ class FakeUploader:
 class FakeKiosk:
     def __init__(self):
         self.started = False
+        self.start_calls = 0
         self.stopped = False
         self.blocked = False
         self.unblocked = False
@@ -147,6 +148,8 @@ class FakeKiosk:
 
     def start(self, url, *, allowlist=None):
         self.started = True
+        self.start_calls += 1
+        self.stopped = False
         self.url = url
         self.allowlist = allowlist
 
@@ -158,6 +161,10 @@ class FakeKiosk:
 
     def unblock(self):
         self.unblocked = True
+
+    @property
+    def is_running(self):
+        return self.started and not self.stopped
 
 
 class FakeLockdown:
@@ -607,7 +614,7 @@ def test_session_manager_resets_to_idle_if_preview_camera_cannot_open():
 
 
 def test_exam_mode_waiting_overlay_and_autostart_flow():
-    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, _camera = _make_manager(
+    manager, _recognizer, _engine, _capture, _uploader, kiosk, overlay, lockdown, _camera = _make_manager(
         identify_results=[
             IdentifyResult(
                 status=IdentifyStatus.MATCH,
@@ -627,6 +634,7 @@ def test_exam_mode_waiting_overlay_and_autostart_flow():
     assert status["station_status"] == StationMode.WAITING_STUDENT.value
     assert overlay.waiting_shown == [None]
     assert lockdown.enabled is True
+    assert kiosk.started is True
 
     worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
     worker.run_once()
@@ -637,6 +645,31 @@ def test_exam_mode_waiting_overlay_and_autostart_flow():
     assert manager.mode == StationMode.WAITING_STUDENT
     assert lockdown.enabled is True
     assert lockdown.disabled is False
+
+
+def test_manual_stop_keeps_waiting_overlay_and_prewarms_browser():
+    manager, _recognizer, _engine, _capture, _uploader, kiosk, overlay, lockdown, _camera = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame", "loop-frame"],
+    )
+    manager.update_config(turma_id="ES2025-T1", auto_start=False)
+    manager.enter_exam_mode()
+    manager.start_session()
+
+    manager.stop_session(reason="manual")
+
+    assert manager.mode == StationMode.WAITING_STUDENT
+    assert lockdown.enabled is True
+    assert overlay.waiting_shown == [None, "Preparando a próxima sessão..."]
+    assert kiosk.start_calls == 2
 
 
 def test_session_manager_requires_identity_confirmation_before_starting_components():
@@ -672,7 +705,7 @@ def test_session_manager_requires_identity_confirmation_before_starting_componen
 
 
 def test_cancelled_identity_confirmation_returns_to_waiting_screen():
-    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, camera = _make_manager(
+    manager, _recognizer, _engine, _capture, _uploader, kiosk, overlay, lockdown, camera = _make_manager(
         identify_results=[
             IdentifyResult(
                 status=IdentifyStatus.MATCH,
@@ -696,6 +729,7 @@ def test_cancelled_identity_confirmation_returns_to_waiting_screen():
     assert overlay.waiting_shown == [None]
     assert lockdown.enabled is True
     assert camera.released is False
+    assert kiosk.start_calls == 2
 
 
 def test_pre_exam_confirmation_response_requires_pending_confirmation():
@@ -733,6 +767,44 @@ def test_preview_recovery_keeps_last_frame_visible():
     assert camera.released is True
     assert manager._latest_camera_frame == "last-preview-frame"
     assert manager._last_camera_frame_at == 1.0
+
+
+def test_preview_watchdog_does_not_reconnect_during_camera_read(monkeypatch):
+    class StopAfterOneIteration:
+        def __init__(self):
+            self.calls = 0
+
+        def wait(self, _timeout):
+            self.calls += 1
+            return self.calls > 1
+
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager._capture = FakeCapture()
+    manager._camera_read_active.set()
+    manager._preview_watchdog_stop = StopAfterOneIteration()
+
+    monkeypatch.setattr(manager, "_preview_is_stale", lambda **_kwargs: True)
+    monkeypatch.setattr(manager, "_recover_preview_camera", lambda: pytest.fail("não deve reconectar"))
+
+    manager._preview_watchdog_loop()
+
+
+def test_browser_guard_blocks_screen_when_browser_is_not_running():
+    class StoppedKiosk:
+        is_running = False
+
+        def relaunch(self):
+            return False
+
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, _lockdown, _camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._kiosk = StoppedKiosk()
+
+    assert manager._ensure_exam_browser_fullscreen() is False
+    assert overlay.blocked_shown == ["BROWSER_EXIT"]
 
 
 def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
@@ -1091,29 +1163,27 @@ def test_failed_start_policy(mode, session_started, expected):
 
 
 @pytest.mark.parametrize(
-    ("mode", "auto_start", "reason", "keep_lockdown"),
+    ("mode", "auto_start", "reason", "exam_mode_active", "expected"),
     [
         # Sessão encerrada com auto-start ligado: volta a esperar aluno, mantém
         # o lockdown de pé.
-        (StationMode.SESSION, True, "manual", True),
-        (StationMode.SESSION, True, "dashboard_command", True),
+        (StationMode.SESSION, True, "manual", True, (True, True, False)),
+        (StationMode.SESSION, True, "dashboard_command", True, (True, True, False)),
         # Saída do modo prova nunca preserva: o operador quer manutenção.
-        (StationMode.SESSION, True, EXIT_EXAM_MODE_REASON, False),
-        # Sem auto-start, cai para EXAM_READY e restaura o ambiente.
-        (StationMode.SESSION, False, "manual", False),
+        (StationMode.SESSION, True, EXIT_EXAM_MODE_REASON, True, (False, False, False)),
+        # Mesmo sem auto-start, o stop manual mantém a estação segura.
+        (StationMode.SESSION, False, "manual", True, (True, True, False)),
+        (StationMode.SESSION, True, "manual", False, (False, False, False)),
         # Sem sessão ativa não há o que preservar.
-        (StationMode.WAITING_STUDENT, True, "manual", False),
-        (StationMode.MAINTENANCE, True, "manual", False),
+        (StationMode.WAITING_STUDENT, True, "manual", False, (False, False, False)),
+        (StationMode.MAINTENANCE, True, "manual", False, (False, False, False)),
     ],
 )
-def test_stopped_session_policy(mode, auto_start, reason, keep_lockdown):
+def test_stopped_session_policy(mode, auto_start, reason, exam_mode_active, expected):
     policy = ShutdownPolicy.for_stopped_session(
-        mode=mode, auto_start=auto_start, reason=reason
+        mode=mode, auto_start=auto_start, reason=reason, exam_mode_active=exam_mode_active
     )
-    assert policy.keep_lockdown is keep_lockdown
-    # Overlay/câmera nunca sobrevivem a um stop; são recriados ao voltar a esperar.
-    assert policy.keep_waiting_overlay is False
-    assert policy.keep_camera is False
+    assert (policy.keep_lockdown, policy.keep_waiting_overlay, policy.keep_camera) == expected
 
 
 @pytest.mark.asyncio

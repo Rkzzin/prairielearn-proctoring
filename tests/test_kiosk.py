@@ -10,7 +10,7 @@ from src.core.models import IdentifyResult, IdentifyStatus
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
-from src.kiosk.overlay_app import _violation_report_message
+from src.kiosk.overlay_app import _show_preview_during_block, _violation_report_message
 from src.kiosk.reidentify import run_reidentify
 
 
@@ -46,6 +46,13 @@ def test_blocked_overlay_reports_absence_and_multiple_faces():
     assert _violation_report_message("ABSENCE") == expected
     assert _violation_report_message("MULTI_FACE") == expected
     assert _violation_report_message("GAZE") is None
+
+
+def test_blocked_overlay_hides_preview_for_proctoring_violations():
+    assert _show_preview_during_block("ABSENCE") is False
+    assert _show_preview_during_block("GAZE") is False
+    assert _show_preview_during_block("MULTI_FACE") is False
+    assert _show_preview_during_block("BROWSER_EXIT") is True
 
 
 class FakeCapture:
@@ -102,7 +109,7 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
 
     assert kiosk.is_running is True
     cmd, env, *_ = popen_calls[0]
-    assert cmd[:2] == ["/usr/bin/chromium", "--start-maximized"]
+    assert cmd[:2] == ["/usr/bin/chromium", "--start-fullscreen"]
     assert "--kiosk" not in cmd
     assert "--incognito" in cmd
     assert "--disable-extensions" not in cmd
@@ -119,7 +126,7 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
 
 
 def test_maximized_window_mode_does_not_wait_for_wmctrl(monkeypatch, tmp_path):
-    kiosk = ChromiumKiosk(profile_dir=tmp_path / "profile")
+    kiosk = ChromiumKiosk(profile_dir=tmp_path / "profile", window_mode="maximized")
     kiosk._proc = DummyProc()
 
     monkeypatch.setattr("src.kiosk.chromium.shutil.which", lambda _name: "/usr/bin/wmctrl")
@@ -129,6 +136,17 @@ def test_maximized_window_mode_does_not_wait_for_wmctrl(monkeypatch, tmp_path):
     )
 
     kiosk._apply_window_mode_by_pid()
+
+
+def test_fullscreen_window_lookup_falls_back_to_snap_chromium_window(monkeypatch, tmp_path):
+    kiosk = ChromiumKiosk(profile_dir=tmp_path / "profile")
+    kiosk._proc = DummyProc(pid=999)
+
+    monkeypatch.setattr("src.kiosk.chromium.subprocess.run", lambda *_args, **_kwargs: SimpleNamespace(
+        stdout=b"0x01200004  0 4321 chromium.profile.Chromium proctor PrairieLearn\n"
+    ))
+
+    assert kiosk._window_id_for_pid() == "0x01200004"
 
 
 def _start_kiosk_capturing_cmd(monkeypatch, tmp_path, *, proxy_server):

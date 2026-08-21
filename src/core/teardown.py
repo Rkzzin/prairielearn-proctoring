@@ -67,17 +67,18 @@ class ShutdownPolicy:
         mode: StationMode,
         auto_start: bool,
         reason: str,
+        exam_mode_active: bool = False,
     ) -> ShutdownPolicy:
         """Encerramento de uma sessão que estava ativa.
 
-        O lockdown sobrevive exatamente quando a estação vai voltar a esperar
-        aluno: havia sessão (``mode == SESSION``), o auto-start continua ligado
-        e o stop não veio da saída do modo prova. Nos outros casos a estação cai
-        para ``EXAM_READY`` e o ambiente é restaurado.
+        Enquanto a estação estiver em modo prova, qualquer encerramento que não
+        seja a saída explícita desse modo volta a esperar aluno. Isso mantém o
+        desktop coberto durante a troca de Chromium, inclusive quando o
+        operador encerra a prova manualmente.
 
         ``keep_lockdown`` é, por construção, o mesmo predicado de "vai voltar
         para ``WAITING_STUDENT``" — quem chama usa esse campo para as duas
         decisões, de propósito, para não haver dois predicados a divergir.
         """
-        keep = mode == StationMode.SESSION and auto_start and reason != EXIT_EXAM_MODE_REASON
-        return cls(keep_lockdown=keep)
+        keep = mode == StationMode.SESSION and exam_mode_active and reason != EXIT_EXAM_MODE_REASON
+        return cls(keep_lockdown=keep, keep_waiting_overlay=keep)

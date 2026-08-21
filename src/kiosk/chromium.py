@@ -77,7 +77,7 @@ class ChromiumKiosk:
         display: str | None = None,
         profile_dir: Path | str | None = None,
         extension_dir: Path | str | None = None,
-        window_mode: str = "maximized",
+        window_mode: str = "fullscreen",
         cleanup_profile_on_stop: bool = True,
         manage_gnome_extensions: bool = False,
     ):
@@ -385,6 +385,32 @@ class ChromiumKiosk:
             return False
         return self.is_running
 
+    def ensure_fullscreen(self) -> bool:
+        """Confirma e restaura fullscreen do navegador da prova."""
+        if self._window_mode != "fullscreen" or not self.is_running:
+            return False
+        if not shutil.which("wmctrl") or not shutil.which("xprop"):
+            return False
+
+        window_id = self._window_id_for_pid()
+        if window_id is None:
+            return False
+        if self._window_is_fullscreen(window_id):
+            return True
+
+        env = os.environ.copy()
+        env["DISPLAY"] = self._display
+        try:
+            subprocess.run(
+                ["wmctrl", "-i", "-r", window_id, "-b", "add,fullscreen"],
+                env=env,
+                capture_output=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return self._window_is_fullscreen(window_id)
+
     # ──────────────────────────────────────────────
     #  Bloqueio / desbloqueio
     # ──────────────────────────────────────────────
@@ -468,6 +494,47 @@ class ChromiumKiosk:
             env=env, capture_output=True, timeout=3,
         )
         logger.info("Modo de janela aplicado (PID %d, window %s, %s)", pid, win_id, action)
+
+    def _window_id_for_pid(self) -> str | None:
+        if self._proc is None:
+            return None
+        env = os.environ.copy()
+        env["DISPLAY"] = self._display
+        try:
+            result = subprocess.run(
+                ["wmctrl", "-l", "-x", "-p"],
+                env=env,
+                capture_output=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        for line in result.stdout.decode().splitlines():
+            parts = line.split()
+            if len(parts) >= 3 and parts[2] == str(self._proc.pid):
+                return parts[0]
+        # O wrapper Snap pode substituir o PID que Popen retornou. A estação
+        # encerra Chromiums anteriores antes de abrir a prova, então a única
+        # janela Chromium restante é a janela controlada desta sessão.
+        for line in result.stdout.decode().splitlines():
+            parts = line.split()
+            if len(parts) >= 4 and "chromium" in parts[3].lower():
+                return parts[0]
+        return None
+
+    def _window_is_fullscreen(self, window_id: str) -> bool:
+        env = os.environ.copy()
+        env["DISPLAY"] = self._display
+        try:
+            result = subprocess.run(
+                ["xprop", "-id", window_id, "_NET_WM_STATE"],
+                env=env,
+                capture_output=True,
+                timeout=3,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return b"_NET_WM_STATE_FULLSCREEN" in result.stdout
 
     def _force_fullscreen_by_pid(self) -> None:
         """Compatibilidade com testes/uso legado."""
