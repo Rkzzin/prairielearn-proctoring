@@ -718,6 +718,23 @@ def test_camera_preview_encodes_latest_frame(monkeypatch):
     assert manager.get_camera_preview_jpeg() == b"jpeg-data"
 
 
+def test_preview_recovery_keeps_last_frame_visible():
+    manager, *_rest, camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._latest_camera_frame = "last-preview-frame"
+    manager._last_camera_frame_at = 1.0
+    manager._camera.open_device()
+
+    manager._release_camera(clear_preview=False)
+
+    assert camera.released is True
+    assert manager._latest_camera_frame == "last-preview-frame"
+    assert manager._last_camera_frame_at == 1.0
+
+
 def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
     manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, camera = _make_manager(
         identify_results=[],

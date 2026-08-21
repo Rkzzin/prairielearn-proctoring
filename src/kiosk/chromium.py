@@ -415,7 +415,9 @@ class ChromiumKiosk:
         Buscar pelo PID evita pegar janelas de outros aplicativos que
         possam ter "Chromium" no nome (ex: abas do VSCode ou Firefox).
         """
-        if self._window_mode == "kiosk":
+        # --start-maximized já é aplicado pelo Chromium. Evitar o polling do
+        # wmctrl aqui elimina uma espera de até 10s antes da prova aparecer.
+        if self._window_mode in {"kiosk", "maximized"}:
             return
         if not shutil.which("wmctrl"):
             logger.warning(

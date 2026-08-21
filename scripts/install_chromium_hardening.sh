@@ -26,7 +26,7 @@ install_policy() {
   "AutofillCreditCardEnabled": false,
   "BrowserSignin": 0,
   "DeveloperToolsAvailability": 2,
-  "IncognitoModeAvailability": 1,
+  "IncognitoModeAvailability": 2,
   "PasswordManagerEnabled": false,
   "SyncDisabled": true,
   "URLBlocklist": [

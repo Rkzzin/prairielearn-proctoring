@@ -777,15 +777,17 @@ class SessionManager:
             logger.warning("Preview UDP sem frames; reconectando o proctoring")
             # O socket UDP antigo precisa fechar antes de criar o novo leitor;
             # caso contrário ele continua sendo o consumidor do stream local.
-            self._release_camera()
+            self._release_camera(clear_preview=False)
             self._open_preview_camera(self._capture.preview_url)
         except SessionError as exc:
             logger.warning("Falha ao reconectar preview UDP: %s", exc)
         finally:
             self._preview_recovery_lock.release()
 
-    def _release_camera(self) -> None:
+    def _release_camera(self, *, clear_preview: bool = True) -> None:
         self._camera.release()
+        if not clear_preview:
+            return
         with self._camera_preview_lock:
             self._latest_camera_frame = None
             self._last_camera_frame_at = None

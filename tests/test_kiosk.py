@@ -4,6 +4,8 @@ import signal
 import subprocess
 from types import SimpleNamespace
 
+import pytest
+
 from src.core.models import IdentifyResult, IdentifyStatus
 from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
@@ -114,6 +116,19 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     assert env["DISPLAY"] == ":9"
     assert cmd[-1] == "https://example.com/exam"
     assert (extension_dir / "config.json").exists()
+
+
+def test_maximized_window_mode_does_not_wait_for_wmctrl(monkeypatch, tmp_path):
+    kiosk = ChromiumKiosk(profile_dir=tmp_path / "profile")
+    kiosk._proc = DummyProc()
+
+    monkeypatch.setattr("src.kiosk.chromium.shutil.which", lambda _name: "/usr/bin/wmctrl")
+    monkeypatch.setattr(
+        "src.kiosk.chromium.subprocess.run",
+        lambda *_args, **_kwargs: pytest.fail("wmctrl não deve ser chamado em modo maximizado"),
+    )
+
+    kiosk._apply_window_mode_by_pid()
 
 
 def _start_kiosk_capturing_cmd(monkeypatch, tmp_path, *, proxy_server):
