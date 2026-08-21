@@ -128,6 +128,7 @@ class ChromiumKiosk:
             "--disable-sync",
             "--disable-infobars",
             "--noerrdialogs",
+            "--incognito",
             "--password-store=basic",
             "--disable-features=AutofillServerCommunication",
             f"--disable-extensions-except={self._extension_dir}",

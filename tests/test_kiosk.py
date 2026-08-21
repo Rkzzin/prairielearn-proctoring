@@ -102,7 +102,7 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     cmd, env, *_ = popen_calls[0]
     assert cmd[:2] == ["/usr/bin/chromium", "--start-maximized"]
     assert "--kiosk" not in cmd
-    assert "--incognito" not in cmd
+    assert "--incognito" in cmd
     assert "--disable-extensions" not in cmd
     assert f"--load-extension={extension_dir}" in cmd
     assert f"--disable-extensions-except={extension_dir}" in cmd

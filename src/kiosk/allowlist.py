@@ -138,7 +138,7 @@ def build_chromium_policies(
         "URLBlocklist": ["*"],
         "URLAllowlist": sorted(dict.fromkeys(allowed_patterns)),
         "DeveloperToolsAvailability": 2,
-        "IncognitoModeAvailability": 1,
+        "IncognitoModeAvailability": 2,
         "SyncDisabled": True,
         "BrowserSignin": 0,
         "PasswordManagerEnabled": False,
@@ -183,13 +183,18 @@ def _default_url_for_host(host: str) -> str:
 def _implicit_hosts_for_start_host(host: str) -> list[str]:
     """Inclui hosts conhecidos de redirects do provedor da prova.
 
-    PrairieLearn publica a URL curta em prairielearn.org, mas o fluxo real pode
-    redirecionar para us.prairielearn.com e Microsoft Online. Sem esses hosts
-    implícitos a allowlist bloqueia a própria prova antes do aluno conseguir
-    autenticar.
+    PrairieTest e PrairieLearn alternam entre seus domínios durante o check-in
+    e o login Azure. Sem esses hosts implícitos a allowlist bloqueia a própria
+    prova antes do aluno conseguir autenticar.
     """
-    if host == "prairielearn.org" or host.endswith(".prairielearn.org"):
-        return ["login.microsoftonline.com", "us.prairielearn.com"]
+    if host in {"prairielearn.org", "prairietest.com"} or host.endswith(
+        (".prairielearn.org", ".prairietest.com")
+    ):
+        return [
+            "login.microsoftonline.com",
+            "us.prairielearn.com",
+            "us.prairietest.com",
+        ]
     return []
 
 
