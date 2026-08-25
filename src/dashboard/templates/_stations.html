@@ -17,7 +17,7 @@
       <div><dt>Modo prova</dt><dd>{{ "ativo" if station.auto_start_enabled else "inativo" }}</dd></div>
       <div><dt>Tempo</dt><dd>{% if station.seconds_remaining is not none %}{{ station.seconds_remaining }} s{% else %}—{% endif %}</dd></div>
       {% if station.enroll_status and station.enroll_status != "idle" %}
-      <div><dt>Enroll</dt><dd>{{ station.enroll_status }}{% if station.enroll_message %} — {{ station.enroll_message }}{% endif %}</dd></div>
+      <div><dt>Atualização facial</dt><dd>{{ station.enroll_status }}{% if station.enroll_message %} — {{ station.enroll_message }}{% endif %}</dd></div>
       {% endif %}
     </dl>
     {% if station.last_event %}
@@ -53,10 +53,10 @@
       <button
         type="button"
         class="button-secondary"
-        {% if station_busy %}disabled title="Bloqueado: estação com prova ativa"{% endif %}
+        {% if station_busy %}disabled title="Encerre a avaliação antes de atualizar o reconhecimento facial"{% endif %}
         onclick="openEnrollModal('{{ station.station_id }}', '{{ station.station_name }}')"
       >
-        Rodar enroll
+        Atualizar reconhecimento facial
       </button>
     </div>
   </article>

@@ -112,6 +112,8 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
     assert response.status_code == 200
     assert "Estações em tempo real" in response.text
     assert "Limpar sessões" in response.text
+    assert "Atualizar reconhecimento facial" in response.text
+    assert "scripts/enroll.py --force" in response.text
 
 
 @pytest.mark.asyncio
@@ -133,6 +135,7 @@ async def test_station_partial_offers_exit_when_station_reports_waiting_student(
     assert response.status_code == 200
     assert "Sair do modo prova" in response.text
     assert "/autostart/disable" in response.text
+    assert "Atualizar reconhecimento facial" in response.text
 
 
 @pytest.mark.asyncio

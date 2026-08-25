@@ -85,13 +85,13 @@ login.microsoftonline.com</textarea></label>
 </dialog>
 
 <dialog id="enroll-modal" class="modal">
-  <h2>Rodar enroll — <span id="enroll-station-name"></span></h2>
-  <p>Baixa as fotos do S3 e gera o <code>.pkl</code> local nesta estação para cada turma marcada (reprocessa mesmo se já existir).</p>
+  <h2>Atualizar reconhecimento facial — <span id="enroll-station-name"></span></h2>
+  <p>Executa <code>scripts/enroll.py --force</code> na estação, baixa novamente as fotos do S3 e substitui o <code>.pkl</code> usado para identificar os alunos.</p>
   <label class="checkbox"><input type="checkbox" id="enroll-select-all" onchange="toggleAllEnrollTurmas(this)"> Selecionar todas</label>
   <fieldset class="checkbox-group" id="enroll-turma-list"></fieldset>
   <p class="empty" id="enroll-turma-error" style="display:none"></p>
   <div class="modal-actions">
-    <button type="button" onclick="submitEnroll()">Rodar enroll</button>
+    <button type="button" id="enroll-submit" onclick="submitEnroll()">Atualizar imagens e modelo</button>
     <button type="button" class="button-secondary" onclick="document.getElementById('enroll-modal').close()">Cancelar</button>
   </div>
 </dialog>
@@ -180,8 +180,11 @@ async function openEnrollModal(stationId, stationName) {
   document.getElementById('enroll-select-all').checked = false;
   const list = document.getElementById('enroll-turma-list');
   const errorEl = document.getElementById('enroll-turma-error');
+  const submitButton = document.getElementById('enroll-submit');
   list.innerHTML = '';
   errorEl.style.display = 'none';
+  submitButton.disabled = false;
+  submitButton.textContent = 'Atualizar imagens e modelo';
 
   const {turmas, error} = await fetchS3Turmas();
   if (error) {
@@ -213,25 +216,38 @@ function toggleAllEnrollTurmas(checkbox) {
 }
 
 async function submitEnroll() {
+  const errorEl = document.getElementById('enroll-turma-error');
+  const submitButton = document.getElementById('enroll-submit');
   const turmaIds = Array.from(
     document.querySelectorAll('#enroll-turma-list input[name="enroll_turma_ids"]:checked')
   ).map((input) => input.value);
   if (turmaIds.length === 0) {
-    const errorEl = document.getElementById('enroll-turma-error');
     errorEl.textContent = 'Selecione ao menos uma turma.';
     errorEl.style.display = '';
     return;
   }
-  const response = await fetch(`/api/stations/${currentStationId}/enroll`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({turma_ids: turmaIds})
-  });
-  if (response.ok) {
+  errorEl.style.display = 'none';
+  submitButton.disabled = true;
+  submitButton.textContent = 'Enviando atualização...';
+  try {
+    const response = await fetch(`/api/stations/${currentStationId}/enroll`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({turma_ids: turmaIds})
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload.detail || `HTTP ${response.status}`);
+    }
     document.getElementById('enroll-modal').close();
     if (window.htmx) {
       htmx.ajax('GET', '/partials/stations', '#stations-panel');
     }
+  } catch (error) {
+    errorEl.textContent = 'Não foi possível solicitar a atualização: ' + error.message;
+    errorEl.style.display = '';
+    submitButton.disabled = false;
+    submitButton.textContent = 'Atualizar imagens e modelo';
   }
 }
 
