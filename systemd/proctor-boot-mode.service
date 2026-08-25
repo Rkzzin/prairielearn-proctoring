@@ -1,0 +1,12 @@
+[Unit]
+Description=Select Proctor kiosk or GNOME maintenance boot mode
+After=local-fs.target
+Before=display-manager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/proctor-boot-mode
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -195,7 +195,12 @@ class SessionManager:
         self._capture_factory = capture_factory or self._default_capture_factory
         self._uploader_factory = uploader_factory or self._default_uploader_factory
         self._kiosk_factory = kiosk_factory or (
-            lambda: ChromiumKiosk(display=self._rec_cfg.display, manage_gnome_extensions=False)
+            lambda: ChromiumKiosk(
+                display=self._rec_cfg.display,
+                manage_gnome_extensions=False,
+                require_managed_policy=True,
+                policy_helper="/usr/local/sbin/proctor-apply-chromium-policy",
+            )
         )
         self._overlay_factory = overlay_factory or (
             lambda: SessionOverlay(display=self._rec_cfg.display, api_port=self._app_cfg.api_port)

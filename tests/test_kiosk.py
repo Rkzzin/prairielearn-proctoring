@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import signal
 import subprocess
 from datetime import datetime
@@ -149,11 +150,15 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     monkeypatch.setattr(ChromiumKiosk, "_apply_window_mode_by_pid", lambda self: None)
 
     extension_dir = tmp_path / "extension"
+    policy_path = tmp_path / "managed-policy.json"
+    policy_path.touch()
     kiosk = ChromiumKiosk(
         display=":9",
         profile_dir=tmp_path / "proctor-chromium-profile",
         extension_dir=extension_dir,
         cleanup_profile_on_stop=False,
+        policy_paths=[policy_path],
+        require_managed_policy=True,
     )
     kiosk.start("https://example.com/exam", allowlist=["prairielearn.org"])
 
@@ -173,6 +178,26 @@ def test_chromium_start_adds_controlled_browser_flags(monkeypatch, tmp_path):
     assert env["DISPLAY"] == ":9"
     assert cmd[-1] == "https://example.com/exam"
     assert (extension_dir / "config.json").exists()
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    assert policy["URLBlocklist"] == ["*"]
+    assert "https://example.com" in policy["URLAllowlist"]
+    assert "https://prairielearn.org" in policy["URLAllowlist"]
+
+
+def test_chromium_refuses_to_start_without_required_managed_policy(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "src.kiosk.chromium.subprocess.Popen",
+        lambda *_args, **_kwargs: pytest.fail("Chromium nao deve iniciar sem policy"),
+    )
+    kiosk = ChromiumKiosk(
+        profile_dir=tmp_path / "proctor-chromium-profile",
+        extension_dir=tmp_path / "extension",
+        policy_paths=[tmp_path / "missing-policy.json"],
+        require_managed_policy=True,
+    )
+
+    with pytest.raises(RuntimeError, match="Policy gerenciada"):
+        kiosk.start("https://example.com/exam")
 
 
 def test_maximized_window_mode_does_not_wait_for_wmctrl(monkeypatch, tmp_path):

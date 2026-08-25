@@ -17,6 +17,11 @@ _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 EXTENSION_DIR = Path(__file__).resolve().parent / "allowlist_extension"
 EXTENSION_CONFIG_NAME = "config.json"
+CHROMIUM_MANAGED_POLICY_PATHS = (
+    Path("/etc/chromium/policies/managed/proctor-browser-hardening.json"),
+    Path("/etc/chromium-browser/policies/managed/proctor-browser-hardening.json"),
+    Path("/var/snap/chromium/current/policies/managed/proctor-browser-hardening.json"),
+)
 
 
 @dataclass(frozen=True)
@@ -199,8 +204,6 @@ def _implicit_hosts_for_start_host(host: str) -> list[str]:
 
 
 def _policy_patterns_for_host(host: str) -> list[str]:
-    schemes = ("http", "https")
-    patterns = [f"{scheme}://{host}/*" for scheme in schemes]
-    if not _IPV4_RE.fullmatch(host) and host != "localhost":
-        patterns.extend(f"{scheme}://*.{host}/*" for scheme in schemes)
-    return patterns
+    # URLAllowlist usa o formato de filtro do Chrome Enterprise, não glob de
+    # URL: um host sem ponto inicial já inclui todos os seus subdomínios.
+    return [f"{scheme}://{host}" for scheme in ("http", "https")]

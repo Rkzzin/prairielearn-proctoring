@@ -1,0 +1,36 @@
+#!/bin/sh
+set -eu
+
+root_uuid=$(findmnt -no UUID /)
+kernel=$(ls -1 /boot/vmlinuz-* | sort -V | tail -n 1)
+kernel_version=${kernel#/boot/vmlinuz-}
+initrd=/boot/initrd.img-${kernel_version}
+
+if [ ! -f "${initrd}" ]; then
+    echo "initrd nao encontrado para ${kernel}" >&2
+    exit 1
+fi
+
+cat <<EOF
+menuentry 'Infraestrutura de Provas (padrao)' --unrestricted --id proctor-kiosk {
+    recordfail
+    load_video
+    insmod gzio
+    insmod part_gpt
+    insmod ext2
+    search --no-floppy --fs-uuid --set=root ${root_uuid}
+    linux /boot/vmlinuz-${kernel_version} root=UUID=${root_uuid} ro quiet splash
+    initrd /boot/initrd.img-${kernel_version}
+}
+
+menuentry 'Manutencao GNOME (administrador)' --users proctor-admin --id proctor-maintenance {
+    recordfail
+    load_video
+    insmod gzio
+    insmod part_gpt
+    insmod ext2
+    search --no-floppy --fs-uuid --set=root ${root_uuid}
+    linux /boot/vmlinuz-${kernel_version} root=UUID=${root_uuid} ro quiet splash proctor.maintenance=1
+    initrd /boot/initrd.img-${kernel_version}
+}
+EOF

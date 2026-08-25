@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from scripts.apply_chromium_policy import validate_policy
 from src.kiosk.allowlist import (
     build_allowlist_config,
     build_chromium_policies,
@@ -72,11 +73,16 @@ def test_build_chromium_policies_blocks_by_default_and_allows_sites():
     policies = build_chromium_policies(config, extension_id="abcdefghijklmnop")
 
     assert policies["URLBlocklist"] == ["*"]
-    assert "https://prairielearn.org/*" in policies["URLAllowlist"]
-    assert "https://login.microsoftonline.com/*" in policies["URLAllowlist"]
-    assert "https://us.prairielearn.com/*" in policies["URLAllowlist"]
-    assert "https://us.prairietest.com/*" in policies["URLAllowlist"]
-    assert "https://*.example.edu/*" in policies["URLAllowlist"]
+    assert "https://prairielearn.org" in policies["URLAllowlist"]
+    assert "https://login.microsoftonline.com" in policies["URLAllowlist"]
+    assert "https://us.prairielearn.com" in policies["URLAllowlist"]
+    assert "https://us.prairietest.com" in policies["URLAllowlist"]
+    assert "https://example.edu" in policies["URLAllowlist"]
+    assert not any(
+        pattern.endswith("/*")
+        for pattern in policies["URLAllowlist"]
+        if pattern.startswith(("http://", "https://"))
+    )
     assert policies["DeveloperToolsAvailability"] == 2
     assert policies["IncognitoModeAvailability"] == 2
     assert policies["ExtensionInstallAllowlist"] == ["abcdefghijklmnop"]
@@ -90,6 +96,16 @@ def test_prairietest_start_allows_prairielearn_azure_login():
         "us.prairielearn.com",
         "us.prairietest.com",
     }
+
+
+def test_privileged_policy_helper_requires_fail_closed_blocklist():
+    with pytest.raises(ValueError, match="bloquear tudo"):
+        validate_policy({"URLBlocklist": ["example.com"], "URLAllowlist": ["https://example.com"]})
+
+
+def test_privileged_policy_helper_rejects_unrestricted_allow_pattern():
+    with pytest.raises(ValueError, match="padrao invalido"):
+        validate_policy({"URLBlocklist": ["*"], "URLAllowlist": ["*"]})
 
 
 def test_profile_cleaner_removes_dedicated_profile(tmp_path):

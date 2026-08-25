@@ -22,6 +22,7 @@ Uso típico:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -31,7 +32,15 @@ import time
 import uuid
 from pathlib import Path
 
-from src.kiosk.allowlist import EXTENSION_DIR, build_allowlist_config, write_extension_config
+from src.kiosk.allowlist import (
+    AllowlistConfig,
+    CHROMIUM_MANAGED_POLICY_PATHS,
+    EXTENSION_DIR,
+    build_allowlist_config,
+    build_chromium_policies,
+    write_chromium_policies,
+    write_extension_config,
+)
 from src.kiosk.profile import ChromiumProfileCleaner, ProfileCleanupError
 from src.core.config import config
 
@@ -80,6 +89,9 @@ class ChromiumKiosk:
         window_mode: str = "fullscreen",
         cleanup_profile_on_stop: bool = True,
         manage_gnome_extensions: bool = False,
+        policy_paths: list[Path | str] | None = None,
+        require_managed_policy: bool = False,
+        policy_helper: Path | str | None = None,
     ):
         self._display = display or os.environ.get("DISPLAY", ":0")
         self._profile_root = Path(profile_dir or "/tmp/proctor-chromium-profile")
@@ -88,6 +100,14 @@ class ChromiumKiosk:
         self._window_mode = window_mode
         self._cleanup_profile_on_stop = cleanup_profile_on_stop
         self._manage_gnome_extensions = manage_gnome_extensions
+        self._policy_paths = [
+            Path(path)
+            for path in (
+                CHROMIUM_MANAGED_POLICY_PATHS if policy_paths is None else policy_paths
+            )
+        ]
+        self._require_managed_policy = require_managed_policy
+        self._policy_helper = Path(policy_helper) if policy_helper else None
         self._proc: subprocess.Popen | None = None
         self._blocked = False
         self._disabled_extensions: list[str] = []
@@ -113,6 +133,7 @@ class ChromiumKiosk:
             allowlist=self._last_allowlist,
         )
         write_extension_config(allowlist_config, extension_dir=self._extension_dir)
+        self._write_managed_policies(allowlist_config)
         chromium = _find_chromium()
 
         if self._manage_gnome_extensions:
@@ -162,6 +183,42 @@ class ChromiumKiosk:
 
         self._apply_window_mode_by_pid()
         logger.info("Chromium iniciado (PID %d)", self._proc.pid)
+
+    def _write_managed_policies(self, allowlist_config: AllowlistConfig) -> None:
+        policies = build_chromium_policies(allowlist_config)
+        written_paths = []
+        for path in self._policy_paths:
+            if not path.exists() or not os.access(path, os.W_OK):
+                continue
+            try:
+                write_chromium_policies(policies, output_path=path)
+                written_paths.append(path)
+            except OSError as exc:
+                logger.warning("Falha ao gravar policy do Chromium em %s: %s", path, exc)
+
+        if not written_paths and self._policy_helper is not None:
+            try:
+                subprocess.run(
+                    ["sudo", "-n", str(self._policy_helper)],
+                    input=json.dumps(policies),
+                    text=True,
+                    capture_output=True,
+                    timeout=10,
+                    check=True,
+                )
+                written_paths.extend(self._policy_paths)
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.error("Helper da policy gerenciada falhou: %s", exc)
+
+        if self._require_managed_policy and not written_paths:
+            raise RuntimeError(
+                "Policy gerenciada da allowlist indisponível; Chromium não será iniciado"
+            )
+        if written_paths:
+            logger.info(
+                "Allowlist gerenciada gravada em: %s",
+                ", ".join(str(path) for path in written_paths),
+            )
 
     def stop(self) -> None:
         """Encerra o Chromium e restaura o ambiente."""
