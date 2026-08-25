@@ -64,7 +64,7 @@ class ChromiumKiosk:
     """Gerencia o Chromium controlado para uma sessão de prova.
 
     Args:
-        display: Display X11 (default: lê $DISPLAY ou ":1").
+        display: Display X11 (default: lê $DISPLAY ou ":0").
         profile_dir: Diretório de perfil dedicado do Chromium.
         extension_dir: Diretório da extensão allowlist estática.
         window_mode: ``maximized`` (produção), ``fullscreen`` ou ``kiosk``.
@@ -81,7 +81,7 @@ class ChromiumKiosk:
         cleanup_profile_on_stop: bool = True,
         manage_gnome_extensions: bool = False,
     ):
-        self._display = display or os.environ.get("DISPLAY", ":1")
+        self._display = display or os.environ.get("DISPLAY", ":0")
         self._profile_root = Path(profile_dir or "/tmp/proctor-chromium-profile")
         self._profile_dir: Path | None = None
         self._extension_dir = Path(extension_dir or EXTENSION_DIR)

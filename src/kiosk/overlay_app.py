@@ -746,7 +746,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--guard-height", type=int, default=32)
     args = parser.parse_args(argv)
 
-    os.environ.setdefault("DISPLAY", os.environ.get("DISPLAY", ":1"))
+    os.environ.setdefault("DISPLAY", os.environ.get("DISPLAY", ":0"))
 
     if args.mode == "controls":
         return _controls_mode(args.stop_url, args.status_url)

@@ -251,7 +251,11 @@ def _make_manager(
     fake_camera = FakeCamera(frames)
 
     manager = SessionManager(
-        app_config=AppConfig(data_dir="/tmp/proctor-tests"),
+        app_config=AppConfig(
+            data_dir="/tmp/proctor-tests",
+            persist_session_config=False,
+            restore_exam_mode_on_startup=False,
+        ),
         face_config=FaceConfig(
             models_dir="models",
             encodings_dir="data/encodings",
@@ -1216,6 +1220,62 @@ def test_apply_dashboard_config_ignores_missing_optional_fields():
     assert config.turma_id == "ES2025-T1"
     assert config.timer_minutes == 45
     assert manager._proctor_cfg.gaze_h_threshold == before
+
+
+def test_session_config_is_restored_from_disk(tmp_path):
+    app_config = AppConfig(
+        data_dir=tmp_path,
+        persist_session_config=True,
+        restore_exam_mode_on_startup=False,
+    )
+    manager = SessionManager(app_config=app_config)
+    manager.update_config(
+        turma_id="ES2025-T1",
+        assessment="Quiz-03",
+        timer_minutes=35,
+        prairielearn_url="https://pl.test/exam",
+        auto_start=True,
+    )
+
+    restored = SessionManager(app_config=app_config).next_config
+
+    assert restored.turma_id == "ES2025-T1"
+    assert restored.assessment == "Quiz-03"
+    assert restored.timer_minutes == 35
+    assert restored.prairielearn_url == "https://pl.test/exam"
+    assert restored.auto_start is True
+
+
+def test_invalid_persisted_config_falls_back_to_defaults(tmp_path):
+    (tmp_path / "station-config.json").write_text("not-json", encoding="utf-8")
+    manager = SessionManager(
+        app_config=AppConfig(
+            data_dir=tmp_path,
+            persist_session_config=True,
+            restore_exam_mode_on_startup=False,
+        )
+    )
+
+    assert manager.next_config.turma_id is None
+    assert manager.next_config.assessment == "Prova"
+
+
+def test_startup_restores_exam_mode_and_enables_autostart():
+    manager, _recognizer, _engine, _capture, _uploader, kiosk, overlay, lockdown, _camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._app_cfg.restore_exam_mode_on_startup = True
+    manager.update_config(turma_id="ES2025-T1", assessment="Quiz-03", auto_start=False)
+
+    status = manager.restore_exam_mode_on_startup()
+
+    assert status["mode"] == StationMode.WAITING_STUDENT.value
+    assert manager.next_config.auto_start is True
+    assert kiosk.started is True
+    assert overlay.waiting_shown == [None]
+    assert lockdown.enabled is True
 
 
 # ── Política de teardown ─────────────────────────────────────────────────────

@@ -675,6 +675,39 @@ def test_lockdown_can_allow_browser_navigation_shortcuts(monkeypatch, tmp_path):
     lockdown.disable()
 
 
+def test_lockdown_skips_gnome_operations_under_matchbox(monkeypatch, tmp_path):
+    run_calls = []
+
+    class RunningProc(DummyProc):
+        stderr = SimpleNamespace(read=lambda: b"")
+
+        def wait(self, timeout: float | None = None) -> int:
+            if timeout == 0.25:
+                raise subprocess.TimeoutExpired(cmd="xbindkeys", timeout=timeout)
+            return 0
+
+    def fake_run(cmd, **_kwargs):
+        run_calls.append(cmd)
+        if cmd == ["setxkbmap", "-query"]:
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.run", fake_run)
+    monkeypatch.setattr("src.kiosk.lockdown.subprocess.Popen", lambda *_args, **_kwargs: RunningProc())
+    monkeypatch.setattr("src.kiosk.lockdown.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    lockdown = Lockdown(
+        display=":3",
+        manage_gnome=False,
+        state_path=tmp_path / "lockdown.json",
+    )
+    lockdown.enable()
+    lockdown.disable()
+
+    assert any(call[0] == "setxkbmap" for call in run_calls)
+    assert not any(call[0] in {"gsettings", "gnome-extensions"} for call in run_calls)
+
+
 def test_lockdown_can_restore_from_persisted_state(monkeypatch, tmp_path):
     run_calls = []
     state_path = tmp_path / "lockdown.json"

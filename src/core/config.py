@@ -152,7 +152,7 @@ class RecorderConfig(BaseSettings):
         description="Bitrate AAC usado no áudio ambiente gravado no vídeo da webcam.",
     )
     display: str = Field(
-        default=":1",
+        default=":0",
         description="Display X11 para captura de tela",
     )
     screen_size: str = Field(
@@ -334,6 +334,8 @@ class AppConfig(BaseSettings):
     data_dir: Path = Path("/opt/proctor/data")
     auto_start_poll_sec: float = 2.0
     auto_start_enabled: bool = True
+    persist_session_config: bool = True
+    restore_exam_mode_on_startup: bool = True
 
     model_config = SettingsConfigDict(
         env_prefix="PROCTOR_APP_",

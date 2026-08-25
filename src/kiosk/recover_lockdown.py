@@ -8,7 +8,7 @@ from src.kiosk.lockdown import Lockdown
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Restaura lockdown persistido do Proctor Station")
-    parser.add_argument("--display", default=os.environ.get("DISPLAY", ":1"))
+    parser.add_argument("--display", default=os.environ.get("DISPLAY", ":0"))
     args = parser.parse_args(argv)
 
     Lockdown(display=args.display).disable()

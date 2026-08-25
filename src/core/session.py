@@ -14,6 +14,7 @@ Integra:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
@@ -193,13 +194,17 @@ class SessionManager:
         self._capture_factory = capture_factory or self._default_capture_factory
         self._uploader_factory = uploader_factory or self._default_uploader_factory
         self._kiosk_factory = kiosk_factory or (
-            lambda: ChromiumKiosk(display=self._rec_cfg.display, manage_gnome_extensions=True)
+            lambda: ChromiumKiosk(display=self._rec_cfg.display, manage_gnome_extensions=False)
         )
         self._overlay_factory = overlay_factory or (
             lambda: SessionOverlay(display=self._rec_cfg.display, api_port=self._app_cfg.api_port)
         )
         self._lockdown_factory = lockdown_factory or (
-            lambda: Lockdown(display=self._rec_cfg.display, allow_browser_shortcuts=True)
+            lambda: Lockdown(
+                display=self._rec_cfg.display,
+                allow_browser_shortcuts=True,
+                manage_gnome=False,
+            )
         )
         self._reidentify_fn = reidentify_fn or run_reidentify
         self._confirmation_fn = confirmation_fn or self._wait_for_student_confirmation
@@ -224,6 +229,8 @@ class SessionManager:
             station_id=self._app_cfg.dashboard.station_id,
             station_name=self._app_cfg.dashboard.station_name,
         )
+        self._config_store_path = Path(self._app_cfg.data_dir) / "station-config.json"
+        self._load_persisted_config()
         self._runtime: SessionRuntime | None = None
         self._last_session: SessionRuntime | None = None
 
@@ -291,7 +298,38 @@ class SessionManager:
                 if value is not None:
                     current[key] = value
             self._next_config = SessionConfig(**current)
+            self._persist_config()
             return self.next_config
+
+    def _load_persisted_config(self) -> None:
+        if not self._app_cfg.persist_session_config or not self._config_store_path.exists():
+            return
+        try:
+            payload = json.loads(self._config_store_path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("configuração persistida não é um objeto JSON")
+            self._next_config = SessionConfig(**payload)
+            logger.info(
+                "Configuração restaurada: %s / %s",
+                self._next_config.turma_id,
+                self._next_config.assessment,
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("Configuração persistida inválida em %s: %s", self._config_store_path, exc)
+
+    def _persist_config(self) -> None:
+        if not self._app_cfg.persist_session_config:
+            return
+        try:
+            self._config_store_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._config_store_path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(asdict(self._next_config), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self._config_store_path)
+        except (OSError, TypeError, ValueError) as exc:
+            logger.warning("Não foi possível persistir configuração em %s: %s", self._config_store_path, exc)
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
@@ -417,6 +455,31 @@ class SessionManager:
             if self._state != SessionState.IDLE:
                 raise SessionError(f"Não é possível preparar modo prova em {self._state.value}")
             self._mode = StationMode.EXAM_READY
+            return self.get_status()
+
+    def restore_exam_mode_on_startup(self) -> dict[str, Any]:
+        """Restaura a última prova configurada após reinício da estação."""
+        if not self._app_cfg.restore_exam_mode_on_startup:
+            return self.get_status()
+        with self._lock:
+            if self._state != SessionState.IDLE or self._mode != StationMode.MAINTENANCE:
+                return self.get_status()
+            if not self._next_config.turma_id:
+                logger.info("Nenhuma configuração de prova persistida para restaurar")
+                return self.get_status()
+            if not self._next_config.auto_start:
+                self._next_config.auto_start = True
+                self._persist_config()
+        try:
+            status = self.enter_exam_mode()
+            logger.info(
+                "Modo prova restaurado no startup: %s / %s",
+                self._next_config.turma_id,
+                self._next_config.assessment,
+            )
+            return status
+        except Exception as exc:
+            logger.exception("Falha ao restaurar modo prova no startup: %s", exc)
             return self.get_status()
 
     def enter_exam_mode(self) -> dict[str, Any]:

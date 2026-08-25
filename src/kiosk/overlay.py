@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class SessionOverlay:
     def __init__(self, *, display: str | None = None, api_port: int = 8000):
-        self._display = display or os.environ.get("DISPLAY", ":1")
+        self._display = display or os.environ.get("DISPLAY", ":0")
         self._api_port = api_port
         self._controls_proc: subprocess.Popen | None = None
         self._blocked_proc: subprocess.Popen | None = None

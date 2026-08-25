@@ -15,6 +15,13 @@ from src.core.config import AppConfig
 print(AppConfig().data_dir)
 PY
 )"
+DISPLAY_NAME="$("$PYTHON_BIN" - <<'PY'
+from src.core.config import AppConfig
+print(AppConfig().recorder.display)
+PY
+)"
+RUN_UID="$(id -u "$RUN_USER")"
+XAUTHORITY_PATH="/run/user/$RUN_UID/gdm/Xauthority"
 UNIT_PATH="/etc/systemd/system/$SERVICE_NAME"
 TMP_UNIT="$(mktemp)"
 
@@ -35,14 +42,17 @@ chown -R "$RUN_USER":"$RUN_USER" "$DATA_DIR"
 cat >"$TMP_UNIT" <<EOF
 [Unit]
 Description=Proctor Station Session Manager
-After=network-online.target
-Wants=network-online.target
+After=display-manager.service network-online.target
+Wants=display-manager.service network-online.target
 
 [Service]
 Type=simple
 User=$RUN_USER
 WorkingDirectory=$PROJECT_DIR
 Environment=PYTHONUNBUFFERED=1
+Environment=DISPLAY=$DISPLAY_NAME
+Environment=XAUTHORITY=$XAUTHORITY_PATH
+ExecStartPre=/bin/bash -c 'for _ in {1..60}; do /usr/bin/xdpyinfo -display $DISPLAY_NAME >/dev/null 2>&1 && exit 0; sleep 1; done; exit 1'
 ExecStart=$PYTHON_BIN -m uvicorn src.api.server:app --host 0.0.0.0 --port $PORT
 Restart=always
 RestartSec=3

@@ -65,7 +65,7 @@ class Capture:
         on_segment_ready: Callback chamado quando um segmento fecha.
             Assinatura: (segment: SegmentInfo) -> None
             Chamado em thread separada — deve ser thread-safe.
-        display: Display X11 para captura de tela (default: ":1").
+        display: Display X11 para captura de tela (default: ":0").
         screen_size: Resolução final do vídeo da tela (default: "1280x720").
     """
 

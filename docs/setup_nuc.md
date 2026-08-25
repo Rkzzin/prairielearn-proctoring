@@ -128,7 +128,21 @@ Se ele não achar nada automaticamente, ele avisa e mostra o comando manual
 Rode este script de novo sempre que a webcam for trocada ou reconectada numa
 porta USB diferente.
 
-## 7. Instalar o serviço systemd da API local (script)
+## 7. Instalar a sessão Matchbox dedicada (script)
+
+Substitua o GNOME Shell por uma sessão X11 mínima, sem painel, menu, atalhos do
+Matchbox ou acesso a terminal:
+
+```bash
+sudo bash scripts/install_matchbox_session.sh
+```
+
+O script habilita login automático do usuário da estação, instala a sessão
+`Proctor Matchbox` no GDM e bloqueia troca de VT no Xorg. As configurações
+anteriores ficam em `/etc/gdm3/custom.conf.proctor-backup` e no arquivo
+`*.proctor-backup` do usuário em `/var/lib/AccountsService/users/`.
+
+## 8. Instalar o serviço systemd da API local (script)
 
 ```bash
 cd ~/proctor-station   # o script resolve import a partir do cwd — sempre cd antes
@@ -147,7 +161,7 @@ sudo systemctl restart proctor
 > para a máquina que roda o dashboard** (hoje o EC2) — não instale isso nas
 > estações.
 
-## 8. Verificação (script)
+## 9. Verificação (script)
 
 ```bash
 systemctl status proctor --no-pager
@@ -167,7 +181,7 @@ Com o dashboard acessível, confirme que esta estação aparece lá com o
 `station_id`/`station_name` corretos — se aparecer com o nome de outra estação,
 alguma NUC está com `PROCTOR_DASHBOARD_STATION_ID` repetido.
 
-## 9. Testar uma prova de ponta a ponta (manual)
+## 10. Testar uma prova de ponta a ponta (manual)
 
 Com alguém sentado na frente da webcam:
 

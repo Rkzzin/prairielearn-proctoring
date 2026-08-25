@@ -170,13 +170,15 @@ class Lockdown:
 
     def __init__(
         self,
-        display: str = ":1",
+        display: str = ":0",
         *,
         allow_browser_shortcuts: bool = False,
+        manage_gnome: bool = True,
         state_path: Path | str | None = None,
     ):
         self._display = display
         self._allow_browser_shortcuts = allow_browser_shortcuts
+        self._manage_gnome = manage_gnome
         self._state_path = Path(
             state_path
             or os.environ.get("PROCTOR_LOCKDOWN_STATE_PATH", f"/tmp/proctor-lockdown-{os.getuid()}.json")
@@ -203,8 +205,9 @@ class Lockdown:
         env = self._command_env()
 
         try:
-            self._disable_gnome_shortcuts(env)
-            self._disable_gnome_extensions(env)
+            if self._manage_gnome:
+                self._disable_gnome_shortcuts(env)
+                self._disable_gnome_extensions(env)
             self._disable_x_server_keys(env)
             self._write_state()
             self._start_xbindkeys(env)
@@ -212,8 +215,9 @@ class Lockdown:
             logger.warning("Falha ao ativar lockdown; restaurando estado anterior: %s", exc)
             self._stop_xbindkeys()
             self._restore_x_server_keys(env)
-            self._restore_gnome_extensions(env)
-            self._restore_gnome_shortcuts(env)
+            if self._manage_gnome:
+                self._restore_gnome_extensions(env)
+                self._restore_gnome_shortcuts(env)
             self._clear_state()
             self._enabled = False
             return
@@ -238,18 +242,18 @@ class Lockdown:
             self._restore_x_server_keys(env)
         except Exception as exc:
             logger.warning("Falha ao restaurar opções XKB: %s", exc)
-        try:
-            self._restore_gnome_extensions(env)
-        except Exception as exc:
-            logger.warning("Falha ao restaurar extensões GNOME: %s", exc)
-        try:
-            self._restore_gnome_shortcuts(env)
-        except Exception as exc:
-            logger.warning("Falha ao restaurar atalhos GNOME: %s", exc)
-        finally:
-            self._enabled = False
-            self._clear_state()
-            logger.info("Lockdown de teclado desativado")
+        if self._manage_gnome:
+            try:
+                self._restore_gnome_extensions(env)
+            except Exception as exc:
+                logger.warning("Falha ao restaurar extensões GNOME: %s", exc)
+            try:
+                self._restore_gnome_shortcuts(env)
+            except Exception as exc:
+                logger.warning("Falha ao restaurar atalhos GNOME: %s", exc)
+        self._enabled = False
+        self._clear_state()
+        logger.info("Lockdown de teclado desativado")
 
     @property
     def is_enabled(self) -> bool:

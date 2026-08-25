@@ -89,6 +89,7 @@ sudo apt install -y -qq \
     x11-xserver-utils \
     xbindkeys \
     wmctrl \
+    matchbox-window-manager \
     chromium-browser \
     > /dev/null 2>&1
 log "Pacotes do browser controlado e lockdown instalados"

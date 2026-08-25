@@ -33,6 +33,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        manager.restore_exam_mode_on_startup()
         worker.start()
         starter.start()
         try:
