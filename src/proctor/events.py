@@ -32,6 +32,8 @@ class EventType(str, Enum):
     ABSENCE_BLOCKED = "ABSENCE_BLOCKED"
     # Múltiplos rostos detectados
     MULTI_FACE_BLOCKED = "MULTI_FACE_BLOCKED"
+    # O rosto pertence a outro aluno da turma
+    DIFFERENT_USER_BLOCKED = "DIFFERENT_USER_BLOCKED"
     # Aluno retornou ao normal após bloqueio
     SESSION_RESUMED = "SESSION_RESUMED"
     # Marcadores de início/fim de sessão

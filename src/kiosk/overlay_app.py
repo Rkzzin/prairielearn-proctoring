@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -54,7 +55,7 @@ def _send_stop_request(stop_url: str) -> tuple[bool, str | None]:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(request, timeout=20) as response:
             if 200 <= response.status < 300:
                 return True, None
             return False, f"HTTP {response.status}"
@@ -71,9 +72,13 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
     root.title("Controles da avaliação")
     root.overrideredirect(True)
     root.attributes("-topmost", True)
+    try:
+        root.attributes("-type", "dock")
+    except tk.TclError:
+        pass
     root.configure(bg=BG)
 
-    frame = tk.Frame(root, bg=BG, padx=10, pady=10)
+    frame = tk.Frame(root, bg=BG, padx=6, pady=6)
     frame.pack()
 
     def place_controls() -> None:
@@ -87,7 +92,32 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
         y = max(screen_height - button_height - inset, 0)
         root.geometry(f"{button_width}x{button_height}+{x}+{y}")
 
+    ewmh_applied = False
+
+    def keep_controls_above() -> None:
+        nonlocal ewmh_applied
+        if not root.winfo_exists():
+            return
+        root.attributes("-topmost", True)
+        root.lift()
+        if not ewmh_applied:
+            window_id = f"0x{root.winfo_id():x}"
+            env = os.environ.copy()
+            try:
+                result = subprocess.run(
+                    ["wmctrl", "-i", "-r", window_id, "-b", "add,above,sticky"],
+                    env=env,
+                    capture_output=True,
+                    timeout=1,
+                    check=False,
+                )
+                ewmh_applied = result.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                pass
+        root.after(250, keep_controls_above)
+
     root.after(0, place_controls)
+    root.after(0, keep_controls_above)
 
     def show_dialog(title: str, message: str, *, confirm: bool = False) -> bool:
         dialog = tk.Toplevel(root)
@@ -226,9 +256,9 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
         relief="flat",
         borderwidth=0,
         cursor="hand2",
-        padx=24,
-        pady=14,
-        font=("Helvetica", 20, "bold"),
+        padx=12,
+        pady=7,
+        font=("Helvetica", 12, "bold"),
     )
     button.pack(fill="x")
     root.mainloop()
@@ -283,20 +313,39 @@ def _add_status_box(
 ) -> None:
     import tkinter as tk
 
-    box = tk.Frame(parent, bg=PANEL, highlightbackground=PANEL_BORDER, highlightthickness=1, padx=16, pady=12)
-    box.pack(pady=(8, 18), fill="x")
+    box = tk.Frame(
+        parent,
+        bg=PANEL,
+        highlightbackground=PANEL_BORDER,
+        highlightthickness=1,
+        padx=10 if compact else 16,
+        pady=6 if compact else 12,
+    )
+    box.pack(pady=(4, 8) if compact else (8, 18), fill="x")
     heading = "STATUS DA AVALIAÇÃO" if compact else "VERIFICAÇÃO DO AMBIENTE"
-    tk.Label(box, text=heading, fg=ACCENT, bg=PANEL, font=("Helvetica", 16, "bold")).pack(anchor="w")
+    tk.Label(
+        box,
+        text=heading,
+        fg=ACCENT,
+        bg=PANEL,
+        font=("Helvetica", 11 if compact else 16, "bold"),
+    ).pack(anchor="w")
     timer_label = tk.Label(
         box,
         text="",
         fg=TEXT,
         bg=PANEL,
-        font=("Helvetica", 28 if compact else 22, "bold"),
+        font=("Helvetica", 16 if compact else 22, "bold"),
     )
     if compact:
-        summary = tk.Label(box, text="Preparando o ambiente", fg=PENDING, bg=PANEL, font=("Helvetica", 20, "bold"))
-        summary.pack(anchor="w", pady=(4, 0))
+        summary = tk.Label(
+            box,
+            text="Preparando o ambiente",
+            fg=PENDING,
+            bg=PANEL,
+            font=("Helvetica", 12, "bold"),
+        )
+        summary.pack(anchor="w", pady=(2, 0))
     else:
         summary = None
         rows_frame = tk.Frame(box, bg=PANEL)
@@ -343,7 +392,7 @@ def _add_status_box(
                     text=f"Tempo restante  {remaining}    |    Horário atual  {_format_clock_time()}"
                 )
                 if not timer_label.winfo_manager():
-                    timer_label.pack(anchor="w", pady=(8, 2))
+                    timer_label.pack(anchor="w", pady=(4, 1))
             for check in payload.get("checks", []):
                 row = rows.get(check.get("key"))
                 if row is not None:
@@ -359,13 +408,13 @@ def _add_status_box(
 
 
 def _violation_report_message(reason: str) -> str | None:
-    if reason.strip().upper() in {"ABSENCE", "MULTI_FACE"}:
+    if reason.strip().upper() in {"ABSENCE", "MULTI_FACE", "DIFFERENT_USER"}:
         return "Esta ocorrência foi registrada automaticamente para a equipe responsável."
     return None
 
 
 def _show_preview_during_block(reason: str) -> bool:
-    return reason.strip().upper() not in {"ABSENCE", "GAZE", "MULTI_FACE"}
+    return reason.strip().upper() not in {"ABSENCE", "GAZE", "MULTI_FACE", "DIFFERENT_USER"}
 
 
 def _blocked_reason_message(reason: str) -> str:
@@ -374,10 +423,11 @@ def _blocked_reason_message(reason: str) -> str:
         "MULTI_FACE": "Mais de um rosto detectado. Apenas o aluno pode permanecer no enquadramento.",
         "GAZE": "Olhar fora do permitido. Olhe para a tela e para a câmera.",
         "BROWSER_EXIT": "O navegador protegido foi encerrado.",
+        "DIFFERENT_USER": "Usuário diferente detectado. O aluno autenticado deve retornar.",
     }.get(reason.strip().upper(), "Olhe para a câmera para retomar a prova.")
 
 
-def _blocked_mode(reason: str, preview_url: str, status_url: str) -> int:
+def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: str, stop_url: str) -> int:
     import tkinter as tk
 
     root = tk.Tk()
@@ -397,6 +447,31 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str) -> int:
         font=("Helvetica", 58, "bold"),
     )
     title.pack(pady=(0, 16))
+
+    if student_id:
+        student_card = tk.Frame(
+            container,
+            bg=PANEL,
+            highlightbackground=PANEL_BORDER,
+            highlightthickness=1,
+            padx=24,
+            pady=12,
+        )
+        student_card.pack(fill="x", pady=(0, 16))
+        tk.Label(
+            student_card,
+            text="USUÁRIO DO ALUNO",
+            fg=ACCENT,
+            bg=PANEL,
+            font=("Helvetica", 16, "bold"),
+        ).pack()
+        tk.Label(
+            student_card,
+            text=student_id,
+            fg=TEXT,
+            bg=PANEL,
+            font=("Helvetica", 30, "bold"),
+        ).pack(pady=(4, 0))
 
     subtitle = tk.Label(
         container,
@@ -446,6 +521,115 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str) -> int:
             font=("Helvetica", 17),
         )
         reason_label.pack()
+
+    cancellation_feedback = tk.Label(
+        container,
+        text="",
+        fg=DANGER,
+        bg="#241a24",
+        font=("Helvetica", 17, "bold"),
+    )
+    cancellation_feedback.pack(pady=(12, 0))
+
+    def request_cancellation() -> None:
+        dialog = tk.Toplevel(root)
+        dialog.title("Cancelar avaliação")
+        dialog.transient(root)
+        dialog.attributes("-topmost", True)
+        dialog.configure(bg=BG)
+        dialog.resizable(False, False)
+
+        result = {"confirmed": False}
+        content = tk.Frame(dialog, bg=BG, padx=36, pady=30)
+        content.pack()
+        tk.Label(
+            content,
+            text="Cancelar esta avaliação?",
+            fg=TEXT,
+            bg=BG,
+            font=("Helvetica", 28, "bold"),
+        ).pack(pady=(0, 12))
+        tk.Label(
+            content,
+            text="A sessão será encerrada e os registros coletados serão enviados normalmente.",
+            fg=MUTED,
+            bg=BG,
+            wraplength=680,
+            justify="center",
+            font=("Helvetica", 20),
+        ).pack(pady=(0, 24))
+        actions = tk.Frame(content, bg=BG)
+        actions.pack()
+
+        def close(confirmed: bool) -> None:
+            result["confirmed"] = confirmed
+            dialog.destroy()
+
+        tk.Button(
+            actions,
+            text="Voltar para a avaliação",
+            command=lambda: close(False),
+            bg=PANEL,
+            fg=TEXT,
+            activebackground=PANEL_BORDER,
+            activeforeground=TEXT,
+            relief="flat",
+            padx=22,
+            pady=12,
+            font=("Helvetica", 18, "bold"),
+        ).pack(side="left", padx=(0, 12))
+        tk.Button(
+            actions,
+            text="Sim, cancelar avaliação",
+            command=lambda: close(True),
+            bg="#d95757",
+            fg="white",
+            activebackground="#bd4141",
+            activeforeground="white",
+            relief="flat",
+            padx=22,
+            pady=12,
+            font=("Helvetica", 18, "bold"),
+        ).pack(side="left")
+
+        dialog.update_idletasks()
+        x = max((root.winfo_screenwidth() - dialog.winfo_reqwidth()) // 2, 0)
+        y = max((root.winfo_screenheight() - dialog.winfo_reqheight()) // 2, 0)
+        dialog.geometry(f"+{x}+{y}")
+        dialog.grab_set()
+        dialog.focus_force()
+        dialog.protocol("WM_DELETE_WINDOW", lambda: close(False))
+        root.wait_window(dialog)
+
+        if not result["confirmed"]:
+            return
+        cancel_button.configure(state="disabled", text="Cancelando avaliação...")
+        ok, error = _send_stop_request(stop_url)
+        if ok:
+            root.destroy()
+            return
+        cancel_button.configure(state="normal", text="Cancelar avaliação")
+        cancellation_feedback.configure(
+            text="Não foi possível cancelar. Tente novamente."
+            + (f" Detalhe: {error}" if error else "")
+        )
+
+    cancel_button = tk.Button(
+        container,
+        text="Cancelar avaliação",
+        command=request_cancellation,
+        bg="#a94444",
+        fg="white",
+        activebackground="#8f3535",
+        activeforeground="white",
+        relief="flat",
+        borderwidth=0,
+        cursor="hand2",
+        padx=28,
+        pady=14,
+        font=("Helvetica", 20, "bold"),
+    )
+    cancel_button.pack(pady=(12, 0))
 
     root.mainloop()
     return 0
@@ -764,7 +948,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.mode == "guard":
         return _guard_mode(args.guard_height)
-    return _blocked_mode(args.reason, args.preview_url, args.status_url)
+    return _blocked_mode(args.reason, args.preview_url, args.status_url, args.student_id, args.stop_url)
 
 
 if __name__ == "__main__":

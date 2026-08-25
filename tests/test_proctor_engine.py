@@ -235,6 +235,17 @@ class TestMultiFaceFSM:
         assert state != ProctorState.BLOCKED
 
 
+class TestDifferentUserFSM:
+    def test_identity_mismatch_blocks_immediately(self, engine: ProctorEngine):
+        engine.block(
+            BlockReason.DIFFERENT_USER,
+            details={"expected_student_id": "123", "detected_student_id": "456"},
+        )
+
+        assert engine.state == ProctorState.BLOCKED
+        assert engine.block_reason == BlockReason.DIFFERENT_USER
+
+
 # ── Testes de unblock ────────────────────────────────────────────────────────
 
 

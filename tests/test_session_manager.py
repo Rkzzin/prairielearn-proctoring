@@ -30,7 +30,7 @@ from src.core.states import StationMode as CanonicalStationMode
 from src.core.states import derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.dashboard.models import ExamConfigPayload
-from src.proctor.engine import ProctorState
+from src.proctor.engine import BlockReason, ProctorState
 
 
 def _session_config_field_names() -> set[str]:
@@ -70,11 +70,13 @@ class FakeRecognizer:
     def __init__(self, identify_results):
         self.identify_results = deque(identify_results)
         self.loaded_turma = None
+        self.identify_calls = 0
 
     def load_turma(self, turma_id):
         self.loaded_turma = turma_id
 
     def identify(self, _frame):
+        self.identify_calls += 1
         if self.identify_results:
             return self.identify_results.popleft()
         return IdentifyResult(status=IdentifyStatus.NO_FACE)
@@ -86,6 +88,7 @@ class FakeEngine:
         self.started = False
         self.stopped = False
         self.unblocked = False
+        self.external_blocks = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -101,6 +104,10 @@ class FakeEngine:
 
     def unblock(self):
         self.unblocked = True
+
+    def block(self, reason, *, details=None):
+        self.block_reason = reason
+        self.external_blocks.append((reason, details))
 
 
 class FakeCapture:
@@ -189,6 +196,7 @@ class FakeOverlay:
     def __init__(self):
         self.controls_started = False
         self.blocked_shown: list[str | None] = []
+        self.blocked_students: list[str | None] = []
         self.waiting_shown: list[str | None] = []
         self.waiting_hidden = 0
         self.confirmations: list[dict[str, object]] = []
@@ -211,8 +219,9 @@ class FakeOverlay:
     def hide_identity_confirmation(self):
         self.confirmations_hidden += 1
 
-    def show_blocked(self, reason=None):
+    def show_blocked(self, reason=None, *, student_id=None):
         self.blocked_shown.append(reason)
+        self.blocked_students.append(student_id)
 
     def hide_blocked(self):
         self.hide_calls += 1
@@ -407,11 +416,24 @@ def test_exam_checks_do_not_repair_browser_from_request_thread():
     manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
     manager._kiosk = StoppedKiosk()
     manager._browser_ready = False
+    manager._mode = StationMode.SESSION
 
     checks = manager.get_exam_checks()
 
     chromium = next(check for check in checks["checks"] if check["key"] == "chromium")
     assert chromium["state"] == "fail"
+
+
+def test_exam_checks_allow_confirmation_before_browser_starts():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager.enter_exam_mode()
+    manager._identified_student_id = "alice01"
+
+    checks = manager.get_exam_checks()
+
+    chromium = next(check for check in checks["checks"] if check["key"] == "chromium")
+    assert chromium["state"] == "pending"
+    assert checks["ready"] is True
 
 
 def test_session_manager_reconnects_stale_preview():
@@ -500,10 +522,89 @@ def test_session_manager_transitions_to_blocked_and_auto_unblocks():
     assert kiosk.blocked is True
     assert kiosk.unblocked is True
     assert overlay.blocked_shown == ["ABSENCE"]
+    assert overlay.blocked_students == ["123"]
     assert overlay.hide_calls == 1
     assert engine.unblocked is True
     assert manager.state == SessionState.SESSION
     manager.stop_session(reason="done")
+
+
+def test_periodic_identity_check_blocks_a_different_student(monkeypatch):
+    manager, recognizer, engine, *_ = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="456",
+                student_name="Bob",
+                confidence=0.92,
+            )
+        ],
+        engine_states=[],
+        frames=[],
+    )
+    manager._recognizer = recognizer
+    manager._engine = engine
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="ES2025-T1",
+        assessment="Quiz-01",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test/exam",
+    )
+    manager._last_identity_check_at = 100.0
+    monkeypatch.setattr("src.core.session.time.monotonic", lambda: 110.0)
+
+    manager._verify_session_identity("frame")
+
+    assert engine.external_blocks == [
+        (
+            BlockReason.DIFFERENT_USER,
+            {"expected_student_id": "123", "detected_student_id": "456"},
+        )
+    ]
+
+
+def test_periodic_identity_check_runs_only_every_ten_seconds(monkeypatch):
+    manager, recognizer, engine, *_ = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[],
+        frames=[],
+    )
+    manager._recognizer = recognizer
+    manager._engine = engine
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="ES2025-T1",
+        assessment="Quiz-01",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test/exam",
+    )
+    manager._last_identity_check_at = 100.0
+    now = {"value": 109.9}
+    monkeypatch.setattr("src.core.session.time.monotonic", lambda: now["value"])
+
+    manager._verify_session_identity("frame")
+    assert recognizer.identify_calls == 0
+
+    now["value"] = 110.0
+    manager._verify_session_identity("frame")
+    assert recognizer.identify_calls == 1
+    assert engine.external_blocks == []
 
 
 def test_session_manager_retries_reidentification_after_timeout():
@@ -733,7 +834,11 @@ def test_exam_mode_waiting_overlay_and_autostart_flow():
     assert status["station_status"] == StationMode.WAITING_STUDENT.value
     assert overlay.waiting_shown == [None]
     assert lockdown.enabled is True
-    assert kiosk.started is True
+    assert kiosk.started is False
+    chromium = next(
+        check for check in manager.get_exam_checks()["checks"] if check["key"] == "chromium"
+    )
+    assert chromium["state"] == "pending"
 
     worker = SessionAutoStartWorker(session_manager=manager, enabled=True)
     worker.run_once()
@@ -746,7 +851,7 @@ def test_exam_mode_waiting_overlay_and_autostart_flow():
     assert lockdown.disabled is False
 
 
-def test_manual_stop_keeps_waiting_overlay_and_prewarms_browser():
+def test_manual_stop_keeps_waiting_overlay_without_prestarting_browser():
     manager, _recognizer, _engine, _capture, _uploader, kiosk, overlay, lockdown, _camera = _make_manager(
         identify_results=[
             IdentifyResult(
@@ -767,8 +872,13 @@ def test_manual_stop_keeps_waiting_overlay_and_prewarms_browser():
 
     assert manager.mode == StationMode.WAITING_STUDENT
     assert lockdown.enabled is True
-    assert overlay.waiting_shown == [None, "Preparando a próxima sessão..."]
-    assert kiosk.start_calls == 2
+    assert overlay.waiting_shown == [
+        None,
+        "Preparando sua avaliação...",
+        "Preparando a próxima sessão...",
+    ]
+    assert kiosk.start_calls == 1
+    assert kiosk.stopped is True
 
 
 def test_session_manager_requires_identity_confirmation_before_starting_components():
@@ -828,7 +938,7 @@ def test_cancelled_identity_confirmation_returns_to_waiting_screen():
     assert overlay.waiting_shown == [None]
     assert lockdown.enabled is True
     assert camera.released is False
-    assert kiosk.start_calls == 2
+    assert kiosk.start_calls == 0
 
 
 def test_pre_exam_confirmation_response_requires_pending_confirmation():
@@ -1273,7 +1383,7 @@ def test_startup_restores_exam_mode_and_enables_autostart():
 
     assert status["mode"] == StationMode.WAITING_STUDENT.value
     assert manager.next_config.auto_start is True
-    assert kiosk.started is True
+    assert kiosk.started is False
     assert overlay.waiting_shown == [None]
     assert lockdown.enabled is True
 

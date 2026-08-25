@@ -45,7 +45,7 @@ from src.kiosk.allowlist import build_allowlist_config, write_extension_config
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.reidentify import run_reidentify
-from src.proctor.engine import ProctorEngine, ProctorState
+from src.proctor.engine import BlockReason, ProctorEngine, ProctorState
 from src.recorder.capture import Capture
 from src.recorder.uploader import Uploader
 
@@ -98,6 +98,7 @@ DASHBOARD_PROCTOR_FIELD_CASTS = {
 #: Campos que são roteamento interno do dashboard e nunca chegam à estação.
 DASHBOARD_ROUTING_FIELDS = frozenset({"target_station_ids"})
 PRE_EXAM_CONFIRMATION_TIMEOUT_SEC = 60.0
+SESSION_IDENTITY_CHECK_INTERVAL_SEC = 10.0
 
 
 @dataclass
@@ -233,6 +234,7 @@ class SessionManager:
         self._load_persisted_config()
         self._runtime: SessionRuntime | None = None
         self._last_session: SessionRuntime | None = None
+        self._last_identity_check_at = 0.0
 
         self._recognizer = None
         self._engine = None
@@ -370,6 +372,10 @@ class SessionManager:
         with self._lock:
             student_identified = self._identified_student_id is not None or self._runtime is not None
             block_reason = self._runtime.block_reason if self._runtime else None
+            no_kiosk = bool(
+                self._runtime.notes.get("no_kiosk") if self._runtime else self._next_config.no_kiosk
+            )
+            browser_required = self._mode == StationMode.SESSION and not no_kiosk
             browser_ok = self._browser_ready
             webcam_ok = self._camera.is_open
             blocked = self._state == SessionState.BLOCKED
@@ -378,7 +384,9 @@ class SessionManager:
                 "MULTI_FACE": "múltiplos rostos",
                 "GAZE": "olhar fora do permitido",
                 "BROWSER_EXIT": "Chromium encerrado",
+                "DIFFERENT_USER": "usuário diferente detectado",
             }.get(block_reason, block_reason or "")
+            student_ok = student_identified and block_reason != "DIFFERENT_USER"
             presence_ok = student_identified and block_reason != "ABSENCE"
             faces_ok = student_identified and block_reason not in {"ABSENCE", "MULTI_FACE"}
             gaze_ok = student_identified and block_reason != "GAZE"
@@ -389,7 +397,11 @@ class SessionManager:
                     "state": "fail" if blocked else "ok",
                 },
                 {"key": "webcam", "label": "Webcam detectada", "state": "ok" if webcam_ok else "fail"},
-                {"key": "student", "label": "Aluno identificado", "state": "ok" if student_identified else "pending"},
+                {
+                    "key": "student",
+                    "label": "Usuário diferente detectado" if block_reason == "DIFFERENT_USER" else "Aluno identificado",
+                    "state": "ok" if student_ok else ("fail" if block_reason == "DIFFERENT_USER" else "pending"),
+                },
                 {
                     "key": "presence",
                     "label": "Aluno ausente" if block_reason == "ABSENCE" else "Aluno presente",
@@ -401,10 +413,22 @@ class SessionManager:
                     "state": "ok" if faces_ok else ("fail" if block_reason in {"ABSENCE", "MULTI_FACE"} else "pending"),
                 },
                 {"key": "gaze", "label": "Olhar dentro do permitido", "state": "ok" if gaze_ok else ("fail" if block_reason == "GAZE" else "pending")},
-                {"key": "chromium", "label": "Chromium protegido", "state": "ok" if browser_ok else "fail"},
+                {
+                    "key": "chromium",
+                    "label": (
+                        "Chromium protegido"
+                        if browser_required
+                        else ("Chromium desativado" if no_kiosk else "Chromium será iniciado após a confirmação")
+                    ),
+                    "state": "ok" if no_kiosk or browser_ok else ("fail" if browser_required else "pending"),
+                },
             ]
             return {
-                "ready": all(check["state"] == "ok" for check in checks),
+                "ready": all(
+                    check["state"] == "ok"
+                    for check in checks
+                    if check["key"] != "chromium" or browser_required
+                ),
                 "state": self._state.value,
                 "block_reason": block_reason,
                 "seconds_remaining": self._seconds_remaining(),
@@ -489,7 +513,6 @@ class SessionManager:
             self._write_browser_allowlist_config(self._next_config)
             self._ensure_exam_lockdown_enabled()
             self._ensure_identification_camera_open()
-            self._prewarm_browser(self._next_config)
             self._mode = StationMode.WAITING_STUDENT
             self._start_browser_guard()
             self._show_waiting_overlay()
@@ -619,7 +642,7 @@ class SessionManager:
                     self._lock.acquire()
                 if not confirmed:
                     raise SessionError("Confirmação do aluno cancelada ou expirada")
-                self._hide_waiting_overlay()
+                self._show_waiting_overlay("Preparando sua avaliação...")
                 runtime_session_id = cfg.session_id or self._make_session_id(
                     cfg.turma_id,
                     identified_name,
@@ -635,7 +658,10 @@ class SessionManager:
                     started_at=datetime.now(timezone.utc),
                     state=SessionState.SESSION,
                     prairielearn_url=cfg.prairielearn_url,
-                    notes={"exam_mode_active": self._mode == StationMode.WAITING_STUDENT},
+                    notes={
+                        "exam_mode_active": self._mode == StationMode.WAITING_STUDENT,
+                        "no_kiosk": cfg.no_kiosk,
+                    },
                 )
 
                 self._uploader = None if cfg.no_record else self._uploader_factory(runtime_session_id)
@@ -663,12 +689,18 @@ class SessionManager:
                 self._lockdown.enable()
                 if self._kiosk is not None and not getattr(self._kiosk, "is_running", False):
                     self._kiosk.start(cfg.prairielearn_url, allowlist=cfg.allowlist)
+                if self._kiosk is not None:
+                    self._browser_ready = self._ensure_exam_browser_fullscreen()
+                    if not self._browser_ready:
+                        raise SessionError("Chromium não ficou pronto para iniciar a avaliação")
+                self._hide_waiting_overlay()
                 if self._overlay is not None:
                     self._overlay.start_controls()
 
                 self._engine.start()
 
                 self._stop_event.clear()
+                self._last_identity_check_at = time.monotonic()
                 self._block_handled = False
                 self._set_state(SessionState.SESSION)
                 self._mode = StationMode.SESSION
@@ -703,7 +735,6 @@ class SessionManager:
                 if self._mode == StationMode.SESSION:
                     self._mode = StationMode.EXAM_READY
                 elif self._mode == StationMode.WAITING_STUDENT:
-                    self._prewarm_browser(cfg)
                     self._show_waiting_overlay()
                 raise
 
@@ -750,7 +781,6 @@ class SessionManager:
                 self._mode = StationMode.WAITING_STUDENT if keep_waiting else StationMode.EXAM_READY
                 if self._mode == StationMode.WAITING_STUDENT:
                     self._ensure_identification_camera_open()
-                    self._prewarm_browser(self._next_config)
                     self._show_waiting_overlay()
             return self.get_status()
 
@@ -790,6 +820,7 @@ class SessionManager:
                 self._sleep(0.1)
                 continue
 
+            self._verify_session_identity(frame)
             state = self._engine.update(frame)
             if state == ProctorState.BLOCKED:
                 self._handle_blocked()
@@ -800,6 +831,35 @@ class SessionManager:
                         self._block_handled = False
 
         logger.info("Loop da sessão encerrado")
+
+    def _verify_session_identity(self, frame: Any) -> None:
+        """Compara periodicamente o rosto presente com o aluno autenticado."""
+        now = time.monotonic()
+        if now - self._last_identity_check_at < SESSION_IDENTITY_CHECK_INTERVAL_SEC:
+            return
+        self._last_identity_check_at = now
+        if self._recognizer is None or self._runtime is None or self._engine is None:
+            return
+
+        try:
+            result = self._recognizer.identify(frame)
+        except Exception as exc:
+            logger.warning("Falha na verificação periódica de identidade: %s", exc)
+            return
+
+        if result.is_match and result.student_id != self._runtime.student_id:
+            logger.warning(
+                "Usuário diferente detectado: esperado=%s detectado=%s",
+                self._runtime.student_id,
+                result.student_id,
+            )
+            self._engine.block(
+                BlockReason.DIFFERENT_USER,
+                details={
+                    "expected_student_id": self._runtime.student_id,
+                    "detected_student_id": result.student_id,
+                },
+            )
 
     def _handle_blocked(self) -> None:
         with self._lock:
@@ -813,7 +873,10 @@ class SessionManager:
             if self._kiosk is not None:
                 self._kiosk.block()
             if self._overlay is not None:
-                self._overlay.show_blocked(reason)
+                self._overlay.show_blocked(
+                    reason,
+                    student_id=self._runtime.student_id if self._runtime is not None else None,
+                )
 
         ok = self._reidentify_fn(
             recognizer=self._recognizer,
@@ -892,18 +955,6 @@ class SessionManager:
         )
         self._preview_watchdog.start()
 
-    def _prewarm_browser(self, config: SessionConfig) -> None:
-        """Abre a prova atrás do overlay enquanto a estação espera o aluno."""
-        if config.no_kiosk:
-            return
-        if self._kiosk is None:
-            self._kiosk = self._kiosk_factory()
-        if getattr(self._kiosk, "is_running", False):
-            self._browser_ready = True
-            return
-        self._kiosk.start(config.prairielearn_url, allowlist=config.allowlist)
-        self._browser_ready = bool(getattr(self._kiosk, "is_running", True))
-
     def _start_browser_guard(self) -> None:
         if self._browser_guard and self._browser_guard.is_alive():
             return
@@ -927,7 +978,12 @@ class SessionManager:
     def _browser_guard_loop(self) -> None:
         while not self._browser_guard_stop.wait(1.0):
             with self._lock:
-                active_exam = self._mode in {StationMode.WAITING_STUDENT, StationMode.SESSION}
+                no_kiosk = bool(
+                    self._runtime.notes.get("no_kiosk")
+                    if self._runtime
+                    else self._next_config.no_kiosk
+                )
+                active_exam = self._mode == StationMode.SESSION and not no_kiosk
             if not active_exam:
                 continue
             browser_ok = self._ensure_exam_browser_fullscreen()
@@ -1308,7 +1364,10 @@ class SessionManager:
                     }
                 )
             if self._overlay is not None:
-                self._overlay.show_blocked("BROWSER_EXIT")
+                self._overlay.show_blocked(
+                    "BROWSER_EXIT",
+                    student_id=self._runtime.student_id if self._runtime is not None else None,
+                )
             if self._state != SessionState.UPLOADING:
                 self._set_state(SessionState.BLOCKED)
         self._stop_event.set()

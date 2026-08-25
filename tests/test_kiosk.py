@@ -53,6 +53,7 @@ def test_blocked_overlay_reports_absence_and_multiple_faces():
 
     assert _violation_report_message("ABSENCE") == expected
     assert _violation_report_message("MULTI_FACE") == expected
+    assert _violation_report_message("DIFFERENT_USER") == expected
     assert _violation_report_message("GAZE") is None
 
 
@@ -60,11 +61,18 @@ def test_blocked_overlay_hides_preview_for_proctoring_violations():
     assert _show_preview_during_block("ABSENCE") is False
     assert _show_preview_during_block("GAZE") is False
     assert _show_preview_during_block("MULTI_FACE") is False
+    assert _show_preview_during_block("DIFFERENT_USER") is False
     assert _show_preview_during_block("BROWSER_EXIT") is True
 
 
 def test_blocked_overlay_explains_absence():
     assert _blocked_reason_message("ABSENCE") == "Ausência detectada. Volte para a frente da câmera."
+
+
+def test_blocked_overlay_explains_different_user():
+    assert _blocked_reason_message("DIFFERENT_USER") == (
+        "Usuário diferente detectado. O aluno autenticado deve retornar."
+    )
 
 
 @pytest.mark.parametrize(
@@ -758,7 +766,7 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     overlay = SessionOverlay(display=":5", api_port=8123)
     overlay.show_waiting()
     overlay.start_controls()
-    overlay.show_blocked("ABSENCE")
+    overlay.show_blocked("ABSENCE", student_id="alice01")
 
     assert calls[0][0][3:5] == ["--mode", "waiting"]
     assert calls[0][0][calls[0][0].index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
@@ -769,6 +777,8 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     assert calls[2][0][calls[2][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"
     assert calls[3][0][3:5] == ["--mode", "blocked"]
     assert calls[3][0][calls[3][0].index("--reason") + 1] == "ABSENCE"
+    assert calls[3][0][calls[3][0].index("--student-id") + 1] == "alice01"
+    assert calls[3][0][calls[3][0].index("--stop-url") + 1] == "http://127.0.0.1:8123/session/stop"
     assert calls[3][0][calls[3][0].index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
     assert calls[3][0][calls[3][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"
 

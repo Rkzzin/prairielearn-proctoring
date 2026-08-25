@@ -115,7 +115,7 @@ class SessionOverlay:
         self._terminate(self._guard_proc)
         self._guard_proc = None
 
-    def show_blocked(self, reason: str | None = None) -> None:
+    def show_blocked(self, reason: str | None = None, *, student_id: str | None = None) -> None:
         if self._blocked_proc and self._blocked_proc.poll() is None:
             return
         self._blocked_proc = self._spawn(
@@ -127,6 +127,10 @@ class SessionOverlay:
                 "blocked",
                 "--reason",
                 reason or "",
+                "--student-id",
+                student_id or "",
+                "--stop-url",
+                f"http://127.0.0.1:{self._api_port}/session/stop",
                 "--preview-url",
                 self._camera_preview_url,
                 "--status-url",

@@ -72,6 +72,7 @@ class BlockReason(str, Enum):
     GAZE       = "GAZE"
     ABSENCE    = "ABSENCE"
     MULTI_FACE = "MULTI_FACE"
+    DIFFERENT_USER = "DIFFERENT_USER"
 
 
 class ProctorEngine:
@@ -190,6 +191,11 @@ class ProctorEngine:
             )
             logger.info("Sessão '%s' desbloqueada", self.session_id)
 
+    def block(self, reason: BlockReason, *, details: dict | None = None) -> None:
+        """Bloqueia a sessão por uma violação detectada fora do estimador de gaze."""
+        if self.state != ProctorState.BLOCKED:
+            self._block(reason, details=details)
+
     # ──────────────────────────────────────────────
     #  FSM
     # ──────────────────────────────────────────────
@@ -299,7 +305,7 @@ class ProctorEngine:
             elif (now - self._warn_start) >= self._cfg.gaze_duration_sec:
                 self._block(BlockReason.GAZE)
 
-    def _block(self, reason: BlockReason) -> None:
+    def _block(self, reason: BlockReason, *, details: dict | None = None) -> None:
         """Transita para BLOCKED e registra o evento."""
         self.state = ProctorState.BLOCKED
         self.block_reason = reason
@@ -308,13 +314,14 @@ class ProctorEngine:
             BlockReason.GAZE:       EventType.GAZE_BLOCKED,
             BlockReason.ABSENCE:    EventType.ABSENCE_BLOCKED,
             BlockReason.MULTI_FACE: EventType.MULTI_FACE_BLOCKED,
+            BlockReason.DIFFERENT_USER: EventType.DIFFERENT_USER_BLOCKED,
         }
 
         self._logger.log_event(
             frame=self._frame_count,
             event_type=event_type_map[reason],
             severity=Severity.CRITICAL,
-            details={"reason": reason.value},
+            details={"reason": reason.value, **(details or {})},
         )
         logger.warning(
             "Sessão '%s' BLOQUEADA — motivo: %s (frame %d)",
