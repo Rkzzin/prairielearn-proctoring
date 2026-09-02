@@ -397,3 +397,17 @@ class TestEngineLifecycle:
             tmp_path / "sessions" / "TEST-001" / "events.jsonl"
         )
         assert any(e.type == EventType.SESSION_RESUMED.value for e in events)
+
+    def test_block_timeout_logs_critical_cancellation(self, tmp_path: Path):
+        engine = _make_engine(tmp_path)
+        engine.block(BlockReason.ABSENCE)
+        engine.cancel_after_block_timeout(20.0)
+        engine._logger.close()
+
+        events = EventLogger.read_session(
+            tmp_path / "sessions" / "TEST-001" / "events.jsonl"
+        )
+
+        timeout_event = next(event for event in events if event.type == EventType.BLOCK_TIMEOUT_CANCELLED.value)
+        assert timeout_event.severity == Severity.CRITICAL.value
+        assert timeout_event.details == {"reason": "ABSENCE", "timeout_sec": 20.0}

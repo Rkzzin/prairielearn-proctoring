@@ -11,15 +11,67 @@ import urllib.request
 from datetime import datetime
 
 
-BG = "#10243e"
-PANEL = "#183451"
-PANEL_BORDER = "#315574"
-TEXT = "#f8f5ee"
-MUTED = "#c4d0da"
-ACCENT = "#efb64d"
-SUCCESS = "#58d68d"
-DANGER = "#ff7878"
-PENDING = "#efbd62"
+# Paleta acadêmica: azul institucional identifica a plataforma; as cores de
+# estado nunca são usadas como decoração, só para comunicar resultado/risco.
+BG = "#F8FAFC"
+PANEL = "#FFFFFF"
+PANEL_BORDER = "#CBD5E1"
+TEXT = "#0F172A"
+MUTED = "#475569"
+PRIMARY = "#1E3A5F"
+ACTION = "#2563EB"
+ACTION_ACTIVE = "#1D4ED8"
+ACCENT = "#B45309"
+SUCCESS = "#15803D"
+DANGER = "#DC2626"
+DANGER_ACTIVE = "#B91C1C"
+DANGER_BG = "#FFF7F7"
+PENDING = "#B45309"
+DISABLED_BG = "#E2E8F0"
+DISABLED_TEXT = "#64748B"
+FONT = "DejaVu Sans"
+
+
+def _button(parent, *, text: str, command, variant: str = "primary", **kwargs):
+    import tkinter as tk
+
+    font = kwargs.pop("font", (FONT, 18, "bold"))
+
+    styles = {
+        "primary": {
+            "bg": ACTION,
+            "fg": "#FFFFFF",
+            "activebackground": ACTION_ACTIVE,
+            "activeforeground": "#FFFFFF",
+            "highlightbackground": ACTION_ACTIVE,
+        },
+        "secondary": {
+            "bg": PANEL,
+            "fg": PRIMARY,
+            "activebackground": "#E9EEF5",
+            "activeforeground": PRIMARY,
+            "highlightbackground": PRIMARY,
+        },
+        "danger": {
+            "bg": DANGER,
+            "fg": "#FFFFFF",
+            "activebackground": DANGER_ACTIVE,
+            "activeforeground": "#FFFFFF",
+            "highlightbackground": DANGER_ACTIVE,
+        },
+    }
+    return tk.Button(
+        parent,
+        text=text,
+        command=command,
+        relief="solid",
+        borderwidth=1,
+        highlightthickness=1,
+        cursor="hand2",
+        font=font,
+        **styles[variant],
+        **kwargs,
+    )
 
 
 def _status_summary(payload: dict) -> tuple[str, str]:
@@ -99,9 +151,9 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
         root.attributes("-type", "dock")
     except tk.TclError:
         pass
-    root.configure(bg=BG)
+    root.configure(bg=PANEL)
 
-    frame = tk.Frame(root, bg=BG, padx=6, pady=6)
+    frame = tk.Frame(root, bg=PANEL, padx=8, pady=8)
     frame.pack()
 
     def place_controls() -> None:
@@ -158,9 +210,9 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
         title_label = tk.Label(
             container,
             text=title,
-            fg="white",
+            fg=TEXT,
             bg=BG,
-            font=("Helvetica", 28, "bold"),
+            font=(FONT, 28, "bold"),
         )
         title_label.pack(pady=(0, 12))
 
@@ -170,7 +222,7 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
             fg=MUTED,
             bg=BG,
             justify="center",
-            font=("Helvetica", 21),
+            font=(FONT, 18),
         )
         message_label.pack(pady=(0, 20))
 
@@ -182,48 +234,33 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
             dialog.destroy()
 
         if confirm:
-            cancel_button = tk.Button(
+            cancel_button = _button(
                 buttons,
                 text="Cancelar",
                 command=lambda: close(False),
-                bg=PANEL,
-                fg="white",
-                activebackground="#4a5459",
-                activeforeground="white",
-                relief="flat",
                 padx=16,
                 pady=8,
-                font=("Helvetica", 18, "bold"),
+                variant="secondary",
             )
             cancel_button.pack(side="left", padx=(0, 10))
 
-            confirm_button = tk.Button(
+            confirm_button = _button(
                 buttons,
                 text="Finalizar agora",
                 command=lambda: close(True),
-                bg="#b84f4f",
-                fg="white",
-                activebackground="#9b471e",
-                activeforeground="white",
-                relief="flat",
                 padx=16,
                 pady=8,
-                font=("Helvetica", 18, "bold"),
+                variant="danger",
             )
             confirm_button.pack(side="left")
         else:
-            ok_button = tk.Button(
+            ok_button = _button(
                 buttons,
                 text="Fechar",
                 command=lambda: close(False),
-                bg=PANEL,
-                fg="white",
-                activebackground="#4a5459",
-                activeforeground="white",
-                relief="flat",
                 padx=16,
                 pady=8,
-                font=("Helvetica", 18, "bold"),
+                variant="secondary",
             )
             ok_button.pack()
 
@@ -262,26 +299,18 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
     _add_status_box(
         frame,
         status_url=status_url,
-        bg=BG,
+        bg=PANEL,
         compact=True,
         on_update=lambda _payload: root.after_idle(place_controls),
     )
-    action_border = tk.Frame(frame, bg="#ff8d8d", padx=2, pady=2)
-    action_border.pack(fill="x", pady=(2, 0))
-    button = tk.Button(
-        action_border,
+    button = _button(
+        frame,
         text="FINALIZAR AVALIAÇÃO",
         command=on_stop,
-        bg="#d95757",
-        fg="white",
-        activebackground="#bd4141",
-        activeforeground="white",
-        relief="flat",
-        borderwidth=0,
-        cursor="hand2",
         padx=12,
-        pady=7,
-        font=("Helvetica", 12, "bold"),
+        pady=9,
+        font=(FONT, 12, "bold"),
+        variant="danger",
     )
     button.pack(fill="x")
     root.mainloop()
@@ -305,9 +334,9 @@ def _add_camera_preview(
         text="ENQUADRAMENTO DA CÂMERA",
         fg=ACCENT,
         bg=bg,
-        font=("Helvetica", 17, "bold"),
+        font=(FONT, 15, "bold"),
     ).pack(pady=(0, 8))
-    label = tk.Label(parent, text="Preparando a câmera...", fg=MUTED, bg=bg, font=("Helvetica", 22))
+    label = tk.Label(parent, text="Preparando a câmera...", fg=MUTED, bg=bg, font=(FONT, 18))
     label.pack(pady=(0, 20))
 
     def refresh() -> None:
@@ -336,9 +365,10 @@ def _add_status_box(
 ) -> None:
     import tkinter as tk
 
+    box_bg = "#E9EEF5"
     box = tk.Frame(
         parent,
-        bg=PANEL,
+        bg=box_bg,
         highlightbackground=PANEL_BORDER,
         highlightthickness=1,
         padx=10 if compact else 16,
@@ -350,28 +380,28 @@ def _add_status_box(
         box,
         text=heading,
         fg=ACCENT,
-        bg=PANEL,
-        font=("Helvetica", 11 if compact else 16, "bold"),
+        bg=box_bg,
+        font=(FONT, 11 if compact else 14, "bold"),
     ).pack(anchor="w")
     timer_label = tk.Label(
         box,
         text="",
         fg=TEXT,
-        bg=PANEL,
-        font=("Helvetica", 16 if compact else 22, "bold"),
+        bg=box_bg,
+        font=(FONT, 16 if compact else 19, "bold"),
     )
     if compact:
         summary = tk.Label(
             box,
             text="Preparando o ambiente",
             fg=PENDING,
-            bg=PANEL,
-            font=("Helvetica", 12, "bold"),
+            bg=box_bg,
+            font=(FONT, 12, "bold"),
         )
         summary.pack(anchor="w", pady=(2, 0))
     else:
         summary = None
-        rows_frame = tk.Frame(box, bg=PANEL)
+        rows_frame = tk.Frame(box, bg=box_bg)
         rows_frame.pack(fill="x", pady=(6, 0))
     rows: dict[str, tk.Label] = {}
     for index, (key, label) in enumerate((
@@ -388,10 +418,10 @@ def _add_status_box(
         row = tk.Label(
             rows_frame,
             text=f"●  {label}",
-            fg="#7e8d84",
-            bg=PANEL,
+            fg=MUTED,
+            bg=box_bg,
             anchor="w",
-            font=("Helvetica", 20, "bold"),
+            font=(FONT, 16, "bold"),
         )
         row.grid(row=index // 2, column=index % 2, sticky="w", padx=(0, 28), pady=2)
         rows[key] = row
@@ -450,31 +480,51 @@ def _blocked_reason_message(reason: str) -> str:
     }.get(reason.strip().upper(), "Olhe para a câmera para retomar a prova.")
 
 
-def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: str, stop_url: str) -> int:
+def _blocked_mode(
+    reason: str,
+    preview_url: str,
+    status_url: str,
+    student_id: str,
+    stop_url: str,
+    timeout_sec: float,
+) -> int:
     import tkinter as tk
 
     root = tk.Tk()
     root.title("Avaliação pausada")
     root.attributes("-fullscreen", True)
     root.attributes("-topmost", True)
-    root.configure(bg="#241a24")
+    root.configure(bg=DANGER_BG)
 
-    container = tk.Frame(root, bg="#241a24", padx=48, pady=36)
+    container = tk.Frame(
+        root,
+        bg=PANEL,
+        highlightbackground="#F1B5B5",
+        highlightthickness=2,
+        padx=48,
+        pady=36,
+    )
     container.place(relx=0.5, rely=0.5, anchor="center")
 
-    title = tk.Label(
+    tk.Label(
         container,
-        text="Avaliação pausada",
+        text="AVALIAÇÃO PAUSADA",
+        fg=DANGER,
+        bg=PANEL,
+        font=(FONT, 17, "bold"),
+    ).pack(pady=(0, 6))
+    tk.Label(
+        container,
+        text="Sua atenção é necessária",
         fg=TEXT,
-        bg="#241a24",
-        font=("Helvetica", 58, "bold"),
-    )
-    title.pack(pady=(0, 16))
+        bg=PANEL,
+        font=(FONT, 42, "bold"),
+    ).pack(pady=(0, 18))
 
     if student_id:
         student_card = tk.Frame(
             container,
-            bg=PANEL,
+            bg="#F8FAFC",
             highlightbackground=PANEL_BORDER,
             highlightthickness=1,
             padx=24,
@@ -484,64 +534,64 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
         tk.Label(
             student_card,
             text="USUÁRIO DO ALUNO",
-            fg=ACCENT,
-            bg=PANEL,
-            font=("Helvetica", 16, "bold"),
+            fg=PRIMARY,
+            bg="#F8FAFC",
+            font=(FONT, 14, "bold"),
         ).pack()
         tk.Label(
             student_card,
             text=student_id,
             fg=TEXT,
-            bg=PANEL,
-            font=("Helvetica", 30, "bold"),
+            bg="#F8FAFC",
+            font=(FONT, 26, "bold"),
         ).pack(pady=(4, 0))
 
     subtitle = tk.Label(
         container,
         text=_blocked_reason_message(reason),
-        fg="#f2d6d0",
-        bg="#241a24",
+        fg=TEXT,
+        bg=PANEL,
         wraplength=820,
         justify="center",
-        font=("Helvetica", 32),
+        font=(FONT, 25, "bold"),
     )
     subtitle.pack(pady=(0, 16))
 
     tk.Label(
         container,
-        text="A avaliação será retomada automaticamente assim que a situação for regularizada.",
+        text="Corrija a situação indicada para que a avaliação seja retomada automaticamente.",
         fg=MUTED,
-        bg="#241a24",
+        bg=PANEL,
         wraplength=800,
         justify="center",
-        font=("Helvetica", 24),
+        font=(FONT, 18),
     ).pack(pady=(0, 10))
 
-    _add_status_box(container, status_url=status_url, bg="#241a24")
+    _add_status_box(container, status_url=status_url, bg=PANEL)
 
     report_message = _violation_report_message(reason)
     if report_message:
         report_label = tk.Label(
             container,
             text=report_message,
-            fg="#e8b6ae",
-            bg="#241a24",
-            font=("Helvetica", 22),
+            fg="#9F2D2D",
+            bg=PANEL,
+            font=(FONT, 16),
             wraplength=700,
             justify="center",
         )
         report_label.pack(pady=(0, 16))
 
     if _show_preview_during_block(reason):
-        _add_camera_preview(container, preview_url=preview_url, bg="#241a24", max_size=(360, 270))
+        _add_camera_preview(container, preview_url=preview_url, bg=PANEL, max_size=(360, 270))
 
     if reason:
         reason_label = tk.Label(
             container,
             text=f"Código do bloqueio: {reason}",
-            fg="#9fa9b2",
-            bg="#241a24",
-            font=("Helvetica", 17),
+            fg=MUTED,
+            bg=PANEL,
+            font=(FONT, 14),
         )
         reason_label.pack()
 
@@ -549,8 +599,8 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
         container,
         text="",
         fg=DANGER,
-        bg="#241a24",
-        font=("Helvetica", 17, "bold"),
+        bg=PANEL,
+        font=(FONT, 15, "bold"),
     )
     cancellation_feedback.pack(pady=(12, 0))
 
@@ -570,7 +620,7 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
             text="Cancelar esta avaliação?",
             fg=TEXT,
             bg=BG,
-            font=("Helvetica", 28, "bold"),
+            font=(FONT, 28, "bold"),
         ).pack(pady=(0, 12))
         tk.Label(
             content,
@@ -579,7 +629,7 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
             bg=BG,
             wraplength=680,
             justify="center",
-            font=("Helvetica", 20),
+            font=(FONT, 18),
         ).pack(pady=(0, 24))
         actions = tk.Frame(content, bg=BG)
         actions.pack()
@@ -588,31 +638,21 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
             result["confirmed"] = confirmed
             dialog.destroy()
 
-        tk.Button(
+        _button(
             actions,
             text="Voltar para a avaliação",
             command=lambda: close(False),
-            bg=PANEL,
-            fg=TEXT,
-            activebackground=PANEL_BORDER,
-            activeforeground=TEXT,
-            relief="flat",
             padx=22,
             pady=12,
-            font=("Helvetica", 18, "bold"),
+            variant="secondary",
         ).pack(side="left", padx=(0, 12))
-        tk.Button(
+        _button(
             actions,
             text="Sim, cancelar avaliação",
             command=lambda: close(True),
-            bg="#d95757",
-            fg="white",
-            activebackground="#bd4141",
-            activeforeground="white",
-            relief="flat",
             padx=22,
             pady=12,
-            font=("Helvetica", 18, "bold"),
+            variant="danger",
         ).pack(side="left")
 
         dialog.update_idletasks()
@@ -637,22 +677,35 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
             + (f" Detalhe: {error}" if error else "")
         )
 
-    cancel_button = tk.Button(
+    cancel_button = _button(
         container,
         text="Cancelar avaliação",
         command=request_cancellation,
-        bg="#a94444",
-        fg="white",
-        activebackground="#8f3535",
-        activeforeground="white",
-        relief="flat",
-        borderwidth=0,
-        cursor="hand2",
         padx=28,
         pady=14,
-        font=("Helvetica", 20, "bold"),
+        variant="danger",
     )
     cancel_button.pack(pady=(12, 0))
+
+    timeout_label = tk.Label(
+        container,
+        fg=DANGER,
+        bg=PANEL,
+        font=(FONT, 15, "bold"),
+    )
+    timeout_label.pack(pady=(14, 0))
+    deadline = root.tk.call("clock", "seconds") + max(1, int(timeout_sec))
+
+    def update_timeout() -> None:
+        remaining = max(0, deadline - root.tk.call("clock", "seconds"))
+        if remaining <= 0:
+            timeout_label.configure(text="Tempo esgotado. Encerrando a avaliação...")
+            cancel_button.configure(state="disabled")
+            return
+        timeout_label.configure(text=f"A avaliação será cancelada em {remaining}s se a situação não for corrigida.")
+        root.after(250, update_timeout)
+
+    root.after(0, update_timeout)
 
     root.mainloop()
     return 0
@@ -667,7 +720,14 @@ def _waiting_mode(message: str, start_url: str) -> int:
     root.attributes("-topmost", True)
     root.configure(bg=BG)
 
-    container = tk.Frame(root, bg=BG, padx=48, pady=32)
+    container = tk.Frame(
+        root,
+        bg=PANEL,
+        highlightbackground=PANEL_BORDER,
+        highlightthickness=1,
+        padx=64,
+        pady=52,
+    )
     container.place(relx=0.5, rely=0.5, anchor="center")
 
     if message:
@@ -675,26 +735,49 @@ def _waiting_mode(message: str, start_url: str) -> int:
             container,
             text=message,
             fg=TEXT,
-            bg=BG,
+            bg=PANEL,
             wraplength=900,
             justify="center",
-            font=("Helvetica", 58, "bold"),
+            font=(FONT, 38, "bold"),
         ).pack()
     else:
+        tk.Label(
+            container,
+            text="AVALIAÇÃO PRESENCIAL",
+            fg=PRIMARY,
+            bg=PANEL,
+            font=(FONT, 15, "bold"),
+        ).pack(pady=(0, 12))
+        tk.Label(
+            container,
+            text="Pronto para iniciar?",
+            fg=TEXT,
+            bg=PANEL,
+            font=(FONT, 42, "bold"),
+        ).pack(pady=(0, 10))
+        tk.Label(
+            container,
+            text="Ao continuar, a câmera será ativada para confirmar sua identidade.",
+            fg=MUTED,
+            bg=PANEL,
+            wraplength=620,
+            justify="center",
+            font=(FONT, 18),
+        ).pack(pady=(0, 28))
         feedback = tk.Label(
             container,
             text="",
             fg=DANGER,
-            bg=BG,
+            bg=PANEL,
             wraplength=800,
             justify="center",
-            font=("Helvetica", 20, "bold"),
+            font=(FONT, 16, "bold"),
         )
 
         def restore_button(error: str | None) -> None:
             if not root.winfo_exists():
                 return
-            start_button.configure(state="normal", text="Iniciar prova")
+            start_button.configure(state="normal", text="Iniciar prova", bg=ACTION, fg="#FFFFFF")
             feedback.configure(text=error or "Não foi possível iniciar. Tente novamente.")
             feedback.pack(pady=(18, 0))
 
@@ -707,24 +790,23 @@ def _waiting_mode(message: str, start_url: str) -> int:
                     pass
 
         def begin_identification() -> None:
-            start_button.configure(state="disabled", text="Verificando identidade...")
+            start_button.configure(
+                state="disabled",
+                text="Verificando identidade...",
+                bg=DISABLED_BG,
+                fg=DISABLED_TEXT,
+            )
             feedback.pack_forget()
             threading.Thread(target=send_start, name="request-exam-start", daemon=True).start()
 
-        start_button = tk.Button(
+        start_button = _button(
             container,
             text="Iniciar prova",
             command=begin_identification,
-            bg=ACCENT,
-            fg=BG,
-            activebackground="#ffd27a",
-            activeforeground=BG,
-            relief="flat",
-            borderwidth=0,
-            cursor="hand2",
             padx=54,
-            pady=24,
-            font=("Helvetica", 34, "bold"),
+            pady=18,
+            font=(FONT, 26, "bold"),
+            variant="primary",
         )
         start_button.pack()
 
@@ -749,41 +831,55 @@ def _confirmation_mode(
     root.attributes("-topmost", True)
     root.configure(bg=BG)
 
-    container = tk.Frame(root, bg=BG, padx=48, pady=24)
+    container = tk.Frame(
+        root,
+        bg=PANEL,
+        highlightbackground=PANEL_BORDER,
+        highlightthickness=1,
+        padx=42,
+        pady=28,
+    )
     container.place(relx=0.5, rely=0.5, anchor="center")
 
     tk.Label(
         container,
-        text="CONFIRMAÇÃO DO ALUNO",
-        fg=ACCENT,
-        bg=BG,
-        font=("Helvetica", 20, "bold"),
+        text="IDENTIDADE CONFIRMADA",
+        fg=SUCCESS,
+        bg=PANEL,
+        font=(FONT, 15, "bold"),
     ).pack(pady=(0, 8))
     tk.Label(
         container,
-        text="Confira seus dados antes de começar",
+        text="Confira seus dados antes de iniciar",
         fg=TEXT,
-        bg=BG,
+        bg=PANEL,
         wraplength=1000,
         justify="center",
-        font=("Helvetica", 52, "bold"),
+        font=(FONT, 36, "bold"),
     ).pack(pady=(0, 14))
-    identity_card = tk.Frame(container, bg=PANEL, highlightbackground=PANEL_BORDER, highlightthickness=1, padx=24, pady=12)
+    identity_card = tk.Frame(
+        container,
+        bg="#E9EEF5",
+        highlightbackground="#B7C9DE",
+        highlightthickness=1,
+        padx=24,
+        pady=12,
+    )
     identity_card.pack(fill="x", pady=(0, 12))
     tk.Label(
         identity_card,
         text=f"{student_name}\nIdentificação: {student_id}",
         fg=TEXT,
-        bg=PANEL,
+        bg="#E9EEF5",
         justify="center",
-        font=("Helvetica", 30, "bold"),
+        font=(FONT, 24, "bold"),
     ).pack()
 
     _add_camera_preview(
         container,
         preview_url=preview_url,
-        bg=BG,
-        max_size=(240, 180),
+        bg=PANEL,
+        max_size=(220, 165),
     )
 
     notice = (
@@ -798,38 +894,43 @@ def _confirmation_mode(
         container,
         text=notice,
         fg=MUTED,
-        bg=BG,
+        bg=PANEL,
         wraplength=1050,
         justify="left",
-        font=("Helvetica", 22),
+        font=(FONT, 16),
     ).pack(pady=(0, 8))
 
     confirmed = tk.BooleanVar(value=False)
     confirm_button: tk.Button
-    remaining_label = tk.Label(container, fg=MUTED, bg=BG, font=("Helvetica", 18))
+    remaining_label = tk.Label(container, fg=MUTED, bg=PANEL, font=(FONT, 15))
 
     checks_ready = False
 
     def set_confirm_enabled() -> None:
-        confirm_button.configure(state="normal" if confirmed.get() and checks_ready else "disabled")
+        enabled = confirmed.get() and checks_ready
+        confirm_button.configure(
+            state="normal" if enabled else "disabled",
+            bg=ACTION if enabled else DISABLED_BG,
+            fg="#FFFFFF" if enabled else DISABLED_TEXT,
+        )
 
     def update_release_state(payload: dict) -> None:
         nonlocal checks_ready
         checks_ready = bool(payload.get("ready"))
         set_confirm_enabled()
 
-    status_box = tk.Frame(container, bg=BG)
+    status_box = tk.Frame(container, bg=PANEL)
     status_box.pack(fill="x")
     _add_status_box(
         status_box,
         status_url=status_url,
-        bg=BG,
+        bg=PANEL,
         on_update=update_release_state,
     )
 
     acknowledgement = tk.Frame(
         container,
-        bg=PANEL,
+        bg="#F8FAFC",
         highlightbackground=PANEL_BORDER,
         highlightthickness=1,
         padx=18,
@@ -841,7 +942,7 @@ def _confirmation_mode(
         acknowledgement,
         width=52,
         height=52,
-        bg=PANEL,
+        bg="#F8FAFC",
         highlightthickness=0,
         cursor="hand2",
     )
@@ -853,10 +954,10 @@ def _confirmation_mode(
             "e estou ciente de que devo cumpri-las."
         ),
         fg=TEXT,
-        bg=PANEL,
+        bg="#F8FAFC",
         justify="left",
         wraplength=900,
-        font=("Helvetica", 22, "bold"),
+        font=(FONT, 16, "bold"),
         cursor="hand2",
     )
     acknowledgement_text.pack(side="left", fill="x", expand=True)
@@ -868,12 +969,12 @@ def _confirmation_mode(
             4,
             48,
             48,
-            fill=SUCCESS if confirmed.get() else BG,
-            outline=SUCCESS if confirmed.get() else MUTED,
+            fill=SUCCESS if confirmed.get() else PANEL,
+            outline=SUCCESS if confirmed.get() else PRIMARY,
             width=3,
         )
         if confirmed.get():
-            checkbox.create_line(13, 27, 22, 36, 40, 16, fill=BG, width=5, capstyle="round", joinstyle="round")
+            checkbox.create_line(13, 27, 22, 36, 40, 16, fill="#FFFFFF", width=5, capstyle="round", joinstyle="round")
 
     def toggle_acknowledgement(_event=None) -> None:
         confirmed.set(not confirmed.get())
@@ -884,7 +985,7 @@ def _confirmation_mode(
         widget.bind("<Button-1>", toggle_acknowledgement)
     draw_checkbox()
 
-    buttons = tk.Frame(container, bg=BG)
+    buttons = tk.Frame(container, bg=PANEL)
     buttons.pack()
 
     finished = False
@@ -897,34 +998,25 @@ def _confirmation_mode(
         _send_stop_request(url)
         root.destroy()
 
-    tk.Button(
+    _button(
         buttons,
         text="Não são meus dados",
         command=lambda: respond(cancel_url),
-        bg=PANEL,
-        fg="white",
-        activebackground="#4a5459",
-        activeforeground="white",
-        relief="flat",
         padx=24,
         pady=12,
-        font=("Helvetica", 22, "bold"),
+        variant="secondary",
     ).pack(side="left", padx=(0, 12))
-    confirm_button = tk.Button(
+    confirm_button = _button(
         buttons,
-        text="Começar avaliação",
+        text="Confirmar e iniciar avaliação",
         command=lambda: respond(confirm_url),
         state="disabled",
-        bg="#24734b",
-        fg="white",
-        activebackground="#1f633e",
-        activeforeground="white",
-        relief="flat",
         padx=24,
         pady=12,
-        font=("Helvetica", 22, "bold"),
+        variant="primary",
     )
     confirm_button.pack(side="left")
+    set_confirm_enabled()
     remaining_label.pack(pady=(18, 0))
 
     deadline = root.tk.call("clock", "seconds") + max(1, int(timeout_sec))
@@ -995,7 +1087,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.mode == "guard":
         return _guard_mode(args.guard_height)
-    return _blocked_mode(args.reason, args.preview_url, args.status_url, args.student_id, args.stop_url)
+    return _blocked_mode(
+        args.reason,
+        args.preview_url,
+        args.status_url,
+        args.student_id,
+        args.stop_url,
+        args.timeout_sec,
+    )
 
 
 if __name__ == "__main__":

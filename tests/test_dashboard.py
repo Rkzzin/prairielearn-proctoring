@@ -1005,6 +1005,11 @@ def test_timeline_is_chronological_and_human_readable():
                 severity=EventSeverity.CRITICAL,
             ),
             SessionEventPayload(
+                timestamp=datetime(2026, 4, 16, 19, 2, 4, tzinfo=timezone.utc),
+                event_type="BLOCK_TIMEOUT_CANCELLED",
+                severity=EventSeverity.CRITICAL,
+            ),
+            SessionEventPayload(
                 timestamp=datetime(2026, 4, 16, 18, 0, 9, tzinfo=timezone.utc),
                 event_type="GAZE_WARNING",
                 severity=EventSeverity.WARNING,
@@ -1014,12 +1019,13 @@ def test_timeline_is_chronological_and_human_readable():
 
     timeline = _build_timeline(session)
 
-    assert [event["relative_time"] for event in timeline] == ["00:09", "01:02:03"]
+    assert [event["relative_time"] for event in timeline] == ["00:09", "01:02:03", "01:02:04"]
     assert [event["reason"] for event in timeline] == [
         "Olhar desviado detectado",
         "Avaliação pausada: usuário diferente detectado",
+        "Avaliação cancelada: bloqueio não resolvido no prazo",
     ]
-    assert _event_counts(timeline) == {"ALL": 2, "INFO": 0, "WARNING": 1, "CRITICAL": 1}
+    assert _event_counts(timeline) == {"ALL": 3, "INFO": 0, "WARNING": 1, "CRITICAL": 2}
 
 
 def test_session_review_template_prioritizes_human_event_information():

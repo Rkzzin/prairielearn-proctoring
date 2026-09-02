@@ -89,6 +89,7 @@ class FakeEngine:
         self.stopped = False
         self.unblocked = False
         self.external_blocks = []
+        self.cancelled_timeouts: list[float] = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -108,6 +109,9 @@ class FakeEngine:
     def block(self, reason, *, details=None):
         self.block_reason = reason
         self.external_blocks.append((reason, details))
+
+    def cancel_after_block_timeout(self, timeout_sec):
+        self.cancelled_timeouts.append(timeout_sec)
 
 
 class FakeCapture:
@@ -197,6 +201,7 @@ class FakeOverlay:
         self.controls_started = False
         self.blocked_shown: list[str | None] = []
         self.blocked_students: list[str | None] = []
+        self.blocked_timeouts: list[float] = []
         self.waiting_shown: list[str | None] = []
         self.waiting_hidden = 0
         self.confirmations: list[dict[str, object]] = []
@@ -219,9 +224,10 @@ class FakeOverlay:
     def hide_identity_confirmation(self):
         self.confirmations_hidden += 1
 
-    def show_blocked(self, reason=None, *, student_id=None):
+    def show_blocked(self, reason=None, *, student_id=None, timeout_sec=20.0):
         self.blocked_shown.append(reason)
         self.blocked_students.append(student_id)
+        self.blocked_timeouts.append(timeout_sec)
 
     def hide_blocked(self):
         self.hide_calls += 1
@@ -524,6 +530,7 @@ def test_session_manager_transitions_to_blocked_and_auto_unblocks():
     assert kiosk.unblocked is True
     assert overlay.blocked_shown == ["ABSENCE"]
     assert overlay.blocked_students == ["123"]
+    assert overlay.blocked_timeouts == [20.0]
     assert overlay.hide_calls == 1
     assert engine.unblocked is True
     assert manager.state == SessionState.SESSION
@@ -608,20 +615,16 @@ def test_periodic_identity_check_runs_only_every_ten_seconds(monkeypatch):
     assert engine.external_blocks == []
 
 
-def test_session_manager_retries_reidentification_after_timeout():
-    class RetryReidentify:
+def test_session_manager_cancels_session_after_block_timeout():
+    class TimedOutReidentify:
         def __init__(self):
-            self.calls = 0
             self.event = threading.Event()
 
         def __call__(self, **_kwargs):
-            self.calls += 1
-            if self.calls == 2:
-                self.event.set()
-                return True
+            self.event.set()
             return False
 
-    reidentify = RetryReidentify()
+    reidentify = TimedOutReidentify()
     manager, _recognizer, engine, _capture, _uploader, kiosk, overlay, _lockdown, _camera = _make_manager(
         identify_results=[
             IdentifyResult(
@@ -631,8 +634,8 @@ def test_session_manager_retries_reidentification_after_timeout():
                 confidence=0.9,
             )
         ],
-        engine_states=[ProctorState.BLOCKED, ProctorState.BLOCKED, ProctorState.NORMAL],
-        frames=["identify-frame", "blocked-frame-1", "blocked-frame-2", "resume-frame"],
+        engine_states=[ProctorState.BLOCKED],
+        frames=["identify-frame", "blocked-frame"],
         reidentify_fn=reidentify,
     )
     manager.update_config(turma_id="ES2025-T1")
@@ -640,11 +643,14 @@ def test_session_manager_retries_reidentification_after_timeout():
     manager.start_session()
 
     assert reidentify.event.wait(timeout=1.0) is True
-    assert reidentify.calls == 2
-    assert kiosk.unblocked is True
-    assert overlay.hide_calls == 1
-    assert engine.unblocked is True
-    manager.stop_session(reason="done")
+    for _ in range(50):
+        if manager.state == SessionState.IDLE:
+            break
+
+    assert engine.cancelled_timeouts == [20.0]
+    assert manager._last_session is not None
+    assert manager._last_session.notes["stop_reason"] == "block_timeout"
+    assert kiosk.stopped is True
 
 
 def test_session_manager_manual_unblock():
@@ -908,7 +914,7 @@ def test_session_manager_requires_identity_confirmation_before_starting_componen
 
     manager.start_session()
 
-    assert confirmation_calls == [("alice01", "Alice Silva", 60.0)]
+    assert confirmation_calls == [("alice01", "Alice Silva", 20.0)]
     assert engine.started is True
     assert capture.started is True
     assert uploader.started is True

@@ -196,6 +196,18 @@ class ProctorEngine:
         if self.state != ProctorState.BLOCKED:
             self._block(reason, details=details)
 
+    def cancel_after_block_timeout(self, timeout_sec: float) -> None:
+        """Registra o encerramento por bloqueio não resolvido durante a prova."""
+        self._logger.log_event(
+            frame=self._frame_count,
+            event_type=EventType.BLOCK_TIMEOUT_CANCELLED,
+            severity=Severity.CRITICAL,
+            details={
+                "reason": self.block_reason.value if self.block_reason else None,
+                "timeout_sec": timeout_sec,
+            },
+        )
+
     # ──────────────────────────────────────────────
     #  FSM
     # ──────────────────────────────────────────────

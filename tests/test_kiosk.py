@@ -803,6 +803,7 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     assert calls[3][0][3:5] == ["--mode", "blocked"]
     assert calls[3][0][calls[3][0].index("--reason") + 1] == "ABSENCE"
     assert calls[3][0][calls[3][0].index("--student-id") + 1] == "alice01"
+    assert calls[3][0][calls[3][0].index("--timeout-sec") + 1] == "20.0"
     assert calls[3][0][calls[3][0].index("--stop-url") + 1] == "http://127.0.0.1:8123/session/stop"
     assert calls[3][0][calls[3][0].index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
     assert calls[3][0][calls[3][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"

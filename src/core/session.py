@@ -97,7 +97,7 @@ DASHBOARD_PROCTOR_FIELD_CASTS = {
 
 #: Campos que são roteamento interno do dashboard e nunca chegam à estação.
 DASHBOARD_ROUTING_FIELDS = frozenset({"target_station_ids"})
-PRE_EXAM_CONFIRMATION_TIMEOUT_SEC = 60.0
+PRE_EXAM_CONFIRMATION_TIMEOUT_SEC = 20.0
 SESSION_IDENTITY_CHECK_INTERVAL_SEC = 10.0
 
 
@@ -116,7 +116,7 @@ class SessionConfig:
     allow_repeat_attempts: bool = True
     no_record: bool = False
     no_kiosk: bool = False
-    reidentify_timeout_sec: float = 60.0
+    reidentify_timeout_sec: float = 20.0
     reidentify_matches: int = 3
 
 
@@ -752,7 +752,7 @@ class SessionManager:
 
         self._stop_event.set()
         thread = self._thread
-        if thread is not None and thread.is_alive():
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
             thread.join(timeout=10)
 
         with self._lock:
@@ -880,6 +880,7 @@ class SessionManager:
                 self._overlay.show_blocked(
                     reason,
                     student_id=self._runtime.student_id if self._runtime is not None else None,
+                    timeout_sec=self._next_config.reidentify_timeout_sec,
                 )
 
         ok = self._reidentify_fn(
@@ -905,10 +906,12 @@ class SessionManager:
                 if self._state != SessionState.UPLOADING:
                     self._set_state(SessionState.SESSION)
         else:
-            # O aluno pode voltar depois do timeout. Mantém o browser bloqueado,
-            # mas libera o próximo frame para iniciar outra reidentificação.
             with self._lock:
-                self._block_handled = False
+                should_cancel = self._state == SessionState.BLOCKED and self._runtime is not None
+            if should_cancel:
+                if self._engine is not None:
+                    self._engine.cancel_after_block_timeout(self._next_config.reidentify_timeout_sec)
+                self.stop_session(reason="block_timeout")
 
     def _identify_student(
         self,

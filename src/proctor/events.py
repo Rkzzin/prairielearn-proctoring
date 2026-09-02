@@ -34,6 +34,8 @@ class EventType(str, Enum):
     MULTI_FACE_BLOCKED = "MULTI_FACE_BLOCKED"
     # O rosto pertence a outro aluno da turma
     DIFFERENT_USER_BLOCKED = "DIFFERENT_USER_BLOCKED"
+    # A situação de bloqueio não foi corrigida dentro do prazo da sessão.
+    BLOCK_TIMEOUT_CANCELLED = "BLOCK_TIMEOUT_CANCELLED"
     # Aluno retornou ao normal após bloqueio
     SESSION_RESUMED = "SESSION_RESUMED"
     # Marcadores de início/fim de sessão
