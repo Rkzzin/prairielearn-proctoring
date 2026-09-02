@@ -35,7 +35,6 @@ def create_app(
     async def lifespan(_app: FastAPI):
         manager.restore_exam_mode_on_startup()
         worker.start()
-        starter.start()
         try:
             yield
         finally:

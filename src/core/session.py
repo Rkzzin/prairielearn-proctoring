@@ -517,7 +517,6 @@ class SessionManager:
                 raise SessionError(f"Não é possível entrar em modo prova em {self._state.value}")
             self._write_browser_allowlist_config(self._next_config)
             self._ensure_exam_lockdown_enabled()
-            self._ensure_identification_camera_open()
             self._mode = StationMode.WAITING_STUDENT
             self._start_browser_guard()
             self._show_waiting_overlay()
@@ -785,7 +784,7 @@ class SessionManager:
             if self._mode == StationMode.SESSION:
                 self._mode = StationMode.WAITING_STUDENT if keep_waiting else StationMode.EXAM_READY
                 if self._mode == StationMode.WAITING_STUDENT:
-                    self._ensure_identification_camera_open()
+                    self._hide_waiting_overlay()
                     self._show_waiting_overlay()
             return self.get_status()
 
@@ -1423,4 +1422,8 @@ class SessionManager:
         return collect_session_events(self.data_dir, session_id)
 
     def _collect_dashboard_recordings(self, uploader: Any) -> list[dict[str, Any]]:
-        return collect_session_recordings(uploader, self._s3_cfg.bucket)
+        return collect_session_recordings(
+            uploader,
+            self._s3_cfg.bucket,
+            self._s3_cfg.segment_duration_sec,
+        )

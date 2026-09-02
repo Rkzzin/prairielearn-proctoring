@@ -29,11 +29,9 @@ class SessionOverlay:
                 "--mode",
                 "waiting",
                 "--message",
-                message or "Vamos preparar sua avaliação",
-                "--preview-url",
-                self._camera_preview_url,
-                "--status-url",
-                self._status_url,
+                message or "",
+                "--start-url",
+                f"http://127.0.0.1:{self._api_port}/pre-exam/start",
             ]
         )
 

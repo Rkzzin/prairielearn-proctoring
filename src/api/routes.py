@@ -73,6 +73,14 @@ def build_router(manager: SessionManager) -> APIRouter:
         except SessionError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @router.post("/pre-exam/start", status_code=status.HTTP_201_CREATED)
+    def start_session_from_overlay(request: Request) -> dict[str, Any]:
+        require_local_overlay(request)
+        try:
+            return manager.start_session()
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @router.post("/session/stop")
     def stop_session() -> dict[str, Any]:
         return manager.stop_session(reason="api")

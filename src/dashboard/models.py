@@ -64,6 +64,10 @@ class RecordingAsset(BaseModel):
     s3_bucket: str | None = None
     s3_key: str | None = None
     kind: str = "video"
+    stream: str | None = None
+    segment_index: int | None = None
+    start_offset_seconds: float | None = None
+    duration_seconds: float | None = None
 
 
 class SessionRecord(BaseModel):
@@ -130,6 +134,10 @@ class StationHeartbeat(BaseModel):
     #: src/core/enroll_runner.py. None quando a NUC não reporta (versão antiga).
     enroll_status: str | None = None
     enroll_message: str | None = None
+
+
+class StationCreatePayload(BaseModel):
+    station_name: str = Field(min_length=1, max_length=100)
 
 
 class StationRecord(BaseModel):

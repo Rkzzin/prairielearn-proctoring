@@ -2,7 +2,7 @@
 {% block content %}
 <section class="hero">
   <div class="hero-card">
-    <span class="metric">{{ stations|length }}</span>
+    <span class="metric" id="stations-count">{{ stations|length }}</span>
     <span>estações registradas</span>
   </div>
   <div class="hero-card">
@@ -17,8 +17,13 @@
 
 <section class="panel">
   <div class="panel-header">
-    <h2>Estações em tempo real</h2>
-    <p>Atualização por HTMX a cada 5 segundos.</p>
+    <div>
+      <h2>Estações em tempo real</h2>
+      <p>Atualização por HTMX a cada 5 segundos.</p>
+    </div>
+    <button type="button" class="button-secondary" onclick="openCreateStationModal()">
+      Nova estação
+    </button>
   </div>
   <div
     id="stations-panel"
@@ -29,6 +34,33 @@
     {% include "_stations.html" %}
   </div>
 </section>
+
+<dialog id="create-station-modal" class="modal">
+  <div id="create-station-form-panel">
+    <h2>Cadastrar nova estação</h2>
+    <p>Informe um nome exclusivo. O ID e o token serão gerados automaticamente.</p>
+    <form class="form-card" id="create-station-form" onsubmit="createStation(event)">
+      <label>Nome da estação
+        <input type="text" name="station_name" maxlength="100" placeholder="Ex.: NUC Sala 04" required>
+      </label>
+      <p class="form-error" id="create-station-error" hidden></p>
+      <div class="modal-actions">
+        <button type="submit" id="create-station-submit">Gerar estação e token</button>
+        <button type="button" class="button-secondary" onclick="closeCreateStationModal()">Cancelar</button>
+      </div>
+    </form>
+  </div>
+  <div id="create-station-result" hidden>
+    <h2>Estação cadastrada</h2>
+    <p>Copie esta configuração agora. O token não poderá ser consultado novamente.</p>
+    <pre class="station-token-block"><code id="station-config-output"></code></pre>
+    <p class="copy-feedback" id="station-config-copy-feedback" hidden>Configuração copiada.</p>
+    <div class="modal-actions">
+      <button type="button" onclick="copyStationConfig()">Copiar configuração</button>
+      <button type="button" class="button-secondary" onclick="closeCreateStationModal()">Concluir</button>
+    </div>
+  </div>
+</dialog>
 
 <section class="panel">
   <div class="panel-header">
@@ -98,6 +130,87 @@ login.microsoftonline.com</textarea></label>
 
 <script>
 let currentStationId = null;
+document.getElementById('create-station-modal').addEventListener('close', () => {
+  document.getElementById('station-config-output').textContent = '';
+});
+
+function openCreateStationModal() {
+  const modal = document.getElementById('create-station-modal');
+  document.getElementById('create-station-form').reset();
+  document.getElementById('create-station-form-panel').hidden = false;
+  document.getElementById('create-station-result').hidden = true;
+  document.getElementById('create-station-error').hidden = true;
+  document.getElementById('station-config-output').textContent = '';
+  modal.showModal();
+}
+
+function closeCreateStationModal() {
+  document.getElementById('station-config-output').textContent = '';
+  document.getElementById('create-station-modal').close();
+}
+
+async function createStation(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = document.getElementById('create-station-submit');
+  const error = document.getElementById('create-station-error');
+  const stationName = new FormData(form).get('station_name').trim();
+  error.hidden = true;
+  submit.disabled = true;
+  submit.textContent = 'Gerando...';
+
+  try {
+    const response = await fetch('/api/stations', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({station_name: stationName})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+
+    const station = payload.station;
+    document.getElementById('station-config-output').textContent = [
+      `PROCTOR_DASHBOARD_STATION_ID=${station.station_id}`,
+      `PROCTOR_DASHBOARD_STATION_NAME=${station.station_name}`,
+      `PROCTOR_DASHBOARD_STATION_TOKEN=${payload.station_token}`
+    ].join('\n');
+    document.getElementById('create-station-form-panel').hidden = true;
+    document.getElementById('create-station-result').hidden = false;
+    const count = document.getElementById('stations-count');
+    count.textContent = String(Number(count.textContent) + 1);
+    if (window.htmx) htmx.ajax('GET', '/partials/stations', '#stations-panel');
+  } catch (requestError) {
+    error.textContent = requestError.message;
+    error.hidden = false;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = 'Gerar estação e token';
+  }
+}
+
+async function copyStationConfig() {
+  const output = document.getElementById('station-config-output').textContent;
+  await navigator.clipboard.writeText(output);
+  const feedback = document.getElementById('station-config-copy-feedback');
+  feedback.hidden = false;
+  window.setTimeout(() => { feedback.hidden = true; }, 2000);
+}
+
+async function deleteStation(stationId, stationName) {
+  const confirmed = window.confirm(
+    `Excluir a estação "${stationName}"? O token será revogado, mas as sessões anteriores serão mantidas.`
+  );
+  if (!confirmed) return;
+  const response = await fetch(`/api/stations/${encodeURIComponent(stationId)}`, {method: 'DELETE'});
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    window.alert(payload.detail || 'Não foi possível excluir a estação.');
+    return;
+  }
+  const count = document.getElementById('stations-count');
+  count.textContent = String(Math.max(0, Number(count.textContent) - 1));
+  if (window.htmx) htmx.ajax('GET', '/partials/stations', '#stations-panel');
+}
 
 function openExamModeModal(stationId, stationName) {
   currentStationId = stationId;

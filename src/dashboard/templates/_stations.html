@@ -58,6 +58,15 @@
       >
         Atualizar reconhecimento facial
       </button>
+      <button
+        type="button"
+        class="button-secondary button-danger"
+        data-station-id="{{ station.station_id }}"
+        data-station-name="{{ station.station_name }}"
+        onclick="deleteStation(this.dataset.stationId, this.dataset.stationName)"
+      >
+        Excluir estação
+      </button>
     </div>
   </article>
   {% endfor %}

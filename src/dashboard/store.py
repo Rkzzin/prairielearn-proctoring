@@ -113,6 +113,64 @@ class DashboardStore:
             station = self._stations.get(station_id)
             return station.model_copy(deep=True) if station else None
 
+    def create_station(
+        self,
+        station_id: str,
+        station_name: str,
+        token_hash: str,
+    ) -> StationRecord:
+        """Cadastra uma estação offline e sua credencial sem tocar no histórico."""
+        with self._lock:
+            token_exists = self._db.execute(
+                "SELECT 1 FROM station_tokens WHERE station_id = %s",
+                (station_id,),
+            ).fetchone()
+            if station_id in self._stations or token_exists:
+                raise ValueError(f"A estação '{station_id}' já existe.")
+
+            station = StationRecord(
+                station_id=station_id,
+                station_name=station_name,
+                status=StationStatus.OFFLINE,
+                last_seen_at=datetime.fromtimestamp(0, tz=timezone.utc),
+            )
+            try:
+                self._db.execute(
+                    "INSERT INTO stations (station_id, payload) VALUES (%s, %s::jsonb)",
+                    (station.station_id, station.model_dump_json()),
+                )
+                self._db.execute(
+                    "INSERT INTO station_tokens (station_id, token_hash, label) "
+                    "VALUES (%s, %s, %s)",
+                    (station_id, token_hash, station_name),
+                )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+            self._stations[station_id] = station
+            result = station.model_copy(deep=True)
+
+        self._broadcast()
+        return result
+
+    def delete_station(self, station_id: str) -> bool:
+        """Remove estação e token; sessões anteriores permanecem para auditoria."""
+        with self._lock:
+            if station_id not in self._stations:
+                return False
+            try:
+                self._db.execute("DELETE FROM station_tokens WHERE station_id = %s", (station_id,))
+                self._db.execute("DELETE FROM stations WHERE station_id = %s", (station_id,))
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+            del self._stations[station_id]
+
+        self._broadcast()
+        return True
+
     def upsert_station_heartbeat(self, payload: StationHeartbeat) -> StationRecord:
         with self._lock:
             station = self._stations.get(payload.station_id)

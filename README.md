@@ -38,7 +38,7 @@ O repositório serve **dois deploys independentes, em máquinas diferentes**:
 | Unit systemd | `proctor.service` | `proctor-dashboard.service` |
 | App ASGI | `src.api.server:app` | `src.dashboard.app:create_app` (`--factory`) |
 | Porta padrão | `8000` (só rede local) | `8010` (atrás de nginx — professor e NUC têm autenticações separadas, Basic Auth e token de estação) |
-| Hardware necessário | webcam UVC, sessão GNOME/X11, Chromium | nenhum — é só um servidor web |
+| Hardware necessário | webcam UVC, Matchbox/Xorg, Chromium; GNOME mantido para manutenção | nenhum — é só um servidor web |
 
 ### `.env` — o que pertence a cada papel
 
@@ -48,6 +48,367 @@ O mesmo `.env.example` serve os dois papéis (`AppConfig`/`DashboardConfig` comp
 
 - Estação (NUC): [`docs/setup_nuc.md`](docs/setup_nuc.md)
 - Dashboard (professor): [`docs/setup_dashboard.md`](docs/setup_dashboard.md)
+
+## Instalar uma nova NUC
+
+Este é o procedimento de produção completo. Ele parte de uma instalação limpa
+do **Ubuntu 24.04 Desktop**, com acesso à internet e uma conta administrativa
+chamada **`proctor`**. Esse nome é obrigatório atualmente: a sessão automática,
+o helper de policies do Chromium e o modo de manutenção usam essa conta.
+
+### 1. Preparar a máquina
+
+Durante a instalação do Ubuntu:
+
+- crie o usuário `proctor` com senha forte;
+- mantenha GNOME e GDM instalados;
+- conecte a webcam USB e, preferencialmente, Ethernet durante o setup;
+- aplique as atualizações do sistema e reinicie antes de continuar.
+
+```bash
+sudo apt update
+sudo apt full-upgrade -y
+sudo reboot
+```
+
+### 2. Clonar o projeto
+
+Entre como `proctor` e clone o repositório no caminho padrão usado nas NUCs:
+
+```bash
+git clone git@github.com:Rkzzin/prairielearn-proctoring.git ~/prairielearn-proctoring
+cd ~/prairielearn-proctoring
+```
+
+Não copie `.env`, tokens ou diretórios de dados de outra NUC. Cada estação
+precisa de `station_id` e token próprios.
+
+### 3. Cadastrar a estação e gerar o token
+
+No dashboard, clique em **Nova estação**, informe um nome exclusivo e copie o
+bloco de configuração exibido. O ID é derivado do nome e o token aparece uma
+única vez; apenas seu hash fica armazenado no servidor.
+
+Como alternativa administrativa, no servidor do dashboard é possível emitir o
+token pela linha de comando:
+
+```bash
+cd ~/prairielearn-proctoring
+source venv/bin/activate
+python scripts/issue_station_token.py nuc-descomp-03
+```
+
+Guarde o token exibido. O dashboard armazena somente o hash e não consegue
+mostrar o valor novamente. Se ele for perdido, emita outro token.
+
+### 4. Executar o bootstrap da NUC
+
+Na NUC:
+
+```bash
+cd ~/prairielearn-proctoring
+./scripts/bootstrap.sh
+```
+
+O bootstrap instala Python 3.12, FFmpeg, Chromium, Matchbox, bibliotecas do
+dlib/OpenCV, cria `venv/`, baixa os modelos faciais, instala o hardening base do
+Chromium e executa os testes compatíveis com a estação.
+
+### 5. Configurar `.env`
+
+O bootstrap cria `.env` a partir de `.env.example` quando necessário. Edite-o:
+
+```bash
+nano ~/prairielearn-proctoring/.env
+```
+
+Confira pelo menos:
+
+```dotenv
+AWS_ACCESS_KEY_ID=<credencial com acesso mínimo ao bucket>
+AWS_SECRET_ACCESS_KEY=<segredo correspondente>
+AWS_DEFAULT_REGION=sa-east-1
+PROCTOR_S3_BUCKET=proctor-station
+
+PROCTOR_DASHBOARD_ENABLED=true
+PROCTOR_DASHBOARD_BASE_URL=https://proctoring.descompvalidator.click
+PROCTOR_DASHBOARD_STATION_ID=nuc-descomp-03
+PROCTOR_DASHBOARD_STATION_NAME=NUC Sala 03
+PROCTOR_DASHBOARD_STATION_TOKEN=<token emitido no passo 3>
+
+PROCTOR_APP_PROXY_SERVER=<URL do proxy, ou vazio para acesso direto>
+PROCTOR_REC_DISPLAY=:0
+```
+
+Regras importantes:
+
+- `PROCTOR_DASHBOARD_STATION_ID` deve ser exclusivo;
+- o token da estação não é a senha do professor;
+- não use o mesmo token em duas NUCs;
+- não versione `.env` nem credenciais AWS;
+- deixe `PROCTOR_APP_PROXY_SERVER=` vazio se a rede não exigir proxy.
+
+### 6. Detectar câmera e áudio
+
+Com a webcam definitiva conectada:
+
+```bash
+cd ~/prairielearn-proctoring
+bash scripts/detect_camera_audio.sh
+source venv/bin/activate
+python scripts/test_camera.py --headless
+```
+
+Revise no `.env` o índice de câmera e o dispositivo de áudio detectados antes
+de instalar o serviço.
+
+### 7. Instalar Matchbox e o serviço
+
+```bash
+cd ~/prairielearn-proctoring
+sudo bash scripts/install_matchbox_session.sh
+sudo bash scripts/install_chromium_hardening.sh
+sudo bash scripts/install_systemd_service.sh
+```
+
+Esses scripts:
+
+- configuram autologin de `proctor` na sessão Matchbox/Xorg;
+- bloqueiam troca de VT e atalhos de fuga durante a prova;
+- instalam a policy de allowlist do Chromium e seu helper privilegiado;
+- criam `/opt/proctor/data` com o proprietário correto;
+- habilitam `proctor.service` no boot.
+
+### 8. Instalar o modo de manutenção GRUB
+
+Gere uma senha PBKDF2. Digite a senha duas vezes e copie a linha inteira que
+começa com `grub.pbkdf2.sha512`:
+
+```bash
+grub-mkpasswd-pbkdf2
+```
+
+Instale o menu usando o hash, nunca a senha em texto puro:
+
+```bash
+sudo env GRUB_PASSWORD_HASH='<cole-o-hash-completo>' \
+  bash scripts/install_grub_maintenance.sh
+```
+
+No próximo boot, o GRUB mostrará por 8 segundos:
+
+- **Infraestrutura de Provas (padrao)**: opção padrão, inicia Matchbox e o
+  serviço automaticamente;
+- **Manutencao GNOME (administrador)**: exige usuário GRUB `proctor-admin` e a
+  senha definida acima, desativa o autologin, não inicia `proctor.service` e
+  abre o login do GNOME; o GNOME também exige a senha da conta `proctor`.
+
+### 9. Reiniciar e validar
+
+```bash
+sudo reboot
+```
+
+Sem escolher nada no GRUB, a NUC deve entrar na infraestrutura de provas. De
+outro computador, valide:
+
+```bash
+ssh proctor@<ip-da-nuc>
+systemctl is-active proctor.service
+curl --fail http://127.0.0.1:8000/status
+journalctl -u proctor.service -n 100 --no-pager
+```
+
+Resultado esperado:
+
+- `proctor.service` está `active`;
+- `/status` informa `IDLE`, `WAITING_STUDENT` ou `IDENTIFYING`;
+- a estação aparece online no dashboard em até alguns heartbeats;
+- antes da autenticação, o overlay mostra somente **Iniciar prova**, com a
+  câmera e o Chromium fechados;
+- ao clicar em **Iniciar prova**, a câmera abre, identifica o aluno e apresenta
+  a confirmação da avaliação;
+- no início da prova, Chromium abre e sites fora da allowlist são bloqueados.
+
+Também faça um boot manual em **Manutencao GNOME (administrador)** e confirme
+que o GNOME pede senha, o terminal e as configurações de rede estão acessíveis
+e `proctor.service` não inicia nesse modo.
+
+### 10. Carregar as fotos da turma
+
+Depois que a estação aparecer no dashboard e estiver sem prova ativa:
+
+1. clique em **Atualizar reconhecimento facial** no cartão da NUC;
+2. selecione as turmas;
+3. clique em **Atualizar imagens e modelo**;
+4. acompanhe o estado no cartão da estação.
+
+Isso executa na NUC `scripts/enroll.py --turma <turma> --force`, baixa as fotos
+do S3 e gera `data/encodings/<turma>.pkl`. Para diagnóstico local, o mesmo
+comando pode ser executado manualmente dentro de `venv/`.
+
+### Checklist antes de liberar a NUC
+
+- estação tem ID e token exclusivos;
+- câmera, microfone e gravação foram testados;
+- turma foi processada e o aluno de teste foi reconhecido;
+- PrairieLearn/PrairieTest abre pelo proxy configurado;
+- domínio externo é bloqueado pela allowlist;
+- bloqueios por ausência, múltiplas faces e usuário diferente foram testados;
+- encerramento envia os segmentos e retorna para `WAITING_STUDENT`;
+- boot padrão abre Matchbox e boot administrativo abre GNOME com senha.
+
+## Preparar uma NUC clonada de outra estação
+
+Use este procedimento quando o disco ou a imagem completa de uma NUC existente
+for duplicado. Não conecte a máquina clonada à rede de produção antes de trocar
+suas identidades: enquanto ela mantiver o mesmo `station_id`, token, `machine-id`
+e estado do Tailscale, poderá sobrescrever a estação original no dashboard ou
+aparecer como o mesmo equipamento na rede.
+
+### 1. Iniciar em manutenção
+
+No GRUB, escolha **Manutencao GNOME (administrador)**. Nesse modo é esperado que
+`systemctl is-active proctor.service` retorne `inactive`: a condição
+`proctor.maintenance=1` impede o serviço de provas de iniciar durante a
+manutenção.
+
+Confirme o modo atual:
+
+```bash
+cat /proc/cmdline
+```
+
+A linha deve conter `proctor.maintenance=1`.
+
+### 2. Trocar a identidade do Ubuntu
+
+Defina um hostname exclusivo e regenere o `machine-id` e as chaves SSH. Execute
+estes comandos somente na cópia, nunca na estação original:
+
+```bash
+sudo hostnamectl set-hostname nuc-descomp-04
+
+sudo truncate -s 0 /etc/machine-id
+sudo rm -f /var/lib/dbus/machine-id
+sudo systemd-machine-id-setup
+sudo ln -sf /etc/machine-id /var/lib/dbus/machine-id
+
+sudo rm -f /etc/ssh/ssh_host_*
+sudo ssh-keygen -A
+sudo systemctl restart ssh
+```
+
+Depois da troca das chaves SSH, clientes que acessaram a imagem original podem
+precisar remover a entrada antiga com `ssh-keygen -R <ip-ou-hostname>`.
+
+### 3. Gerar uma estação nova no dashboard
+
+No dashboard, clique em **Nova estação**, informe o nome e copie o bloco gerado.
+O token aparece uma única vez. Não reutilize o ID ou token da NUC original.
+
+Na NUC clonada, edite:
+
+```bash
+nano ~/prairielearn-proctoring/.env
+```
+
+Substitua as três variáveis pelo bloco emitido pelo dashboard e preserve as
+demais configurações da estação:
+
+```dotenv
+PROCTOR_DASHBOARD_STATION_ID=nuc-descomp-04
+PROCTOR_DASHBOARD_STATION_NAME=NUC Sala 04
+PROCTOR_DASHBOARD_STATION_TOKEN=<token-novo>
+```
+
+Confira também:
+
+```dotenv
+PROCTOR_DASHBOARD_ENABLED=true
+PROCTOR_DASHBOARD_BASE_URL=https://proctoring.descompvalidator.click
+```
+
+### 4. Remover o estado persistido da estação original
+
+Não crie `station-config.json` manualmente. O caminho correto é
+`/opt/proctor/data/station-config.json`, e o sistema o recria quando uma
+configuração de prova é enviada pelo dashboard. A cópia existente deve ser
+arquivada porque contém o `station_id` antigo e pode sobrescrever o `.env`:
+
+```bash
+sudo systemctl stop proctor.service
+
+if [ -f /opt/proctor/data/station-config.json ]; then
+  sudo mv /opt/proctor/data/station-config.json \
+    /opt/proctor/data/station-config.json.clonado
+fi
+
+sudo install -d -o proctor -g proctor /opt/proctor/data
+```
+
+Revise também `/opt/proctor/data/sessions/` antes de liberar a máquina. Sessões
+da estação original não devem permanecer na cópia; preserve-as em backup seguro
+ou remova-as conforme a política de retenção adotada.
+
+### 5. Gerar uma identidade nova no Tailscale
+
+Se a imagem inclui Tailscale, o estado clonado também identifica as duas NUCs
+como o mesmo dispositivo. Somente na máquina clonada:
+
+```bash
+sudo systemctl stop tailscaled
+sudo rm -f /var/lib/tailscale/tailscaled.state
+sudo systemctl start tailscaled
+sudo tailscale up
+```
+
+Conclua a autenticação exibida e confirme que a nova NUC aparece como um nó
+separado. Pule este passo se Tailscale não estiver instalado.
+
+### 6. Detectar o hardware e reinstalar o serviço
+
+A webcam e o dispositivo de áudio podem receber índices diferentes na nova
+máquina. Com a webcam definitiva conectada:
+
+```bash
+cd ~/prairielearn-proctoring
+bash scripts/detect_camera_audio.sh
+source venv/bin/activate
+python scripts/test_camera.py --headless
+deactivate
+
+sudo bash scripts/install_systemd_service.sh
+```
+
+O instalador recria a unit com o diretório e o usuário corretos, ajusta as
+permissões de `/opt/proctor/data` e habilita o serviço no boot.
+
+### 7. Reiniciar no modo de provas e validar
+
+```bash
+sudo reboot
+```
+
+No GRUB, escolha **Infraestrutura de Provas (padrao)** ou aguarde o timeout. Não
+escolha manutenção: nesse modo o serviço continuará inativo por projeto.
+
+Depois do boot:
+
+```bash
+cat /proc/cmdline
+systemctl is-active proctor.service
+curl --fail http://127.0.0.1:8000/status
+journalctl -u proctor.service -n 100 --no-pager
+```
+
+Resultado esperado:
+
+- `/proc/cmdline` não contém `proctor.maintenance=1`;
+- `proctor.service` retorna `active`;
+- a nova estação aparece como um cartão separado no dashboard;
+- a estação original continua online com seu próprio ID e token;
+- câmera, microfone, reconhecimento facial e gravação passam nos testes.
 
 ## Desenvolvimento local
 

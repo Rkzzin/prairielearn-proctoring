@@ -794,8 +794,8 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     overlay.show_blocked("ABSENCE", student_id="alice01")
 
     assert calls[0][0][3:5] == ["--mode", "waiting"]
-    assert calls[0][0][calls[0][0].index("--preview-url") + 1] == "http://127.0.0.1:8123/camera-preview.jpg"
-    assert calls[0][0][calls[0][0].index("--status-url") + 1] == "http://127.0.0.1:8123/exam-checks"
+    assert calls[0][0][calls[0][0].index("--start-url") + 1] == "http://127.0.0.1:8123/pre-exam/start"
+    assert "--preview-url" not in calls[0][0]
     assert calls[0][1]["DISPLAY"] == ":5"
     assert calls[1][0][-2:] == ["--mode", "guard"]
     assert calls[2][0][calls[2][0].index("--stop-url") + 1] == "http://127.0.0.1:8123/session/stop"

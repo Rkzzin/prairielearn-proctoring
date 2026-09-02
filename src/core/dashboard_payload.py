@@ -55,7 +55,11 @@ def collect_session_events(data_dir: Path, session_id: str) -> list[dict[str, An
     return [event_to_payload(event) for event in EventLogger.read_session(log_path)]
 
 
-def collect_session_recordings(uploader: Any, bucket: str) -> list[dict[str, Any]]:
+def collect_session_recordings(
+    uploader: Any,
+    bucket: str,
+    segment_duration_seconds: int,
+) -> list[dict[str, Any]]:
     """Descreve os segmentos já enviados ao S3 como assets do dashboard.
 
     Só entra o que o uploader confirmou como enviado — segmentos que falharam
@@ -69,6 +73,10 @@ def collect_session_recordings(uploader: Any, bucket: str) -> list[dict[str, Any
             "s3_bucket": bucket,
             "s3_key": s3_key,
             "kind": "video",
+            "stream": segment.stream,
+            "segment_index": segment.index,
+            "start_offset_seconds": segment.index * segment_duration_seconds,
+            "duration_seconds": segment_duration_seconds,
         }
         for segment, s3_key in uploader.uploaded_segments
     ]

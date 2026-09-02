@@ -427,6 +427,7 @@ def test_exam_checks_do_not_repair_browser_from_request_thread():
 def test_exam_checks_allow_confirmation_before_browser_starts():
     manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
     manager.enter_exam_mode()
+    manager._camera.open_device()
     manager._identified_student_id = "alice01"
 
     checks = manager.get_exam_checks()
@@ -876,9 +877,11 @@ def test_manual_stop_keeps_waiting_overlay_without_prestarting_browser():
         None,
         "Preparando sua avaliação...",
         "Preparando a próxima sessão...",
+        None,
     ]
     assert kiosk.start_calls == 1
     assert kiosk.stopped is True
+    assert _camera.released is True
 
 
 def test_session_manager_requires_identity_confirmation_before_starting_components():
@@ -937,7 +940,7 @@ def test_cancelled_identity_confirmation_returns_to_waiting_screen():
     assert manager.mode == StationMode.WAITING_STUDENT
     assert overlay.waiting_shown == [None]
     assert lockdown.enabled is True
-    assert camera.released is False
+    assert camera.released is True
     assert kiosk.start_calls == 0
 
 
@@ -1032,8 +1035,7 @@ def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
 
     assert enter_status["mode"] == StationMode.WAITING_STUDENT.value
     assert overlay.waiting_shown == [None]
-    assert manager._camera.is_open is True
-    assert camera.released is False
+    assert manager._camera.is_open is False
 
     exit_status = manager.exit_exam_mode()
 
@@ -1146,7 +1148,7 @@ def test_autostart_worker_does_not_restart_same_student_after_completion():
     assert manager.get_session()["student_id"] == "123"
     assert overlay.waiting_shown == [None]
     assert overlay.waiting_hidden == 0
-    assert _camera.released is False
+    assert _camera.released is True
 
 
 def test_autostart_allows_same_student_again_by_default():
@@ -1183,7 +1185,7 @@ def test_autostart_allows_same_student_again_by_default():
     manager.stop_session(reason="done")
 
 
-def test_autostart_keeps_waiting_camera_open_between_failed_attempts():
+def test_failed_identification_releases_waiting_camera_between_attempts():
     manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, _lockdown, camera = _make_manager(
         identify_results=[],
         engine_states=[],
@@ -1205,7 +1207,7 @@ def test_autostart_keeps_waiting_camera_open_between_failed_attempts():
     assert manager.mode == StationMode.WAITING_STUDENT
     assert overlay.waiting_shown == [None]
     assert overlay.waiting_hidden == 0
-    assert camera.released is False
+    assert camera.released is True
 
 
 # ── Contratos de estado e de config ─────────────────────────────────────────
@@ -1406,9 +1408,9 @@ def test_full_teardown_keeps_nothing():
 @pytest.mark.parametrize(
     ("mode", "session_started", "expected"),
     [
-        # Em WAITING_STUDENT sem sessão criada: preserva tudo, para não causar
-        # flicker no overlay nem liga/desliga da webcam entre tentativas.
-        (StationMode.WAITING_STUDENT, False, (True, True, True)),
+        # Em WAITING_STUDENT sem sessão criada: preserva overlay e lockdown,
+        # mas libera a câmera até o próximo clique do aluno.
+        (StationMode.WAITING_STUDENT, False, (True, True, False)),
         # Sessão já existia quando falhou: lockdown fica (segue em modo prova),
         # mas overlay/câmera são reconstruídos.
         (StationMode.WAITING_STUDENT, True, (True, False, False)),
@@ -1481,7 +1483,7 @@ async def test_api_routes_expose_phase5_flow():
         assert health.json()["camera_ok"] is True
         assert health.json()["s3_ok"] is True
 
-        start = await client.post("/session/start", json={"prairielearn_url": "https://pl.test/exam"})
+        start = await client.post("/pre-exam/start")
         assert start.status_code == 201
         assert start.json()["student_name"] == "Alice"
 

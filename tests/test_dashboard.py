@@ -5,14 +5,22 @@ from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-
+from jinja2 import Environment, FileSystemLoader
 from src.core.config import AppConfig, DashboardConfig
 from src.core.states import known_station_statuses
-from src.dashboard.app import create_app
+from src.dashboard.app import (
+    _build_timeline,
+    _event_counts,
+    _format_duration,
+    _format_relative_time,
+    _station_id_from_name,
+    create_app,
+)
 from src.dashboard.auth import hash_password
+from src.dashboard.enrollment_service import S3EnrollmentStudent, S3EnrollmentSummary
 from src.dashboard.models import (
-    ExamConfigPayload,
     EventSeverity,
+    ExamConfigPayload,
     RecordingAsset,
     SessionEventPayload,
     SessionRecord,
@@ -20,7 +28,6 @@ from src.dashboard.models import (
     StationStatus,
     StudentInfo,
 )
-from src.dashboard.enrollment_service import S3EnrollmentStudent, S3EnrollmentSummary
 from src.dashboard.store import DashboardStore
 
 
@@ -114,6 +121,8 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
     assert "Limpar sessões" in response.text
     assert "Atualizar reconhecimento facial" in response.text
     assert "scripts/enroll.py --force" in response.text
+    assert "Nova estação" in response.text
+    assert "Gerar estação e token" in response.text
 
 
 @pytest.mark.asyncio
@@ -213,7 +222,7 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
                 frame_number=2400,
                 event_type="GAZE_LEFT",
                 severity=EventSeverity.WARNING,
-                details={"ratio": 0.52},
+                details={"raw_metric_secret": 0.52},
             ).model_dump(mode="json")
         ]
         event_response = await client.post(
@@ -226,7 +235,7 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
         assert review_response.status_code == 200
         assert "Timeline de eventos" in review_response.text
         assert "Webcam" in review_response.text
-        assert "Ir para 600s" in review_response.text
+        assert "Ver vídeos do evento" in review_response.text
 
         csv_response = await client.get("/api/reports/events.csv?turma=ES2025-T1")
         assert csv_response.status_code == 200
@@ -271,6 +280,88 @@ async def test_heartbeat_requires_valid_station_token(tmp_path, dashboard_databa
             headers={"X-Station-Id": "nuc-01", "X-Station-Token": "correct-token"},
         )
         assert ok.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_create_and_delete_station_manages_its_token(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    heartbeat = {
+        "station_id": "nuc-sala-04",
+        "station_name": "NUC Sala 04",
+        "status": "IDLE",
+        "student": None,
+        "active_session_id": None,
+        "assessment": None,
+        "turma": None,
+        "auto_start_enabled": True,
+        "seconds_remaining": None,
+        "recent_events": [],
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        create_response = await client.post(
+            "/api/stations",
+            json={"station_name": "NUC Sala 04"},
+        )
+
+        assert create_response.status_code == 201
+        created = create_response.json()
+        assert created["station"]["station_id"] == "nuc-sala-04"
+        assert created["station"]["station_name"] == "NUC Sala 04"
+        assert created["station"]["status"] == "OFFLINE"
+        assert len(created["station_token"]) >= 32
+
+        station_headers = {
+            "X-Station-Id": "nuc-sala-04",
+            "X-Station-Token": created["station_token"],
+        }
+        heartbeat_response = await client.post(
+            "/api/heartbeats",
+            json=heartbeat,
+            headers=station_headers,
+        )
+        assert heartbeat_response.status_code == 200
+
+        duplicate_response = await client.post(
+            "/api/stations",
+            json={"station_name": "NUC Sala 04"},
+        )
+        assert duplicate_response.status_code == 409
+
+        app.state.store.register_session(
+            SessionRecord(
+                session_id="sess-history",
+                station_id="nuc-sala-04",
+                turma="ES2025-T1",
+                assessment="Quiz-03",
+                started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+                status=StationStatus.COMPLETED,
+            )
+        )
+        app.state.store.finalize_session("sess-history")
+        delete_response = await client.delete("/api/stations/nuc-sala-04")
+        assert delete_response.status_code == 200
+        assert app.state.store.get_station("nuc-sala-04") is None
+        assert app.state.store.get_session("sess-history") is not None
+
+        rejected_heartbeat = await client.post(
+            "/api/heartbeats",
+            json=heartbeat,
+            headers=station_headers,
+        )
+        assert rejected_heartbeat.status_code == 401
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("NUC Sala 04", "nuc-sala-04"),
+        ("Estação São José", "estacao-sao-jose"),
+        ("  Prova / Bloco A  ", "prova-bloco-a"),
+    ],
+)
+def test_station_id_from_name(name, expected):
+    assert _station_id_from_name(name) == expected
 
 
 @pytest.mark.asyncio
@@ -823,3 +914,182 @@ def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path, dashboa
     session = store.get_session("sess-s3")
     assert session is not None
     assert session.recordings[0].url == "https://signed.example/proctor-station/gravacoes/sess-s3/webcam_000.mp4?exp=3600"
+
+
+def test_timeline_builds_virtual_clip_across_segment_boundary():
+    started_at = datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc)
+    session = SessionRecord(
+        session_id="sess-clips",
+        station_id="nuc-01",
+        turma="ES2025-T1",
+        assessment="Quiz-03",
+        started_at=started_at,
+        ended_at=datetime(2026, 4, 16, 18, 10, tzinfo=timezone.utc),
+        events=[
+            SessionEventPayload(
+                timestamp=datetime(2026, 4, 16, 18, 4, 58, tzinfo=timezone.utc),
+                event_type="GAZE_BLOCKED",
+                severity=EventSeverity.CRITICAL,
+            )
+        ],
+        recordings=[
+            RecordingAsset(
+                label=f"{stream.capitalize()} {index:03d}",
+                url=f"https://video.test/{stream}_{index:03d}.mp4",
+                stream=stream,
+                segment_index=index,
+                start_offset_seconds=index * 300,
+                duration_seconds=300,
+            )
+            for stream in ("webcam", "screen")
+            for index in (0, 1)
+        ],
+    )
+
+    timeline = _build_timeline(session)
+
+    assert timeline[0]["offset_seconds"] == 298
+    assert {clip["stream"] for clip in timeline[0]["clips"]} == {"webcam", "screen"}
+    for clip in timeline[0]["clips"]:
+        assert clip["event_at"] == 5
+        assert [(segment["start"], segment["end"]) for segment in clip["segments"]] == [
+            (293.0, 300.0),
+            (0.0, 3.0),
+        ]
+
+
+def test_timeline_infers_legacy_recording_metadata_from_s3_key():
+    started_at = datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc)
+    session = SessionRecord(
+        session_id="sess-legacy",
+        station_id="nuc-01",
+        turma="ES2025-T1",
+        assessment="Quiz-03",
+        started_at=started_at,
+        events=[
+            SessionEventPayload(
+                timestamp=datetime(2026, 4, 16, 18, 5, 5, tzinfo=timezone.utc),
+                event_type="ABSENCE_BLOCKED",
+                severity=EventSeverity.CRITICAL,
+            )
+        ],
+        recordings=[
+            RecordingAsset(
+                label="Webcam 001",
+                url="https://video.test/webcam_001.mp4",
+                s3_key="gravacoes/sess-legacy/webcam_001.mp4",
+            )
+        ],
+    )
+
+    timeline = _build_timeline(session)
+
+    clip = timeline[0]["clips"][0]
+    assert clip["stream"] == "webcam"
+    assert clip["segments"][0]["start"] == 0.0
+    assert clip["segments"][0]["end"] == 10.0
+
+
+def test_timeline_is_chronological_and_human_readable():
+    started_at = datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc)
+    session = SessionRecord(
+        session_id="sess-readable",
+        station_id="nuc-01",
+        turma="ES2025-T1",
+        assessment="Quiz-03",
+        started_at=started_at,
+        events=[
+            SessionEventPayload(
+                timestamp=datetime(2026, 4, 16, 19, 2, 3, tzinfo=timezone.utc),
+                event_type="DIFFERENT_USER_BLOCKED",
+                severity=EventSeverity.CRITICAL,
+            ),
+            SessionEventPayload(
+                timestamp=datetime(2026, 4, 16, 18, 0, 9, tzinfo=timezone.utc),
+                event_type="GAZE_WARNING",
+                severity=EventSeverity.WARNING,
+            ),
+        ],
+    )
+
+    timeline = _build_timeline(session)
+
+    assert [event["relative_time"] for event in timeline] == ["00:09", "01:02:03"]
+    assert [event["reason"] for event in timeline] == [
+        "Olhar desviado detectado",
+        "Avaliação pausada: usuário diferente detectado",
+    ]
+    assert _event_counts(timeline) == {"ALL": 2, "INFO": 0, "WARNING": 1, "CRITICAL": 1}
+
+
+def test_session_review_template_prioritizes_human_event_information():
+    started_at = datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc)
+    session = SessionRecord(
+        session_id="sess-readable",
+        station_id="nuc-01",
+        turma="ES2025-T1",
+        assessment="Quiz-03",
+        started_at=started_at,
+        ended_at=datetime(2026, 4, 16, 18, 1, 2, tzinfo=timezone.utc),
+        student=StudentInfo(student_id="alice", student_name="Alice Silva"),
+        status=StationStatus.COMPLETED,
+        events=[
+            SessionEventPayload(
+                timestamp=datetime(2026, 4, 16, 18, 0, 9, tzinfo=timezone.utc),
+                event_type="GAZE_WARNING",
+                severity=EventSeverity.WARNING,
+                details={"ratio": 0.52},
+            )
+        ],
+    )
+    timeline = _build_timeline(session)
+    template_dir = Path(__file__).parents[1] / "src" / "dashboard" / "templates"
+    template = Environment(loader=FileSystemLoader(template_dir)).get_template(
+        "session_detail.html"
+    )
+
+    html = template.render(
+        title="Sessão sess-readable",
+        session=session,
+        timeline=timeline,
+        event_counts=_event_counts(timeline),
+        duration_label=_format_duration(session.duration_seconds),
+        status_label="Concluída",
+    )
+
+    assert "Alice Silva" in html
+    assert "Olhar desviado detectado" in html
+    assert "00:09" in html
+    assert "Alertas <span>1</span>" in html
+    assert "Ver vídeos do evento" in html
+    assert "Expandir todos os vídeos" in html
+    assert "Gravações completas" in html
+    assert "Informações técnicas" in html
+    assert html.index("Gravações completas") < html.index("Timeline de eventos")
+    assert html.index("Informações técnicas") < html.index("Timeline de eventos")
+    assert "GAZE_WARNING" not in html
+    assert "raw_metric_secret" not in html
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (9, "00:09"),
+        (62, "01:02"),
+        (3723, "01:02:03"),
+    ],
+)
+def test_format_relative_time(seconds, expected):
+    assert _format_relative_time(seconds) == expected
+
+
+@pytest.mark.parametrize(
+    ("seconds", "expected"),
+    [
+        (0, "0s"),
+        (62, "1min 2s"),
+        (3723, "1h 2min 3s"),
+    ],
+)
+def test_format_duration(seconds, expected):
+    assert _format_duration(seconds) == expected

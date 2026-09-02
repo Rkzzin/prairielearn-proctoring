@@ -47,17 +47,16 @@ class ShutdownPolicy:
         modo prova, e uma identificação que falhou não pode ser motivo para
         devolver o GNOME destravado ao aluno sentado na frente dela.
 
-        Overlay de espera e câmera só ficam se a sessão nem chegou a existir —
-        o caso comum de "ainda não identifiquei ninguém". É o que evita o
-        liga/desliga da webcam e o flicker do overlay a cada tentativa de
-        auto-start.
+        O overlay de espera fica se a sessão nem chegou a existir. A câmera é
+        sempre liberada para que uma nova verificação só comece após outro
+        clique em "Iniciar prova".
         """
         waiting = mode == StationMode.WAITING_STUDENT
         keep_waiting_resources = waiting and not session_started
         return cls(
             keep_lockdown=waiting,
             keep_waiting_overlay=keep_waiting_resources,
-            keep_camera=keep_waiting_resources,
+            keep_camera=False,
         )
 
     @classmethod

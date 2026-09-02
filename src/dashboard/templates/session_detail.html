@@ -1,72 +1,363 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="panel two-column">
-  <article class="panel inset">
-    <h2>Resumo da sessão</h2>
-    <dl class="meta">
-      <div><dt>ID</dt><dd>{{ session.session_id }}</dd></div>
-      <div><dt>Estação</dt><dd>{{ session.station_id }}</dd></div>
-      <div><dt>Assessment</dt><dd>{{ session.assessment }}</dd></div>
-      <div><dt>Turma</dt><dd>{{ session.turma }}</dd></div>
-      <div><dt>Aluno</dt><dd>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</dd></div>
-      <div><dt>Flags</dt><dd>{{ session.flags_count }}</dd></div>
-    </dl>
-    {% if session.recordings %}
-    <div class="video-stack">
-      {% for asset in session.recordings %}
-      <div>
-        <h3>{{ asset.label }}</h3>
-        {% if asset.url %}
-        <video controls preload="metadata" src="{{ asset.url }}"></video>
-        {% else %}
-        <p class="empty">Arquivo enviado, aguardando URL assinada do S3.</p>
-        {% endif %}
-      </div>
-      {% endfor %}
+<section class="panel session-summary">
+  <div class="session-summary-head">
+    <div>
+      <p class="eyebrow">Revisão da avaliação</p>
+      <h1>{{ session.assessment }}</h1>
+      <p>{{ session.turma }}</p>
     </div>
-    {% else %}
-    <p class="empty">Sem vídeos anexados ainda. A estrutura já aceita URLs presignadas do S3.</p>
-    {% endif %}
-  </article>
-
-  <article class="panel inset">
-    <h2>Timeline de eventos</h2>
-    {% if timeline %}
-    <ol class="timeline">
-      {% for event in timeline %}
-      <li>
-        <div class="timeline-row">
-          <strong>{{ event.event_type }}</strong>
-          <span>{{ event.timestamp }}</span>
-          <span>{{ event.severity }}</span>
-        </div>
-        <div class="timeline-row">
-          <button
-            type="button"
-            class="button-secondary"
-            onclick="seekTimeline({{ event.offset_seconds }})"
-          >
-            Ir para {{ event.offset_seconds }}s
-          </button>
-          {% if event.details %}
-          <code>{{ event.details }}</code>
-          {% endif %}
-        </div>
-      </li>
-      {% endfor %}
-    </ol>
-    {% else %}
-    <p class="empty">Nenhum evento anexado.</p>
-    {% endif %}
-  </article>
+    <span class="session-status session-status-{{ session.status.value|lower }}">{{ status_label }}</span>
+  </div>
+  <dl class="session-summary-grid">
+    <div>
+      <dt>Aluno</dt>
+      <dd>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</dd>
+    </div>
+    <div>
+      <dt>Login</dt>
+      <dd>{% if session.student %}{{ session.student.student_id }}{% else %}—{% endif %}</dd>
+    </div>
+    <div>
+      <dt>Início</dt>
+      <dd><time id="session-start" datetime="{{ session.started_at.isoformat() }}">{{ session.started_at.isoformat() }}</time></dd>
+    </div>
+    <div>
+      <dt>Duração</dt>
+      <dd>{{ duration_label }}</dd>
+    </div>
+  </dl>
+  <p class="session-event-summary">
+    <strong>{{ event_counts.CRITICAL }}</strong> crítico{% if event_counts.CRITICAL != 1 %}s{% endif %}
+    <span>·</span>
+    <strong>{{ event_counts.WARNING }}</strong> alerta{% if event_counts.WARNING != 1 %}s{% endif %}
+  </p>
 </section>
+
+<details class="panel review-details">
+  <summary>
+    <strong>Gravações completas</strong>
+    <span class="details-summary-meta">
+      <span>{{ session.recordings|length }} segmento{% if session.recordings|length != 1 %}s{% endif %}</span>
+      <span class="details-chevron" aria-hidden="true">⌄</span>
+    </span>
+  </summary>
+  {% if session.recordings %}
+  <div class="video-stack">
+    {% for asset in session.recordings %}
+    <div>
+      <h3>{{ asset.label }}</h3>
+      {% if asset.url %}
+      <video controls preload="none" src="{{ asset.url }}"></video>
+      {% else %}
+      <p class="empty">Arquivo enviado, aguardando URL assinada do S3.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">Sem vídeos anexados.</p>
+  {% endif %}
+</details>
+
+<details class="panel review-details technical-details">
+  <summary>
+    <strong>Informações técnicas</strong>
+    <span class="details-chevron" aria-hidden="true">⌄</span>
+  </summary>
+  <dl class="meta">
+    <div><dt>ID da sessão</dt><dd>{{ session.session_id }}</dd></div>
+    <div><dt>Estação</dt><dd>{{ session.station_id }}</dd></div>
+    <div><dt>Status interno</dt><dd>{{ session.status.value }}</dd></div>
+    <div><dt>Eventos sinalizados</dt><dd>{{ session.flags_count }}</dd></div>
+  </dl>
+</details>
+
+<section class="panel event-review">
+  <div class="panel-header">
+    <div>
+      <p class="eyebrow">Revisão cronológica</p>
+      <h2>Timeline de eventos</h2>
+      <p>Tempo relativo ao início da avaliação.</p>
+    </div>
+    <div class="timeline-controls">
+      <div class="timeline-filters" role="group" aria-label="Filtrar eventos por severidade">
+        <button type="button" class="filter-chip active" data-filter="ALL" aria-pressed="true" onclick="filterTimeline('ALL', this)">Todos <span>{{ event_counts.ALL }}</span></button>
+        <button type="button" class="filter-chip filter-critical" data-filter="CRITICAL" aria-pressed="false" onclick="filterTimeline('CRITICAL', this)">Críticos <span>{{ event_counts.CRITICAL }}</span></button>
+        <button type="button" class="filter-chip filter-warning" data-filter="WARNING" aria-pressed="false" onclick="filterTimeline('WARNING', this)">Alertas <span>{{ event_counts.WARNING }}</span></button>
+        <button type="button" class="filter-chip filter-info" data-filter="INFO" aria-pressed="false" onclick="filterTimeline('INFO', this)">Informativos <span>{{ event_counts.INFO }}</span></button>
+      </div>
+      <button type="button" class="button-secondary expand-all-videos" id="expand-all-videos" onclick="toggleAllEventClips()">Expandir todos os vídeos</button>
+    </div>
+  </div>
+  {% if timeline %}
+  <ol class="timeline human-timeline" id="event-timeline">
+    {% for event in timeline %}
+    <li class="timeline-event severity-{{ event.severity|lower }}" data-severity="{{ event.severity }}">
+      <div class="event-main">
+        <time class="event-relative-time">{{ event.relative_time }}</time>
+        <div class="event-copy">
+          <strong>{{ event.reason }}</strong>
+          <span class="severity-label">
+            {% if event.severity == "CRITICAL" %}Crítico{% elif event.severity == "WARNING" %}Alerta{% else %}Informativo{% endif %}
+          </span>
+        </div>
+        <button
+          type="button"
+          class="button-secondary event-clip-button"
+          data-event-index="{{ loop.index0 }}"
+          onclick="showEventClip({{ loop.index0 }})"
+          {% if not event.clips %}disabled title="Não há segmento de vídeo para este evento"{% endif %}
+        >
+          Ver vídeos do evento
+        </button>
+      </div>
+      <div class="event-clip" id="event-clip-{{ loop.index0 }}" hidden></div>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="empty" id="timeline-filter-empty" hidden>Nenhum evento encontrado neste filtro.</p>
+  {% else %}
+  <p class="empty">Nenhum evento anexado.</p>
+  {% endif %}
+</section>
+<script id="timeline-data" type="application/json">{{ timeline | tojson }}</script>
 <script>
-function seekTimeline(offsetSeconds) {
-  const player = document.querySelector('video');
-  if (!player) return;
-  player.currentTime = offsetSeconds;
-  player.play().catch(() => {});
-  player.scrollIntoView({behavior: 'smooth', block: 'center'});
+const timelineData = JSON.parse(document.getElementById('timeline-data').textContent);
+const sessionStart = document.getElementById('session-start');
+if (sessionStart) {
+  const startedAt = new Date(sessionStart.dateTime);
+  sessionStart.textContent = startedAt.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).replace(',', ' às');
 }
+
+function filterTimeline(severity, trigger) {
+  let visible = 0;
+  document.querySelectorAll('.timeline-event').forEach((event) => {
+    const matches = severity === 'ALL' || event.dataset.severity === severity;
+    event.hidden = !matches;
+    if (matches) visible += 1;
+    if (!matches) {
+      event.querySelectorAll('video').forEach((video) => video.pause());
+    }
+  });
+  document.querySelectorAll('.filter-chip').forEach((button) => {
+    const active = button === trigger;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const empty = document.getElementById('timeline-filter-empty');
+  if (empty) empty.hidden = visible !== 0;
+}
+
+function showEventClip(eventIndex, focusPanel = true) {
+  const panel = document.getElementById(`event-clip-${eventIndex}`);
+  const trigger = document.querySelector(`[data-event-index="${eventIndex}"]`);
+  const event = timelineData[eventIndex];
+  if (!panel || !event || !event.clips.length) return;
+
+  if (!panel.hidden) {
+    panel.querySelectorAll('video').forEach((video) => video.pause());
+    panel.hidden = true;
+    panel.replaceChildren();
+    trigger.textContent = 'Ver vídeos do evento';
+    updateExpandAllButton();
+    return;
+  }
+
+  if (focusPanel) {
+    document.querySelectorAll('.event-clip:not([hidden])').forEach((openPanel) => {
+      if (openPanel !== panel) {
+        openPanel.querySelectorAll('video').forEach((video) => video.pause());
+        openPanel.hidden = true;
+        openPanel.replaceChildren();
+        const openIndex = openPanel.id.replace('event-clip-', '');
+        const openTrigger = document.querySelector(`[data-event-index="${openIndex}"]`);
+        if (openTrigger) openTrigger.textContent = 'Ver vídeos do evento';
+      }
+    });
+  }
+
+  panel.replaceChildren();
+  panel.hidden = false;
+  trigger.textContent = 'Fechar vídeos';
+
+  const header = document.createElement('div');
+  header.className = 'clip-header';
+  const context = document.createElement('strong');
+  context.textContent = `Contexto do evento em ${event.offset_seconds}s`;
+  header.appendChild(context);
+  panel.appendChild(header);
+
+  const marker = document.createElement('div');
+  marker.className = 'clip-marker';
+  marker.innerHTML = '<span>-5s</span><strong>EVENTO</strong><span>+5s</span>';
+  panel.appendChild(marker);
+
+  const grid = document.createElement('div');
+  grid.className = 'event-clip-grid';
+  panel.appendChild(grid);
+
+  const players = [];
+  event.clips.forEach((clip) => {
+    const card = document.createElement('section');
+    card.className = 'clip-stream';
+    const title = document.createElement('h4');
+    title.textContent = clip.label;
+    const video = document.createElement('video');
+    video.controls = true;
+    video.preload = 'metadata';
+    video.playsInline = true;
+    video.muted = true;
+    const status = document.createElement('p');
+    status.className = 'clip-status';
+    status.textContent = 'Preparando recorte...';
+    card.append(title, video, status);
+    grid.appendChild(card);
+    players.push(video);
+    playClipSequence(video, status, clip.segments);
+  });
+  synchronizeClipPlayers(players);
+
+  if (focusPanel) {
+    panel.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+  }
+  updateExpandAllButton();
+}
+
+function toggleAllEventClips() {
+  const availableIndexes = timelineData
+    .map((event, index) => event.clips.length ? index : null)
+    .filter((index) => index !== null);
+  const allOpen = availableIndexes.length > 0 && availableIndexes.every((index) => (
+    !document.getElementById(`event-clip-${index}`).hidden
+  ));
+
+  availableIndexes.forEach((index) => {
+    const panel = document.getElementById(`event-clip-${index}`);
+    if (panel.hidden === allOpen) return;
+    showEventClip(index, false);
+  });
+  updateExpandAllButton();
+}
+
+function updateExpandAllButton() {
+  const button = document.getElementById('expand-all-videos');
+  if (!button) return;
+  const availableIndexes = timelineData
+    .map((event, index) => event.clips.length ? index : null)
+    .filter((index) => index !== null);
+  const allOpen = availableIndexes.length > 0 && availableIndexes.every((index) => (
+    !document.getElementById(`event-clip-${index}`).hidden
+  ));
+  button.textContent = allOpen ? 'Recolher todos os vídeos' : 'Expandir todos os vídeos';
+  button.disabled = availableIndexes.length === 0;
+}
+
+function playClipSequence(video, status, segments) {
+  const playable = segments.filter((segment) => segment.url);
+  if (!playable.length) {
+    status.textContent = 'Vídeo indisponível no S3.';
+    return;
+  }
+
+  let position = 0;
+  let advancing = false;
+
+  function finishOrAdvance() {
+    if (advancing) return;
+    advancing = true;
+    if (position + 1 < playable.length) {
+      position += 1;
+      loadCurrentSegment(true);
+    } else {
+      video.pause();
+      status.textContent = 'Fim do recorte.';
+    }
+  }
+
+  function loadCurrentSegment(shouldPlay = false) {
+    advancing = false;
+    video.dataset.transitioning = 'true';
+    video.dataset.segmentPosition = String(position);
+    const segment = playable[position];
+    status.textContent = `${segment.label} · ${segment.start.toFixed(1)}s–${segment.end.toFixed(1)}s`;
+    video.src = segment.url;
+    video.addEventListener('loadedmetadata', () => {
+      video.currentTime = Math.min(segment.start, Math.max(0, video.duration - 0.05));
+      video.dataset.transitioning = 'false';
+      if (shouldPlay) {
+        video.dataset.suppressSyncPlay = 'true';
+        video.play()
+          .catch(() => {
+            status.textContent += ' · pressione play para assistir';
+          })
+          .finally(() => {
+            video.dataset.suppressSyncPlay = 'false';
+          });
+      } else {
+        status.textContent += ' · pressione play para assistir';
+      }
+    }, {once: true});
+    video.load();
+  }
+
+  video.addEventListener('timeupdate', () => {
+    const segment = playable[position];
+    if (video.currentTime >= segment.end - 0.08) finishOrAdvance();
+  });
+  video.addEventListener('ended', finishOrAdvance);
+  loadCurrentSegment();
+}
+
+function synchronizeClipPlayers(videos) {
+  if (videos.length < 2) return;
+  let syncing = false;
+
+  videos.forEach((source) => {
+    source.addEventListener('play', () => {
+      if (syncing || source.dataset.suppressSyncPlay === 'true') return;
+      syncing = true;
+      videos.filter((video) => (
+        video !== source && video.dataset.segmentPosition === source.dataset.segmentPosition
+      )).forEach((peer) => {
+        const startPeer = () => {
+          peer.currentTime = Math.min(source.currentTime, Math.max(0, peer.duration - 0.05));
+          peer.play().catch(() => {});
+        };
+        if (peer.readyState >= 1) startPeer();
+        else peer.addEventListener('loadedmetadata', startPeer, {once: true});
+      });
+      syncing = false;
+    });
+
+    source.addEventListener('pause', () => {
+      if (syncing || source.dataset.transitioning === 'true') return;
+      syncing = true;
+      videos.filter((video) => video !== source && !video.paused).forEach((peer) => peer.pause());
+      syncing = false;
+    });
+
+    source.addEventListener('timeupdate', () => {
+      if (syncing || source.paused) return;
+      videos.filter((video) => (
+        video !== source
+        && !video.paused
+        && video.dataset.segmentPosition === source.dataset.segmentPosition
+      )).forEach((peer) => {
+        if (Math.abs(peer.currentTime - source.currentTime) > 0.4) {
+          peer.currentTime = source.currentTime;
+        }
+      });
+    });
+  });
+}
+
+updateExpandAllButton();
 </script>
 {% endblock %}

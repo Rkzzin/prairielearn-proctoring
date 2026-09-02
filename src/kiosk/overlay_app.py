@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -61,6 +62,28 @@ def _send_stop_request(stop_url: str) -> tuple[bool, str | None]:
             return False, f"HTTP {response.status}"
     except urllib.error.HTTPError as exc:
         return False, f"HTTP {exc.code}"
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return False, str(exc)
+
+
+def _send_start_request(start_url: str) -> tuple[bool, str | None]:
+    request = urllib.request.Request(
+        start_url,
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            if 200 <= response.status < 300:
+                return True, None
+            return False, f"HTTP {response.status}"
+    except urllib.error.HTTPError as exc:
+        try:
+            payload = json.loads(exc.read())
+            return False, str(payload.get("detail") or f"HTTP {exc.code}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return False, f"HTTP {exc.code}"
     except (urllib.error.URLError, TimeoutError) as exc:
         return False, str(exc)
 
@@ -635,7 +658,7 @@ def _blocked_mode(reason: str, preview_url: str, status_url: str, student_id: st
     return 0
 
 
-def _waiting_mode(message: str, preview_url: str, status_url: str) -> int:
+def _waiting_mode(message: str, start_url: str) -> int:
     import tkinter as tk
 
     root = tk.Tk()
@@ -647,40 +670,63 @@ def _waiting_mode(message: str, preview_url: str, status_url: str) -> int:
     container = tk.Frame(root, bg=BG, padx=48, pady=32)
     container.place(relx=0.5, rely=0.5, anchor="center")
 
-    eyebrow = tk.Label(
-        container,
-        text="AMBIENTE DE AVALIAÇÃO",
-        fg=ACCENT,
-        bg=BG,
-        font=("Helvetica", 24, "bold"),
-    )
-    eyebrow.pack(pady=(0, 16))
+    if message:
+        tk.Label(
+            container,
+            text=message,
+            fg=TEXT,
+            bg=BG,
+            wraplength=900,
+            justify="center",
+            font=("Helvetica", 58, "bold"),
+        ).pack()
+    else:
+        feedback = tk.Label(
+            container,
+            text="",
+            fg=DANGER,
+            bg=BG,
+            wraplength=800,
+            justify="center",
+            font=("Helvetica", 20, "bold"),
+        )
 
-    title = tk.Label(
-        container,
-        text=message,
-        fg=TEXT,
-        bg=BG,
-        wraplength=900,
-        justify="center",
-        font=("Helvetica", 58, "bold"),
-    )
-    title.pack(pady=(0, 18))
+        def restore_button(error: str | None) -> None:
+            if not root.winfo_exists():
+                return
+            start_button.configure(state="normal", text="Iniciar prova")
+            feedback.configure(text=error or "Não foi possível iniciar. Tente novamente.")
+            feedback.pack(pady=(18, 0))
 
-    subtitle = tk.Label(
-        container,
-        text="Olhe para a câmera e permaneça no centro do enquadramento.\nA próxima etapa aparecerá quando sua identidade for reconhecida.",
-        fg=MUTED,
-        bg=BG,
-        wraplength=780,
-        justify="center",
-        font=("Helvetica", 32),
-    )
-    subtitle.pack()
+        def send_start() -> None:
+            ok, error = _send_start_request(start_url)
+            if not ok:
+                try:
+                    root.after(0, restore_button, error)
+                except tk.TclError:
+                    pass
 
-    _add_status_box(container, status_url=status_url, bg=BG)
+        def begin_identification() -> None:
+            start_button.configure(state="disabled", text="Verificando identidade...")
+            feedback.pack_forget()
+            threading.Thread(target=send_start, name="request-exam-start", daemon=True).start()
 
-    _add_camera_preview(container, preview_url=preview_url, bg=BG, max_size=(420, 315))
+        start_button = tk.Button(
+            container,
+            text="Iniciar prova",
+            command=begin_identification,
+            bg=ACCENT,
+            fg=BG,
+            activebackground="#ffd27a",
+            activeforeground=BG,
+            relief="flat",
+            borderwidth=0,
+            cursor="hand2",
+            padx=54,
+            pady=24,
+            font=("Helvetica", 34, "bold"),
+        )
+        start_button.pack()
 
     root.mainloop()
     return 0
@@ -927,6 +973,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--timeout-sec", type=float, default=60.0)
     parser.add_argument("--confirm-url", default="http://127.0.0.1:8000/pre-exam/confirmation/accept")
     parser.add_argument("--cancel-url", default="http://127.0.0.1:8000/pre-exam/confirmation/cancel")
+    parser.add_argument("--start-url", default="http://127.0.0.1:8000/pre-exam/start")
     parser.add_argument("--guard-height", type=int, default=32)
     args = parser.parse_args(argv)
 
@@ -935,7 +982,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "controls":
         return _controls_mode(args.stop_url, args.status_url)
     if args.mode == "waiting":
-        return _waiting_mode(args.message, args.preview_url, args.status_url)
+        return _waiting_mode(args.message, args.start_url)
     if args.mode == "confirmation":
         return _confirmation_mode(
             args.student_id,

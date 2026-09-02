@@ -181,6 +181,10 @@ Com o dashboard acessível, confirme que esta estação aparece lá com o
 `station_id`/`station_name` corretos — se aparecer com o nome de outra estação,
 alguma NUC está com `PROCTOR_DASHBOARD_STATION_ID` repetido.
 
+No modo de provas, a tela inicial deve mostrar somente **Iniciar prova**. A
+câmera permanece fechada até o clique; depois dele, o reconhecimento facial é
+iniciado e a confirmação do aluno aparece antes do Chromium.
+
 ## 10. Testar uma prova de ponta a ponta (manual)
 
 Com alguém sentado na frente da webcam:

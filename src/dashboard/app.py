@@ -6,26 +6,38 @@ import csv
 import hmac
 import json
 import re
-import anyio
+import secrets
+import unicodedata
 from datetime import timezone
 from io import StringIO
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
+import anyio
+from fastapi import (
+    Depends,
+    FastAPI,
+    Form,
+    HTTPException,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.core.config import AppConfig
 from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
+from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.models import (
     CommandType,
     ExamConfigPayload,
     SessionEventPayload,
     SessionRecord,
+    StationCreatePayload,
     StationHeartbeat,
 )
-from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.store import DashboardStore
 
 #: Rotas que só a NUC chama — autenticadas por token de estação
@@ -33,12 +45,39 @@ from src.dashboard.store import DashboardStore
 #: Basic Auth abaixo pula exatamente estas.
 _STATION_EXACT_ROUTES = {("POST", "/api/heartbeats"), ("POST", "/api/sessions")}
 _STATION_SESSION_ACTION_RE = re.compile(r"^/api/sessions/[^/]+/(finalize|events)$")
+_EVENT_CLIP_CONTEXT_SECONDS = 5
+_LEGACY_SEGMENT_DURATION_SECONDS = 300
+_EVENT_REASON_LABELS = {
+    "SESSION_STARTED": "Avaliação iniciada",
+    "SESSION_ENDED": "Avaliação finalizada",
+    "SESSION_RESUMED": "Identidade confirmada; avaliação retomada",
+    "GAZE_WARNING": "Olhar desviado detectado",
+    "GAZE_BLOCKED": "Avaliação pausada por olhar desviado",
+    "ABSENCE_WARNING": "Aluno não foi detectado pela câmera",
+    "ABSENCE_BLOCKED": "Avaliação pausada por ausência",
+    "MULTI_FACE_BLOCKED": "Avaliação pausada: mais de uma pessoa detectada",
+    "DIFFERENT_USER_BLOCKED": "Avaliação pausada: usuário diferente detectado",
+    "BROWSER_EXIT": "Avaliação pausada: navegador protegido encerrado",
+}
+_SESSION_STATUS_LABELS = {
+    "COMPLETED": "Concluída",
+    "SESSION": "Em andamento",
+    "BLOCKED": "Pausada",
+    "UPLOADING": "Finalizando",
+}
 
 
 def _is_station_route(method: str, path: str) -> bool:
     if (method, path) in _STATION_EXACT_ROUTES:
         return True
     return method == "POST" and bool(_STATION_SESSION_ACTION_RE.match(path))
+
+
+def _station_id_from_name(station_name: str) -> str:
+    normalized = unicodedata.normalize("NFKD", station_name)
+    ascii_name = normalized.encode("ascii", "ignore").decode("ascii").lower()
+    station_id = re.sub(r"[^a-z0-9]+", "-", ascii_name).strip("-")
+    return (station_id or "estacao")[:64].rstrip("-")
 
 
 def create_app(config: AppConfig | None = None, store: DashboardStore | None = None) -> FastAPI:
@@ -163,12 +202,19 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         session = dashboard_store.get_session(session_id)
         if session is None:
             return HTMLResponse("Sessão não encontrada.", status_code=404)
+        timeline = _build_timeline(session)
         return render_template(
             request,
             "session_detail.html",
             title=f"Sessão {session_id}",
             session=session,
-            timeline=_build_timeline(session),
+            timeline=timeline,
+            event_counts=_event_counts(timeline),
+            duration_label=_format_duration(session.duration_seconds),
+            status_label=_SESSION_STATUS_LABELS.get(
+                session.status.value,
+                session.status.value.replace("_", " ").title(),
+            ),
         )
 
     @app.get("/partials/stations", response_class=HTMLResponse)
@@ -192,6 +238,46 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         return JSONResponse(
             [station.model_dump(mode="json") for station in dashboard_store.list_stations()]
         )
+
+    @app.post("/api/stations")
+    async def create_station(payload: StationCreatePayload) -> JSONResponse:
+        station_name = payload.station_name.strip()
+        if not station_name:
+            raise HTTPException(status_code=400, detail="Informe o nome da estação.")
+        if "\n" in station_name or "\r" in station_name:
+            raise HTTPException(status_code=400, detail="O nome deve ter apenas uma linha.")
+        station_id = _station_id_from_name(station_name)
+        station_token = secrets.token_urlsafe(32)
+        try:
+            station = dashboard_store.create_station(
+                station_id,
+                station_name,
+                hash_password(station_token),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Já existe uma estação com esse nome. Use um nome diferente.",
+            ) from exc
+        return JSONResponse(
+            {
+                "station": station.model_dump(mode="json"),
+                "station_token": station_token,
+            },
+            status_code=201,
+        )
+
+    @app.delete("/api/stations/{station_id}")
+    async def delete_station(station_id: str) -> JSONResponse:
+        station = dashboard_store.get_station(station_id)
+        if station is not None and station.active_session_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Encerre a avaliação ativa antes de excluir a estação.",
+            )
+        if not dashboard_store.delete_station(station_id):
+            raise HTTPException(status_code=404, detail="Estação não encontrada.")
+        return JSONResponse({"deleted": station_id})
 
     @app.get("/api/sessions")
     async def list_sessions() -> JSONResponse:
@@ -380,19 +466,124 @@ def _json_ready_snapshot(snapshot: dict[str, object]) -> dict[str, object]:
 def _build_timeline(session: SessionRecord) -> list[dict[str, object]]:
     entries: list[dict[str, object]] = []
     started_at = session.started_at.astimezone(timezone.utc)
-    for event in session.events:
+    for event in sorted(session.events, key=lambda item: item.timestamp):
         event_time = event.timestamp.astimezone(timezone.utc)
         offset_seconds = max(0, int((event_time - started_at).total_seconds()))
         entries.append(
             {
-                "timestamp": event.timestamp.isoformat(),
-                "event_type": event.event_type,
+                "reason": _EVENT_REASON_LABELS.get(
+                    event.event_type,
+                    "Evento de monitoramento registrado",
+                ),
                 "severity": event.severity.value,
-                "details": event.details,
                 "offset_seconds": offset_seconds,
+                "relative_time": _format_relative_time(offset_seconds),
+                "clips": _build_event_clips(session, offset_seconds),
             }
         )
     return entries
+
+
+def _event_counts(timeline: list[dict[str, object]]) -> dict[str, int]:
+    counts = {"ALL": len(timeline), "INFO": 0, "WARNING": 0, "CRITICAL": 0}
+    for event in timeline:
+        severity = str(event["severity"])
+        if severity in counts:
+            counts[severity] += 1
+    return counts
+
+
+def _format_relative_time(seconds: int) -> str:
+    hours, remainder = divmod(max(0, seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def _format_duration(seconds: int | None) -> str:
+    if seconds is None:
+        return "—"
+    hours, remainder = divmod(max(0, seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes or hours:
+        parts.append(f"{minutes}min")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+def _build_event_clips(session: SessionRecord, event_offset: int) -> list[dict[str, object]]:
+    clip_start = max(0, event_offset - _EVENT_CLIP_CONTEXT_SECONDS)
+    clip_end = event_offset + _EVENT_CLIP_CONTEXT_SECONDS
+    if session.ended_at is not None:
+        clip_end = min(clip_end, session.duration_seconds or clip_end)
+
+    indexed: dict[str, list[tuple[object, int, float, float]]] = {
+        "webcam": [],
+        "screen": [],
+    }
+    for asset in session.recordings:
+        stream, index = _recording_identity(asset)
+        if stream not in indexed or index is None:
+            continue
+        duration = float(asset.duration_seconds or _LEGACY_SEGMENT_DURATION_SECONDS)
+        start = float(
+            asset.start_offset_seconds
+            if asset.start_offset_seconds is not None
+            else index * duration
+        )
+        indexed[stream].append((asset, index, start, duration))
+
+    clips: list[dict[str, object]] = []
+    for stream, label in (("webcam", "Câmera"), ("screen", "Tela")):
+        segments = []
+        for asset, index, segment_start, duration in sorted(
+            indexed[stream], key=lambda item: item[1]
+        ):
+            segment_end = segment_start + duration
+            if segment_end <= clip_start or segment_start >= clip_end:
+                continue
+            segments.append(
+                {
+                    "index": index,
+                    "label": asset.label,
+                    "url": asset.url,
+                    "start": max(0.0, clip_start - segment_start),
+                    "end": min(duration, clip_end - segment_start),
+                }
+            )
+        if segments:
+            clips.append(
+                {
+                    "stream": stream,
+                    "label": label,
+                    "segments": segments,
+                    "event_at": event_offset - clip_start,
+                    "duration": max(0, clip_end - clip_start),
+                }
+            )
+    return clips
+
+
+def _recording_identity(asset) -> tuple[str | None, int | None]:
+    stream = asset.stream.lower() if asset.stream else None
+    index = asset.segment_index
+    source = f"{asset.label} {asset.s3_key or ''}".lower()
+    match = re.search(r"(webcam|screen)[ _-]?(\d+)", source)
+    if match:
+        stream = stream or match.group(1)
+        index = index if index is not None else int(match.group(2))
+    elif stream in {"webcam", "screen"} and index is None:
+        index = 0
+    elif stream is None:
+        if "webcam" in source:
+            stream, index = "webcam", index if index is not None else 0
+        elif "screen" in source or "tela" in source:
+            stream, index = "screen", index if index is not None else 0
+    return stream, index
 
 
 def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -> str:
