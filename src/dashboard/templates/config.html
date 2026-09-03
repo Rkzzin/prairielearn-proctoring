@@ -4,21 +4,42 @@
   <div class="panel-header">
     <div>
       <h2>Configurações distribuídas</h2>
-      <p>Distribuir uma configuração nova é feito por estação, no painel de <a href="/">Monitoramento</a> — esta página só lista o histórico do que já foi enviado.</p>
+      <p>Histórico das configurações comuns enviadas pelo painel de <a href="/">Monitoramento</a>.</p>
     </div>
     <button type="button" class="button-secondary" onclick="clearConfigs()">
       Limpar histórico
     </button>
   </div>
   {% if configs %}
-  <ul class="stack">
+  <div class="config-grid">
     {% for config in configs %}
-    <li>
-      <strong>{{ config.assessment }}</strong> · {{ config.turma }}
-      <span>{{ config.target_station_ids|join(', ') or 'sem alvo' }}</span>
-    </li>
+    <article class="config-card">
+      <header>
+        <div>
+          <p class="eyebrow">{{ config.turma }}</p>
+          <h3>{{ config.assessment }}</h3>
+        </div>
+        <span class="config-target-count">{{ config.target_station_ids|length }} estação{{ '' if config.target_station_ids|length == 1 else 'ões' }}</span>
+      </header>
+      <dl class="config-summary">
+        <div><dt>Duração</dt><dd>{{ config.timer_minutes }} min</dd></div>
+        <div><dt>Tentativas</dt><dd>{{ 'Permitidas' if config.allow_repeat_attempts else 'Uma por aluno' }}</dd></div>
+        <div><dt>Olhar</dt><dd>{{ config.gaze_h_threshold }} / {{ config.gaze_duration_sec }} s</dd></div>
+        <div><dt>Ausência</dt><dd>{{ config.absence_timeout_sec }} s</dd></div>
+      </dl>
+      <div class="config-rule-row">
+        <span class="config-rule {{ 'is-active' if config.multi_face_block else '' }}">{{ 'Bloqueia múltiplas faces' if config.multi_face_block else 'Múltiplas faces permitidas' }}</span>
+        <span class="config-rule">{{ config.allowlist|length }} domínio{{ '' if config.allowlist|length == 1 else 's' }} liberado{{ '' if config.allowlist|length == 1 else 's' }}</span>
+      </div>
+      <details class="config-details">
+        <summary>Ver destinos e acesso</summary>
+        <p><strong>Estações:</strong> {{ config.target_station_ids|join(', ') or 'sem alvo' }}</p>
+        <p><strong>PrairieLearn:</strong> <a href="{{ config.prairielearn_url }}" rel="noopener noreferrer" target="_blank">{{ config.prairielearn_url }}</a></p>
+        <p><strong>Allowlist:</strong> {{ config.allowlist|join(', ') or 'nenhum domínio adicional' }}</p>
+      </details>
+    </article>
     {% endfor %}
-  </ul>
+  </div>
   {% else %}
   <p class="empty">Nenhuma configuração distribuída.</p>
   {% endif %}

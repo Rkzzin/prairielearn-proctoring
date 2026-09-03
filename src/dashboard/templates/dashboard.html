@@ -21,9 +21,10 @@
       <h2>Estações em tempo real</h2>
       <p>Atualização por HTMX a cada 5 segundos.</p>
     </div>
-    <button type="button" class="button-secondary" onclick="openCreateStationModal()">
-      Nova estação
-    </button>
+    <div class="panel-actions">
+      <button type="button" class="button-secondary" onclick="openCreateStationModal()">Nova estação</button>
+      <button type="button" onclick="openBulkConfigModal()">Configurar estações</button>
+    </div>
   </div>
   <div
     id="stations-panel"
@@ -92,9 +93,19 @@
   <button type="button" class="button-secondary modal-close" onclick="document.getElementById('exam-mode-modal').close()">Cancelar</button>
 </dialog>
 
-<dialog id="new-config-modal" class="modal">
-  <h2>Nova configuração — <span id="new-config-station-name"></span></h2>
+<dialog id="new-config-modal" class="modal config-modal">
+  <h2>Configuração de prova</h2>
+  <p id="new-config-station-name">Selecione as estações que receberão esta configuração comum.</p>
   <form class="form-card" id="new-config-form">
+    <fieldset class="station-selector">
+      <legend>Destinos</legend>
+      <div class="station-selector-head">
+        <span>Estações selecionadas recebem a mesma configuração.</span>
+        <label class="checkbox"><input type="checkbox" id="new-config-select-all" onchange="toggleAllConfigStations(this)"> Todas</label>
+      </div>
+      <div id="new-config-station-list" class="station-selector-list"></div>
+      <p class="form-error" id="new-config-station-error" hidden></p>
+    </fieldset>
     <label>Turma
       <select name="turma" id="new-config-turma"></select>
     </label>
@@ -236,7 +247,58 @@ async function fetchS3Turmas() {
 
 async function openNewConfigModal(stationId, stationName) {
   currentStationId = stationId;
-  document.getElementById('new-config-station-name').textContent = stationName;
+  document.getElementById('new-config-station-name').textContent = `Esta configuração será enviada para ${stationName}.`;
+  await populateConfigStations([stationId]);
+  await populateConfigTurmas();
+  document.getElementById('new-config-modal').showModal();
+}
+
+async function openBulkConfigModal() {
+  currentStationId = null;
+  document.getElementById('new-config-station-name').textContent = 'Escolha uma ou mais estações. Todas recebem exatamente os mesmos parâmetros.';
+  await populateConfigStations();
+  await populateConfigTurmas();
+  document.getElementById('new-config-modal').showModal();
+}
+
+async function populateConfigStations(selectedIds = null) {
+  const list = document.getElementById('new-config-station-list');
+  const selectAll = document.getElementById('new-config-select-all');
+  const errorEl = document.getElementById('new-config-station-error');
+  const response = await fetch('/api/stations');
+  const stations = await response.json();
+  list.innerHTML = '';
+  errorEl.hidden = true;
+  const selected = new Set(selectedIds || stations.map((station) => station.station_id));
+  for (const station of stations) {
+    const label = document.createElement('label');
+    label.className = 'checkbox station-selector-option';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.name = 'target_station_ids';
+    input.value = station.station_id;
+    input.checked = selected.has(station.station_id);
+    input.addEventListener('change', syncConfigSelectAll);
+    const copy = document.createElement('span');
+    copy.textContent = `${station.station_name} (${station.station_id})`;
+    label.append(input, copy);
+    list.appendChild(label);
+  }
+  selectAll.checked = stations.length > 0 && selected.size === stations.length;
+}
+
+function toggleAllConfigStations(checkbox) {
+  document.querySelectorAll('#new-config-station-list input').forEach((input) => {
+    input.checked = checkbox.checked;
+  });
+}
+
+function syncConfigSelectAll() {
+  const inputs = Array.from(document.querySelectorAll('#new-config-station-list input'));
+  document.getElementById('new-config-select-all').checked = inputs.length > 0 && inputs.every((input) => input.checked);
+}
+
+async function populateConfigTurmas() {
   const select = document.getElementById('new-config-turma');
   const errorEl = document.getElementById('new-config-turma-error');
   select.innerHTML = '';
@@ -253,12 +315,19 @@ async function openNewConfigModal(stationId, stationName) {
     option.textContent = turma;
     select.appendChild(option);
   }
-  document.getElementById('new-config-modal').showModal();
 }
 
 async function submitNewConfig() {
   const form = document.getElementById('new-config-form');
   const data = new FormData(form);
+  const targetStationIds = data.getAll('target_station_ids');
+  const stationError = document.getElementById('new-config-station-error');
+  if (targetStationIds.length === 0) {
+    stationError.textContent = 'Selecione ao menos uma estação.';
+    stationError.hidden = false;
+    return;
+  }
+  stationError.hidden = true;
   const payload = {
     turma: data.get('turma'),
     assessment: data.get('assessment'),
@@ -267,7 +336,7 @@ async function submitNewConfig() {
     allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
     auto_start: false,
     allow_repeat_attempts: data.get('allow_repeat_attempts') === 'on',
-    target_station_ids: [currentStationId],
+    target_station_ids: targetStationIds,
     gaze_h_threshold: Number(data.get('gaze_h_threshold')),
     gaze_duration_sec: Number(data.get('gaze_duration_sec')),
     absence_timeout_sec: Number(data.get('absence_timeout_sec')),

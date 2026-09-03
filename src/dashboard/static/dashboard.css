@@ -79,6 +79,7 @@ code {
   gap: 16px;
   align-items: baseline;
 }
+.panel-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .two-column {
   display: grid;
   grid-template-columns: minmax(280px, 420px) 1fr;
@@ -174,6 +175,24 @@ button {
   display: grid;
   gap: 12px;
 }
+.config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.config-card { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border); border-top: 4px solid var(--accent); border-radius: 14px; background: linear-gradient(145deg, #fffdf8, #f9f0e4); }
+.config-card header, .station-selector-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.config-card h3 { margin: 0; }
+.config-target-count, .config-rule { display: inline-block; padding: 5px 8px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); background: var(--surface); font-family: Arial, sans-serif; font-size: 0.75rem; font-weight: 700; }
+.config-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--border); }
+.config-summary div { padding: 10px; background: var(--surface); }
+.config-summary dt { color: var(--muted); font-size: 0.75rem; }
+.config-summary dd { margin: 3px 0 0; font-weight: 700; }
+.config-rule-row { display: flex; flex-wrap: wrap; gap: 7px; }
+.config-rule.is-active { color: var(--critical); border-color: #d8aaaa; background: #fff5f5; }
+.config-details { color: var(--muted); font-size: 0.9rem; }
+.config-details summary { cursor: pointer; color: var(--ink); font-weight: 700; }
+.config-details p { margin: 9px 0 0; overflow-wrap: anywhere; }
+.station-selector { display: grid; gap: 10px; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.station-selector-head legend { font-weight: 700; }
+.station-selector-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 8px; max-height: 176px; overflow-y: auto; }
+.station-selector-option { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
 .actions {
   display: flex;
   gap: 10px;
@@ -767,6 +786,7 @@ video {
   padding: 24px;
   width: min(480px, calc(100% - 48px));
 }
+.config-modal { width: min(720px, calc(100% - 32px)); }
 .modal::backdrop {
   background: rgba(29, 42, 51, 0.45);
 }

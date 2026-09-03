@@ -123,6 +123,8 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
     assert "scripts/enroll.py --force" in response.text
     assert "Nova estação" in response.text
     assert "Gerar estação e token" in response.text
+    assert "Configurar estações" in response.text
+    assert "Todas" in response.text
 
 
 @pytest.mark.asyncio
@@ -614,7 +616,28 @@ async def test_config_page_lists_history_without_a_form(tmp_path, dashboard_data
     assert "ES2025-T1" in response.text
     assert "Quiz-03" in response.text
     assert "nuc-01" in response.text
+    assert "config-card" in response.text
+    assert "Ver destinos e acesso" in response.text
     assert "limparConfigs" in response.text or "clearConfigs" in response.text
+
+
+def test_dashboard_store_distributes_one_config_to_multiple_stations(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    config = store.create_config(
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            prairielearn_url="https://prairielearn.org/pl",
+            target_station_ids=["nuc-01", "nuc-02", "nuc-03"],
+        )
+    )
+
+    assert config.target_station_ids == ["nuc-01", "nuc-02", "nuc-03"]
+    for station_id in config.target_station_ids:
+        command = store.drain_commands(station_id)
+        assert len(command) == 1
+        assert command[0].command_type.value == "APPLY_CONFIG"
+        assert command[0].payload["assessment"] == "Quiz-03"
 
 
 @pytest.mark.asyncio
