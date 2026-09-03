@@ -609,8 +609,11 @@ async def test_config_page_lists_history_without_a_form(tmp_path, dashboard_data
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         response = await client.get("/config")
+        api_response = await client.get("/api/configs")
 
     assert response.status_code == 200
+    assert api_response.status_code == 200
+    assert api_response.json()[0]["target_station_ids"] == ["nuc-01"]
     assert "<form" not in response.text
     assert '<select name="turma">' not in response.text
     assert "ES2025-T1" in response.text
@@ -618,6 +621,7 @@ async def test_config_page_lists_history_without_a_form(tmp_path, dashboard_data
     assert "nuc-01" in response.text
     assert "config-card" in response.text
     assert "Ver destinos e acesso" in response.text
+    assert "Editar e redistribuir" in response.text
     assert "limparConfigs" in response.text or "clearConfigs" in response.text
 
 

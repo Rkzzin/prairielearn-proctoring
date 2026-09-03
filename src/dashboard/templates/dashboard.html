@@ -247,17 +247,54 @@ async function fetchS3Turmas() {
 
 async function openNewConfigModal(stationId, stationName) {
   currentStationId = stationId;
-  document.getElementById('new-config-station-name').textContent = `Esta configuração será enviada para ${stationName}.`;
-  await populateConfigStations([stationId]);
-  await populateConfigTurmas();
-  document.getElementById('new-config-modal').showModal();
+  await openConfigEditor({
+    stationIds: [stationId],
+    description: `Esta configuração será enviada para ${stationName}.`
+  });
 }
 
 async function openBulkConfigModal() {
   currentStationId = null;
-  document.getElementById('new-config-station-name').textContent = 'Escolha uma ou mais estações. Todas recebem exatamente os mesmos parâmetros.';
-  await populateConfigStations();
-  await populateConfigTurmas();
+  await openConfigEditor({
+    description: 'Escolha uma ou mais estações. Todas recebem exatamente os mesmos parâmetros.'
+  });
+}
+
+async function openStationConfig(stationId, stationName) {
+  const response = await fetch('/api/stations');
+  const station = (await response.json()).find((item) => item.station_id === stationId);
+  if (!station || !station.assigned_config) {
+    window.alert('Esta estação ainda não recebeu uma configuração do dashboard.');
+    return;
+  }
+  currentStationId = stationId;
+  await openConfigEditor({
+    stationIds: [stationId],
+    config: station.assigned_config,
+    description: `Revisando a configuração atual de ${stationName}. Salvar cria uma nova versão para esta estação.`
+  });
+}
+
+async function editHistoricalConfig(index) {
+  const response = await fetch('/api/configs');
+  const config = (await response.json())[index];
+  if (!config) {
+    window.alert('Esta configuração não está mais disponível.');
+    return;
+  }
+  await openConfigEditor({
+    stationIds: config.target_station_ids,
+    config,
+    description: 'Revisando uma configuração distribuída. Salvar envia uma nova versão aos destinos selecionados.'
+  });
+}
+
+async function openConfigEditor({stationIds = null, config = null, description}) {
+  if (!config) document.getElementById('new-config-form').reset();
+  document.getElementById('new-config-station-name').textContent = description;
+  await populateConfigStations(stationIds);
+  await populateConfigTurmas(config);
+  if (config) applyConfigValues(config);
   document.getElementById('new-config-modal').showModal();
 }
 
@@ -298,7 +335,7 @@ function syncConfigSelectAll() {
   document.getElementById('new-config-select-all').checked = inputs.length > 0 && inputs.every((input) => input.checked);
 }
 
-async function populateConfigTurmas() {
+async function populateConfigTurmas(config = null) {
   const select = document.getElementById('new-config-turma');
   const errorEl = document.getElementById('new-config-turma-error');
   select.innerHTML = '';
@@ -315,6 +352,24 @@ async function populateConfigTurmas() {
     option.textContent = turma;
     select.appendChild(option);
   }
+  if (config && !Array.from(select.options).some((option) => option.value === config.turma)) {
+    const option = new Option(config.turma, config.turma);
+    select.appendChild(option);
+  }
+  if (config) select.value = config.turma;
+}
+
+function applyConfigValues(config) {
+  const form = document.getElementById('new-config-form');
+  form.elements.assessment.value = config.assessment;
+  form.elements.timer_minutes.value = config.timer_minutes;
+  form.elements.prairielearn_url.value = config.prairielearn_url;
+  form.elements.allowlist_lines.value = (config.allowlist || []).join('\n');
+  form.elements.gaze_h_threshold.value = config.gaze_h_threshold;
+  form.elements.gaze_duration_sec.value = config.gaze_duration_sec;
+  form.elements.absence_timeout_sec.value = config.absence_timeout_sec;
+  form.elements.multi_face_block.checked = config.multi_face_block;
+  form.elements.allow_repeat_attempts.checked = config.allow_repeat_attempts;
 }
 
 async function submitNewConfig() {
@@ -484,6 +539,12 @@ async function clearKnownSessions() {
   if (response.ok) {
     window.location.reload();
   }
+}
+
+const editConfigIndex = new URLSearchParams(window.location.search).get('edit_config');
+if (editConfigIndex !== null && Number.isInteger(Number(editConfigIndex))) {
+  history.replaceState({}, '', '/');
+  editHistoricalConfig(Number(editConfigIndex));
 }
 
 </script>

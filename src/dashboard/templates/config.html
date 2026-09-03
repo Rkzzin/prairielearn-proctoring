@@ -21,6 +21,7 @@
         </div>
         <span class="config-target-count">{{ config.target_station_ids|length }} estação{{ '' if config.target_station_ids|length == 1 else 'ões' }}</span>
       </header>
+      <a class="config-edit-link" href="/?edit_config={{ loop.index0 }}">Editar e redistribuir</a>
       <dl class="config-summary">
         <div><dt>Duração</dt><dd>{{ config.timer_minutes }} min</dd></div>
         <div><dt>Tentativas</dt><dd>{{ 'Permitidas' if config.allow_repeat_attempts else 'Uma por aluno' }}</dd></div>

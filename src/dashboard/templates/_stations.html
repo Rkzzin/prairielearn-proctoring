@@ -42,6 +42,14 @@
       <button
         type="button"
         class="button-secondary"
+        {% if station_busy or not station.assigned_config %}disabled title="Esta estação não tem uma configuração disponível para editar"{% endif %}
+        onclick="openStationConfig('{{ station.station_id }}', '{{ station.station_name }}')"
+      >
+        Ver / editar configuração
+      </button>
+      <button
+        type="button"
+        class="button-secondary"
         onclick="issueStationCommand('{{ station.station_id }}', 'stop')"
       >
         Encerrar

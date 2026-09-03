@@ -312,6 +312,12 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         config_record = dashboard_store.create_config(payload)
         return JSONResponse(config_record.model_dump(mode="json"), status_code=201)
 
+    @app.get("/api/configs")
+    async def list_configs() -> JSONResponse:
+        return JSONResponse(
+            [config.model_dump(mode="json") for config in dashboard_store.snapshot()["configs"]]
+        )
+
     @app.post("/api/stations/{station_id}/session/stop")
     async def stop_session(station_id: str) -> JSONResponse:
         command = dashboard_store.enqueue_command(station_id, CommandType.STOP_SESSION)
