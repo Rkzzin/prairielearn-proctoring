@@ -23,7 +23,7 @@
       </header>
       <a class="config-edit-link" href="/?edit_config={{ loop.index0 }}">Editar e redistribuir</a>
       <dl class="config-summary">
-        <div><dt>Duração</dt><dd>{{ config.timer_minutes }} min</dd></div>
+        <div><dt>Duração</dt><dd>{{ config.timer_minutes ~ ' min' if config.local_timer_enabled else 'Sem limite local' }}</dd></div>
         <div><dt>Tentativas</dt><dd>{{ 'Permitidas' if config.allow_repeat_attempts else 'Uma por aluno' }}</dd></div>
         <div><dt>Olhar</dt><dd>{{ config.gaze_h_threshold }} / {{ config.gaze_duration_sec }} s</dd></div>
         <div><dt>Ausência</dt><dd>{{ config.absence_timeout_sec }} s</dd></div>

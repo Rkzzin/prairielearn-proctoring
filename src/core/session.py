@@ -77,6 +77,7 @@ DASHBOARD_CONFIG_FIELD_MAP = {
     "turma": "turma_id",
     "assessment": "assessment",
     "timer_minutes": "timer_minutes",
+    "local_timer_enabled": "local_timer_enabled",
     "prairielearn_url": "prairielearn_url",
     "allowlist": "allowlist",
     "auto_start": "auto_start",
@@ -106,6 +107,7 @@ class SessionConfig:
     turma_id: str | None = None
     assessment: str = "Prova"
     timer_minutes: int = 45
+    local_timer_enabled: bool = True
     allowlist: list[str] = field(default_factory=list)
     s3_prefix: str = ""
     prairielearn_url: str = "https://prairielearn.org/pl"
@@ -131,6 +133,7 @@ class SessionRuntime:
     started_at: datetime
     state: SessionState
     prairielearn_url: str
+    local_timer_enabled: bool = True
     block_reason: str | None = None
     stopped_at: datetime | None = None
     notes: dict[str, Any] = field(default_factory=dict)
@@ -662,6 +665,7 @@ class SessionManager:
                     started_at=datetime.now(timezone.utc),
                     state=SessionState.SESSION,
                     prairielearn_url=cfg.prairielearn_url,
+                    local_timer_enabled=cfg.local_timer_enabled,
                     notes={
                         "exam_mode_active": self._mode == StationMode.WAITING_STUDENT,
                         "no_kiosk": cfg.no_kiosk,
@@ -1290,7 +1294,7 @@ class SessionManager:
             self._lockdown = None
 
     def _seconds_remaining(self) -> int | None:
-        if self._runtime is None:
+        if self._runtime is None or not self._runtime.local_timer_enabled:
             return None
         elapsed = int((datetime.now(timezone.utc) - self._runtime.started_at).total_seconds())
         total = max(1, self._runtime.timer_minutes) * 60

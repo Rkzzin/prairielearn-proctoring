@@ -955,14 +955,14 @@ def test_finalize_session_preserves_block_timeout_cancellation(dashboard_databas
             turma="ES2025-T1",
             assessment="Quiz-03",
             started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
-            status=StationStatus.CANCELLED_TIMEOUT,
+            status=StationStatus.TIMEOUT,
         )
     )
 
     finalized = store.finalize_session("sess-timeout")
 
     assert finalized is not None
-    assert finalized.status == StationStatus.CANCELLED_TIMEOUT
+    assert finalized.status == StationStatus.TIMEOUT
 
 
 def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path, dashboard_database_url):

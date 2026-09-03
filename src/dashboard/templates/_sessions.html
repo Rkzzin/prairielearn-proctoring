@@ -19,7 +19,7 @@
         <td data-label="Aluno">{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</td>
         <td data-label="Status">
           <span class="session-table-status session-table-status-{{ session.status.value|lower }}">
-            {{ "Cancelada por timeout" if session.status.value == "CANCELLED_TIMEOUT" else session.status.value }}
+            {{ "TIMEOUT" if session.status.value == "TIMEOUT" else session.status.value }}
           </span>
         </td>
         <td data-label="Flags">{{ session.flags_count }}</td>

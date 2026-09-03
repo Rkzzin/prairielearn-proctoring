@@ -28,7 +28,7 @@ class StationStatus(str, Enum):
     BLOCKED = "BLOCKED"
     UPLOADING = "UPLOADING"
     COMPLETED = "COMPLETED"
-    CANCELLED_TIMEOUT = "CANCELLED_TIMEOUT"
+    TIMEOUT = "TIMEOUT"
     OFFLINE = "OFFLINE"
 
 
@@ -98,6 +98,7 @@ class ExamConfigPayload(BaseModel):
     turma: str
     assessment: str
     timer_minutes: int = 45
+    local_timer_enabled: bool = True
     prairielearn_url: str
     allowlist: list[str] = Field(default_factory=list)
     auto_start: bool = True

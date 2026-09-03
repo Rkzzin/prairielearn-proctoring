@@ -124,7 +124,7 @@ def build_session_payload(
     dashboard usa o nome curto.
     """
     events = target.notes.get("dashboard_events", [])
-    status = "CANCELLED_TIMEOUT" if target.notes.get("stop_reason") == "block_timeout" else target.state.value
+    status = "TIMEOUT" if target.notes.get("stop_reason") == "block_timeout" else target.state.value
     return {
         "session_id": target.session_id,
         "station_id": station_id,

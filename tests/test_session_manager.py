@@ -650,7 +650,7 @@ def test_session_manager_cancels_session_after_block_timeout():
     assert engine.cancelled_timeouts == [20.0]
     assert manager._last_session is not None
     assert manager._last_session.notes["stop_reason"] == "block_timeout"
-    assert manager.dashboard_session_payload()["status"] == "CANCELLED_TIMEOUT"
+    assert manager.dashboard_session_payload()["status"] == "TIMEOUT"
     assert kiosk.stopped is True
 
 
@@ -715,6 +715,25 @@ def test_exam_checks_expose_absence_block_and_presence_failure():
     assert checks["presence"]["label"] == "Aluno ausente"
     assert checks["presence"]["state"] == "fail"
     assert checks["faces"]["state"] == "fail"
+
+
+def test_exam_checks_hide_local_timer_when_platform_manages_time():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager._runtime = SessionRuntime(
+        session_id="session-no-timer",
+        turma_id="ES2025-T1",
+        assessment="Quiz-01",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test/exam",
+        local_timer_enabled=False,
+    )
+
+    assert manager.get_status()["seconds_remaining"] is None
+    assert manager.get_exam_checks()["seconds_remaining"] is None
 
 
 def test_session_manager_resets_to_idle_after_identification_failure():
@@ -1302,6 +1321,7 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
             "turma": "ES2025-T1",
             "assessment": "Quiz-03",
             "timer_minutes": 30,
+            "local_timer_enabled": False,
             "prairielearn_url": "https://pl.test/exam",
             "allowlist": ["example.edu"],
             "auto_start": True,
@@ -1317,6 +1337,7 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert config.turma_id == "ES2025-T1"
     assert config.assessment == "Quiz-03"
     assert config.timer_minutes == 30
+    assert config.local_timer_enabled is False
     assert config.prairielearn_url == "https://pl.test/exam"
     assert config.allowlist == ["example.edu"]
     assert config.auto_start is True

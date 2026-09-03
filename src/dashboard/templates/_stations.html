@@ -21,7 +21,7 @@
         <p class="eyebrow">Configuração atribuída</p>
         {% if station.assigned_config %}
         <strong>{{ station.assigned_config.assessment }}</strong>
-        <span>{{ station.assigned_config.turma }} · {{ station.assigned_config.timer_minutes }} min</span>
+        <span>{{ station.assigned_config.turma }} · {{ station.assigned_config.timer_minutes ~ ' min' if station.assigned_config.local_timer_enabled else 'Sem limite local' }}</span>
         {% else %}
         <strong>Sem configuração distribuída</strong>
         <span>Defina uma prova antes de ativar esta estação.</span>

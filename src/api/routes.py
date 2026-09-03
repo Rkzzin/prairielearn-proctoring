@@ -12,6 +12,7 @@ class ConfigUpdateRequest(BaseModel):
     turma_id: str | None = None
     assessment: str | None = None
     timer_minutes: int | None = None
+    local_timer_enabled: bool | None = None
     prairielearn_url: str | None = None
     allowlist: list[str] | None = None
     s3_prefix: str | None = None

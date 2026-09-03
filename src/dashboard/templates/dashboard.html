@@ -111,7 +111,8 @@
     </label>
     <p class="empty" id="new-config-turma-error" style="display:none"></p>
     <label>Assessment<input type="text" name="assessment" value="Quiz-03"></label>
-    <label>Timer (min)<input type="number" name="timer_minutes" value="45"></label>
+    <label class="checkbox"><input type="checkbox" name="local_timer_enabled" checked onchange="syncLocalTimerControl()"> Usar cronômetro local</label>
+    <label id="timer-minutes-field">Timer (min)<input type="number" name="timer_minutes" value="45" min="1"></label>
     <label>PrairieLearn URL<input type="url" name="prairielearn_url" value="https://prairielearn.org/pl"></label>
     <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org
 login.microsoftonline.com</textarea></label>
@@ -290,7 +291,10 @@ async function editHistoricalConfig(index) {
 }
 
 async function openConfigEditor({stationIds = null, config = null, description}) {
-  if (!config) document.getElementById('new-config-form').reset();
+  if (!config) {
+    document.getElementById('new-config-form').reset();
+    syncLocalTimerControl();
+  }
   document.getElementById('new-config-station-name').textContent = description;
   await populateConfigStations(stationIds);
   await populateConfigTurmas(config);
@@ -363,6 +367,7 @@ function applyConfigValues(config) {
   const form = document.getElementById('new-config-form');
   form.elements.assessment.value = config.assessment;
   form.elements.timer_minutes.value = config.timer_minutes;
+  form.elements.local_timer_enabled.checked = config.local_timer_enabled !== false;
   form.elements.prairielearn_url.value = config.prairielearn_url;
   form.elements.allowlist_lines.value = (config.allowlist || []).join('\n');
   form.elements.gaze_h_threshold.value = config.gaze_h_threshold;
@@ -370,6 +375,15 @@ function applyConfigValues(config) {
   form.elements.absence_timeout_sec.value = config.absence_timeout_sec;
   form.elements.multi_face_block.checked = config.multi_face_block;
   form.elements.allow_repeat_attempts.checked = config.allow_repeat_attempts;
+  syncLocalTimerControl();
+}
+
+function syncLocalTimerControl() {
+  const form = document.getElementById('new-config-form');
+  const enabled = form.elements.local_timer_enabled.checked;
+  const field = document.getElementById('timer-minutes-field');
+  field.hidden = !enabled;
+  form.elements.timer_minutes.disabled = !enabled;
 }
 
 async function submitNewConfig() {
@@ -383,10 +397,12 @@ async function submitNewConfig() {
     return;
   }
   stationError.hidden = true;
+  const localTimerEnabled = data.get('local_timer_enabled') === 'on';
   const payload = {
     turma: data.get('turma'),
     assessment: data.get('assessment'),
-    timer_minutes: Number(data.get('timer_minutes')),
+    timer_minutes: localTimerEnabled ? Number(data.get('timer_minutes')) : 45,
+    local_timer_enabled: localTimerEnabled,
     prairielearn_url: data.get('prairielearn_url'),
     allowlist: String(data.get('allowlist_lines') || '').split('\n').map(v => v.trim()).filter(Boolean),
     auto_start: false,
