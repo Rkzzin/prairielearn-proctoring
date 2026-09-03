@@ -1,23 +1,45 @@
 {% if stations %}
 <div class="station-grid">
   {% for station in stations %}
-  <article class="station-card">
-    <div class="station-head">
+  <article class="station-card station-{{ station.status.value|lower }}">
+    <header class="station-head">
       <div>
+        <p class="station-kicker">{{ station.station_id }}</p>
         <h3>{{ station.station_name }}</h3>
-        <p>{{ station.station_id }}</p>
       </div>
-      <span class="badge badge-{{ station.status.value|lower }}">{{ station.status.value }}</span>
-    </div>
-    <dl class="meta">
-      <div><dt>Aluno</dt><dd>{% if station.student %}{{ station.student.student_name }}{% else %}vazio{% endif %}</dd></div>
-      <div><dt>Turma</dt><dd>{{ station.turma or "—" }}</dd></div>
-      <div><dt>Assessment</dt><dd>{{ station.assessment or "—" }}</dd></div>
-      <div><dt>Modo</dt><dd>{{ station.mode or "—" }}</dd></div>
-      <div><dt>Modo prova</dt><dd>{{ "ativo" if station.auto_start_enabled else "inativo" }}</dd></div>
-      <div><dt>Tempo</dt><dd>{% if station.seconds_remaining is not none %}{{ station.seconds_remaining }} s{% else %}—{% endif %}</dd></div>
+      <div class="station-status">
+        <span class="badge badge-{{ station.status.value|lower }}">{{ station.status.value }}</span>
+        <span>{{ station.mode or "sem modo" }}</span>
+      </div>
+    </header>
+    {% set station_busy = station.status.value in ["IDENTIFYING", "SESSION", "BLOCKED", "UPLOADING"] %}
+    {% set exam_mode_active = station.auto_start_enabled or station.mode == "WAITING_STUDENT" or station.status.value == "WAITING_STUDENT" %}
+    <section class="station-config-summary" aria-label="Configuração atribuída">
+      <div>
+        <p class="eyebrow">Configuração atribuída</p>
+        {% if station.assigned_config %}
+        <strong>{{ station.assigned_config.assessment }}</strong>
+        <span>{{ station.assigned_config.turma }} · {{ station.assigned_config.timer_minutes }} min</span>
+        {% else %}
+        <strong>Sem configuração distribuída</strong>
+        <span>Defina uma prova antes de ativar esta estação.</span>
+        {% endif %}
+      </div>
+      <button
+        type="button"
+        class="button-secondary station-config-action"
+        {% if station_busy and station.assigned_config %}disabled title="Encerre a avaliação antes de editar a configuração"{% endif %}
+        onclick="{{ 'openStationConfig(\'' + station.station_id + '\', \'' + station.station_name + '\')' if station.assigned_config else 'openNewConfigModal(\'' + station.station_id + '\', \'' + station.station_name + '\')' }}"
+      >
+        {{ "Ver / editar" if station.assigned_config else "Configurar" }}
+      </button>
+    </section>
+    <dl class="station-facts">
+      <div><dt>Aluno</dt><dd>{% if station.student %}{{ station.student.student_name }}{% else %}Aguardando aluno{% endif %}</dd></div>
+      <div><dt>Modo prova</dt><dd>{{ "ativo" if exam_mode_active else "inativo" }}</dd></div>
+      <div><dt>Tempo restante</dt><dd>{% if station.seconds_remaining is not none %}{{ station.seconds_remaining }} s{% else %}—{% endif %}</dd></div>
       {% if station.enroll_status and station.enroll_status != "idle" %}
-      <div><dt>Atualização facial</dt><dd>{{ station.enroll_status }}{% if station.enroll_message %} — {{ station.enroll_message }}{% endif %}</dd></div>
+      <div><dt>Reconhecimento facial</dt><dd>{{ station.enroll_status }}{% if station.enroll_message %} — {{ station.enroll_message }}{% endif %}</dd></div>
       {% endif %}
       {% if station.update_status and station.update_status != "idle" %}
       <div><dt>Atualização do sistema</dt><dd>{{ station.update_status }}{% if station.update_message %} — {{ station.update_message }}{% endif %}</dd></div>
@@ -29,31 +51,24 @@
       <span>{{ station.last_event.severity.value }}</span>
     </p>
     {% endif %}
-    {% set station_busy = station.status.value in ["IDENTIFYING", "SESSION", "BLOCKED", "UPLOADING"] %}
-    {% set exam_mode_active = station.auto_start_enabled or station.mode == "WAITING_STUDENT" or station.status.value == "WAITING_STUDENT" %}
-    <div class="actions">
+    <div class="station-primary-actions">
       <button
         type="button"
-        class="button-secondary"
+        class="station-exam-action"
         onclick="{{ 'issueAutoStartCommand(\'' + station.station_id + '\', false)' if exam_mode_active else 'openExamModeModal(\'' + station.station_id + '\', \'' + station.station_name + '\')' }}"
       >
         {{ "Sair do modo prova" if exam_mode_active else "Entrar em modo prova" }}
       </button>
-      <button
-        type="button"
-        class="button-secondary"
-        {% if station_busy or not station.assigned_config %}disabled title="Esta estação não tem uma configuração disponível para editar"{% endif %}
-        onclick="openStationConfig('{{ station.station_id }}', '{{ station.station_name }}')"
-      >
-        Ver / editar configuração
-      </button>
+      {% if station_busy %}
       <button
         type="button"
         class="button-secondary"
         onclick="issueStationCommand('{{ station.station_id }}', 'stop')"
       >
-        Encerrar
+        Encerrar avaliação
       </button>
+      {% endif %}
+      {% if station.status.value == "BLOCKED" %}
       <button
         type="button"
         class="button-secondary"
@@ -61,6 +76,11 @@
       >
         Desbloquear
       </button>
+      {% endif %}
+    </div>
+    <details class="station-maintenance">
+      <summary>Ferramentas de manutenção</summary>
+      <div class="station-maintenance-actions">
       <button
         type="button"
         class="button-secondary"
@@ -86,7 +106,8 @@
       >
         Excluir estação
       </button>
-    </div>
+      </div>
+    </details>
   </article>
   {% endfor %}
 </div>

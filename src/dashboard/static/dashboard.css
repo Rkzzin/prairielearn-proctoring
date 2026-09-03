@@ -167,13 +167,104 @@ button {
 }
 .station-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 16px;
 }
 .station-card {
+  position: relative;
   padding: 18px;
   display: grid;
-  gap: 12px;
+  gap: 16px;
+  overflow: hidden;
+}
+.station-card::before {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  content: "";
+  background: var(--muted);
+}
+.station-waiting_student::before, .station-session::before { background: var(--success); }
+.station-blocked::before { background: var(--critical); }
+.station-identifying::before { background: #2f7c9f; }
+.station-offline::before { background: #3e3e3e; }
+.station-head {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 16px;
+}
+.station-head h3 { margin: 1px 0 0; }
+.station-kicker {
+  margin: 0;
+  color: var(--muted);
+  font-family: "Courier New", monospace;
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+.station-status {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  color: var(--muted);
+  font-family: Arial, sans-serif;
+  font-size: 0.72rem;
+}
+.station-config-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px;
+  border: 1px solid #d9d7cd;
+  border-radius: 12px;
+  background: linear-gradient(120deg, #f7f2e9, #fffdf8);
+}
+.station-config-summary .eyebrow { margin-bottom: 4px; color: var(--accent); }
+.station-config-summary strong, .station-config-summary span { display: block; }
+.station-config-summary span { margin-top: 3px; color: var(--muted); font-size: 0.86rem; }
+.station-config-action { flex: 0 0 auto; }
+.station-facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--border);
+}
+.station-facts div { min-width: 0; padding: 10px; background: var(--surface); }
+.station-facts dt { color: var(--muted); font-family: Arial, sans-serif; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; }
+.station-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 0.9rem; font-weight: 700; }
+.station-primary-actions, .station-maintenance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.station-primary-actions button, .station-maintenance-actions button { width: auto; }
+.station-exam-action {
+  width: auto;
+  background: var(--accent);
+  box-shadow: 0 5px 12px rgba(187, 90, 42, 0.2);
+}
+.station-maintenance {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.station-maintenance summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-family: Arial, sans-serif;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+.station-maintenance[open] summary { margin-bottom: 10px; color: var(--ink); }
+.station-maintenance-actions { padding-top: 2px; }
+.station-card button:disabled { cursor: not-allowed; opacity: 0.5; }
+.station-card button:focus-visible, .station-maintenance summary:focus-visible {
+  outline: 3px solid rgba(187, 90, 42, 0.35);
+  outline-offset: 2px;
 }
 .config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
 .config-card { display: grid; gap: 14px; padding: 18px; border: 1px solid var(--border); border-top: 4px solid var(--accent); border-radius: 14px; background: linear-gradient(145deg, #fffdf8, #f9f0e4); }
@@ -649,10 +740,15 @@ video {
   .meta {
     grid-template-columns: 1fr;
   }
-  .actions {
+  .station-facts {
+    grid-template-columns: 1fr;
+  }
+  .station-primary-actions,
+  .station-maintenance-actions {
     flex-direction: column;
   }
-  .actions .button-secondary {
+  .station-primary-actions button,
+  .station-maintenance-actions button {
     width: 100%;
   }
 }
@@ -719,6 +815,9 @@ video {
     flex-direction: column;
     align-items: start;
   }
+  .station-status { justify-items: start; }
+  .station-config-summary { align-items: start; flex-direction: column; }
+  .station-config-action { width: 100%; }
   .badge {
     align-self: start;
   }
