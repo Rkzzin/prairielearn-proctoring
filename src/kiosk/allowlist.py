@@ -17,6 +17,7 @@ _IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
 
 EXTENSION_DIR = Path(__file__).resolve().parent / "allowlist_extension"
 EXTENSION_CONFIG_NAME = "config.json"
+DEFAULT_ALLOWED_HOSTS = ("us.prairietest.com",)
 CHROMIUM_MANAGED_POLICY_PATHS = (
     Path("/etc/chromium/policies/managed/proctor-browser-hardening.json"),
     Path("/etc/chromium-browser/policies/managed/proctor-browser-hardening.json"),
@@ -93,7 +94,9 @@ def build_allowlist_config(
     allowlist: list[str],
     strict_subresources: bool = False,
 ) -> AllowlistConfig:
-    hosts: list[str] = []
+    # PrairieTest é a plataforma institucional de prova e permanece acessível
+    # mesmo quando a configuração de uma avaliação usa outro domínio inicial.
+    hosts: list[str] = list(DEFAULT_ALLOWED_HOSTS)
     start_host = host_from_url(start_url)
     if start_host:
         hosts.append(start_host)

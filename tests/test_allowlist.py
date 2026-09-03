@@ -45,6 +45,12 @@ def test_build_allowlist_config_includes_start_url_host_and_deduplicates():
     ]
 
 
+def test_build_allowlist_config_always_includes_prairietest():
+    config = build_allowlist_config(start_url="https://example.edu/exam", allowlist=[])
+
+    assert {site.host for site in config.sites} == {"example.edu", "us.prairietest.com"}
+
+
 def test_write_extension_config_writes_small_runtime_file(tmp_path):
     config = build_allowlist_config(
         start_url="https://prairielearn.org/pl",
