@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class StationStatus(str, Enum):
@@ -85,6 +85,12 @@ class SessionRecord(BaseModel):
     flags_count: int = 0
     events: list[SessionEventPayload] = Field(default_factory=list)
     recordings: list[RecordingAsset] = Field(default_factory=list)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def migrate_cancelled_timeout_status(cls, value: object) -> object:
+        """Mantém o dashboard inicializável com sessões gravadas antes de TIMEOUT."""
+        return "TIMEOUT" if value == "CANCELLED_TIMEOUT" else value
 
     @property
     def duration_seconds(self) -> int | None:

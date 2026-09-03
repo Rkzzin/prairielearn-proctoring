@@ -965,6 +965,21 @@ def test_finalize_session_preserves_block_timeout_cancellation(dashboard_databas
     assert finalized.status == StationStatus.TIMEOUT
 
 
+def test_session_record_migrates_legacy_cancelled_timeout_status():
+    session = SessionRecord.model_validate(
+        {
+            "session_id": "sess-legacy-timeout",
+            "station_id": "nuc-01",
+            "turma": "ES2025-T1",
+            "assessment": "Quiz-03",
+            "started_at": "2026-04-16T18:00:00+00:00",
+            "status": "CANCELLED_TIMEOUT",
+        }
+    )
+
+    assert session.status == StationStatus.TIMEOUT
+
+
 def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path, dashboard_database_url):
     class FakeS3:
         def generate_presigned_url(self, _operation, Params, ExpiresIn):
