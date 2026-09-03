@@ -125,6 +125,7 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
     assert "Gerar estação e token" in response.text
     assert "Configurar estações" in response.text
     assert "Todas" in response.text
+    assert "Ativar controle de tempo" in response.text
 
 
 @pytest.mark.asyncio

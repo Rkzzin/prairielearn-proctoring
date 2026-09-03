@@ -576,6 +576,43 @@ def test_periodic_identity_check_blocks_a_different_student(monkeypatch):
     ]
 
 
+def test_periodic_identity_check_blocks_an_unknown_person(monkeypatch):
+    manager, recognizer, engine, *_ = _make_manager(
+        identify_results=[IdentifyResult(status=IdentifyStatus.NO_MATCH, confidence=0.41, face_count=1)],
+        engine_states=[],
+        frames=[],
+    )
+    manager._recognizer = recognizer
+    manager._engine = engine
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="ES2025-T1",
+        assessment="Quiz-01",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test/exam",
+    )
+    manager._last_identity_check_at = 100.0
+    monkeypatch.setattr("src.core.session.time.monotonic", lambda: 110.0)
+
+    manager._verify_session_identity("frame")
+
+    assert engine.external_blocks == [
+        (
+            BlockReason.DIFFERENT_USER,
+            {
+                "expected_student_id": "123",
+                "detected_student_id": None,
+                "detected_status": "NO_MATCH",
+                "detected_confidence": 0.41,
+            },
+        )
+    ]
+
+
 def test_periodic_identity_check_runs_only_every_ten_seconds(monkeypatch):
     manager, recognizer, engine, *_ = _make_manager(
         identify_results=[

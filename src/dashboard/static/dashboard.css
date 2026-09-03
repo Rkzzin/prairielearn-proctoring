@@ -285,6 +285,19 @@ button {
 .station-selector-head legend { font-weight: 700; }
 .station-selector-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 8px; max-height: 176px; overflow-y: auto; }
 .station-selector-option { min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+#timer-minutes-field.is-disabled {
+  padding: 10px;
+  border: 1px solid #c9c7c2;
+  border-radius: 10px;
+  color: #74777a;
+  background: #e5e5e3;
+}
+#timer-minutes-field input:disabled {
+  cursor: not-allowed;
+  border-color: #c9c7c2;
+  color: #74777a;
+  background: #d8d8d6;
+}
 .actions {
   display: flex;
   gap: 10px;

@@ -37,6 +37,7 @@ from src.core.dashboard_payload import (
     collect_session_events,
     collect_session_recordings,
 )
+from src.core.models import IdentifyStatus
 from src.core.states import SessionState, StationMode, derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.face.recognizer import FaceRecognizer
@@ -855,18 +856,27 @@ class SessionManager:
             logger.warning("Falha na verificação periódica de identidade: %s", exc)
             return
 
-        if result.is_match and result.student_id != self._runtime.student_id:
+        different_student = result.is_match and result.student_id != self._runtime.student_id
+        unknown_student = result.status == IdentifyStatus.NO_MATCH
+        if different_student or unknown_student:
+            details: dict[str, Any] = {
+                "expected_student_id": self._runtime.student_id,
+                "detected_student_id": result.student_id,
+            }
+            if unknown_student:
+                details.update(
+                    detected_status=result.status.value,
+                    detected_confidence=result.confidence,
+                )
             logger.warning(
-                "Usuário diferente detectado: esperado=%s detectado=%s",
+                "Usuário diferente ou desconhecido detectado: esperado=%s detectado=%s status=%s",
                 self._runtime.student_id,
                 result.student_id,
+                result.status.value,
             )
             self._engine.block(
                 BlockReason.DIFFERENT_USER,
-                details={
-                    "expected_student_id": self._runtime.student_id,
-                    "detected_student_id": result.student_id,
-                },
+                details=details,
             )
 
     def _handle_blocked(self) -> None:
