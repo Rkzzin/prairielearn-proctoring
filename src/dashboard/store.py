@@ -194,6 +194,9 @@ class DashboardStore:
             if payload.enroll_status is not None:
                 station.enroll_status = payload.enroll_status
                 station.enroll_message = payload.enroll_message
+            if payload.update_status is not None:
+                station.update_status = payload.update_status
+                station.update_message = payload.update_message
             station.seconds_remaining = payload.seconds_remaining
             station.last_seen_at = datetime.now(timezone.utc)
             station.last_event = payload.last_event

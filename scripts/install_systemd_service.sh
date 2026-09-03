@@ -23,6 +23,7 @@ PY
 RUN_UID="$(id -u "$RUN_USER")"
 XAUTHORITY_PATH="/run/user/$RUN_UID/gdm/Xauthority"
 UNIT_PATH="/etc/systemd/system/$SERVICE_NAME"
+SUDOERS_PATH="/etc/sudoers.d/proctor-dashboard-reboot"
 TMP_UNIT="$(mktemp)"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
@@ -38,6 +39,12 @@ fi
 # sem nunca chegar a gravar nada.
 mkdir -p "$DATA_DIR"
 chown -R "$RUN_USER":"$RUN_USER" "$DATA_DIR"
+
+# O comando autenticado do dashboard só pode reiniciar a estação após um
+# `git pull --ff-only` bem-sucedido; não concede sudo genérico ao serviço.
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl reboot\n' "$RUN_USER" >"$SUDOERS_PATH"
+chmod 440 "$SUDOERS_PATH"
+visudo -cf "$SUDOERS_PATH"
 
 cat >"$TMP_UNIT" <<EOF
 [Unit]

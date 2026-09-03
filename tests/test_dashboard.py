@@ -148,6 +148,39 @@ async def test_station_partial_offers_exit_when_station_reports_waiting_student(
 
 
 @pytest.mark.asyncio
+async def test_dashboard_queues_update_and_reboot_only_when_station_is_idle(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(station_id="nuc-01", station_name="NUC Sala 1", status=StationStatus.IDLE)
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/api/stations/nuc-01/update-and-reboot")
+
+    assert response.status_code == 202
+    assert response.json()["command_type"] == "UPDATE_AND_REBOOT"
+
+
+@pytest.mark.asyncio
+async def test_dashboard_rejects_update_and_reboot_when_station_is_busy(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.SESSION,
+            active_session_id="sess-1",
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/api/stations/nuc-01/update-and-reboot")
+
+    assert response.status_code == 409
+    assert "avaliação ativa" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_database_url):
     app = _make_app(tmp_path, dashboard_database_url)
     station_headers = _station_headers(app, "nuc-01")

@@ -386,6 +386,26 @@ async function issueAutoStartCommand(stationId, enabled) {
   }
 }
 
+async function updateAndRebootStation(stationId, stationName) {
+  const confirmed = window.confirm(
+    `Atualizar o repositório e reiniciar a estação "${stationName}"? Ela ficará indisponível por alguns minutos.`
+  );
+  if (!confirmed) {
+    return;
+  }
+  const response = await fetch(`/api/stations/${encodeURIComponent(stationId)}/update-and-reboot`, {
+    method: 'POST'
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    window.alert(payload.detail || 'Não foi possível solicitar a atualização.');
+    return;
+  }
+  if (window.htmx) {
+    htmx.ajax('GET', '/partials/stations', '#stations-panel');
+  }
+}
+
 async function clearKnownSessions() {
   const confirmed = window.confirm('Limpar o histórico local de sessões conhecidas deste dashboard? Isso não apaga arquivos no S3.');
   if (!confirmed) {

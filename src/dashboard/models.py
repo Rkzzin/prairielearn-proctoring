@@ -37,6 +37,7 @@ class CommandType(str, Enum):
     STOP_SESSION = "STOP_SESSION"
     UNBLOCK_SESSION = "UNBLOCK_SESSION"
     RUN_ENROLL = "RUN_ENROLL"
+    UPDATE_AND_REBOOT = "UPDATE_AND_REBOOT"
 
 
 class EventSeverity(str, Enum):
@@ -134,6 +135,8 @@ class StationHeartbeat(BaseModel):
     #: src/core/enroll_runner.py. None quando a NUC não reporta (versão antiga).
     enroll_status: str | None = None
     enroll_message: str | None = None
+    update_status: str | None = None
+    update_message: str | None = None
 
 
 class StationCreatePayload(BaseModel):
@@ -158,6 +161,8 @@ class StationRecord(BaseModel):
     assigned_config: ExamConfigPayload | None = None
     enroll_status: str | None = None
     enroll_message: str | None = None
+    update_status: str | None = None
+    update_message: str | None = None
 
     def effective_status(self, now: datetime | None = None, offline_after_sec: int = 15) -> StationStatus:
         reference = now or datetime.now(timezone.utc)

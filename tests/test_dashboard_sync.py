@@ -209,6 +209,31 @@ class FakeEnrollRunner:
         return {"enroll_status": self._status, "enroll_message": self._message}
 
 
+class FakeUpdateRunner:
+    def __init__(self):
+        self.started = 0
+
+    def start(self):
+        self.started += 1
+
+    def status_dict(self):
+        return {"update_status": "idle", "update_message": ""}
+
+
+def test_dashboard_worker_update_and_reboot_command_starts_runner():
+    manager = FakeSessionManager()
+    update_runner = FakeUpdateRunner()
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        update_runner=update_runner,
+    )
+
+    worker._apply_command({"command_type": "UPDATE_AND_REBOOT", "payload": {}})
+
+    assert update_runner.started == 1
+
+
 def test_dashboard_worker_run_enroll_command_starts_the_runner():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

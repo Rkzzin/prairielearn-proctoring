@@ -19,6 +19,9 @@
       {% if station.enroll_status and station.enroll_status != "idle" %}
       <div><dt>Atualização facial</dt><dd>{{ station.enroll_status }}{% if station.enroll_message %} — {{ station.enroll_message }}{% endif %}</dd></div>
       {% endif %}
+      {% if station.update_status and station.update_status != "idle" %}
+      <div><dt>Atualização do sistema</dt><dd>{{ station.update_status }}{% if station.update_message %} — {{ station.update_message }}{% endif %}</dd></div>
+      {% endif %}
     </dl>
     {% if station.last_event %}
     <p class="event-line">
@@ -57,6 +60,14 @@
         onclick="openEnrollModal('{{ station.station_id }}', '{{ station.station_name }}')"
       >
         Atualizar reconhecimento facial
+      </button>
+      <button
+        type="button"
+        class="button-secondary button-danger"
+        {% if station_busy %}disabled title="Encerre a avaliação antes de atualizar a estação"{% endif %}
+        onclick="updateAndRebootStation('{{ station.station_id }}', '{{ station.station_name }}')"
+      >
+        Atualizar e reiniciar
       </button>
       <button
         type="button"

@@ -12,6 +12,7 @@ from src.core.config import DashboardConfig
 from src.core.dashboard_payload import event_to_payload, session_events_path
 from src.core.enroll_runner import EnrollRunner
 from src.core.session import SessionError, SessionManager, SessionState, StationMode
+from src.core.update_runner import UpdateRunner
 from src.proctor.events import ProctorEvent
 
 logger = logging.getLogger(__name__)
@@ -28,11 +29,13 @@ class DashboardHeartbeatWorker:
         session_manager: SessionManager,
         client_factory: Callable[[], httpx.Client] | None = None,
         enroll_runner: EnrollRunner | None = None,
+        update_runner: UpdateRunner | None = None,
     ):
         self._config = config
         self._session_manager = session_manager
         self._client_factory = client_factory or self._default_client_factory
         self._enroll_runner = enroll_runner or EnrollRunner(session_manager=session_manager)
+        self._update_runner = update_runner or UpdateRunner(session_manager=session_manager)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._registered_sessions: set[str] = set()
@@ -118,6 +121,11 @@ class DashboardHeartbeatWorker:
             logger.info("RUN_ENROLL recebido para %d turma(s)", len(turma_ids))
             return
 
+        if command_type == "UPDATE_AND_REBOOT":
+            self._update_runner.start()
+            logger.info("UPDATE_AND_REBOOT processado")
+            return
+
         logger.warning("Comando desconhecido do dashboard: %s", command_type)
 
     def _enter_exam_mode_if_idle(self) -> None:
@@ -154,6 +162,7 @@ class DashboardHeartbeatWorker:
     def _build_heartbeat_payload(self) -> dict[str, Any]:
         payload = self._session_manager.dashboard_snapshot()
         payload.update(self._enroll_runner.status_dict())
+        payload.update(self._update_runner.status_dict())
         session = self._session_manager.dashboard_session_payload(include_completed=False)
         if session is None:
             return payload
