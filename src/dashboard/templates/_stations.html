@@ -9,7 +9,9 @@
       </div>
       <div class="station-status">
         <span class="badge badge-{{ station.status.value|lower }}">{{ station.status.value }}</span>
+        {% if station.mode and station.mode != station.status.value %}
         <span>{{ station.mode or "sem modo" }}</span>
+        {% endif %}
       </div>
     </header>
     {% set station_busy = station.status.value in ["IDENTIFYING", "SESSION", "BLOCKED", "UPLOADING"] %}
