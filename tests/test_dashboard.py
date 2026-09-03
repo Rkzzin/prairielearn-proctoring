@@ -946,6 +946,25 @@ def test_finalize_session_marks_history_completed_and_station_idle(dashboard_dat
     assert station.active_session_id is None
 
 
+def test_finalize_session_preserves_block_timeout_cancellation(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    store.register_session(
+        SessionRecord(
+            session_id="sess-timeout",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            status=StationStatus.CANCELLED_TIMEOUT,
+        )
+    )
+
+    finalized = store.finalize_session("sess-timeout")
+
+    assert finalized is not None
+    assert finalized.status == StationStatus.CANCELLED_TIMEOUT
+
+
 def test_dashboard_store_generates_presigned_url_for_s3_assets(tmp_path, dashboard_database_url):
     class FakeS3:
         def generate_presigned_url(self, _operation, Params, ExpiresIn):

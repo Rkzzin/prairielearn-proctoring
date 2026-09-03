@@ -124,6 +124,7 @@ def build_session_payload(
     dashboard usa o nome curto.
     """
     events = target.notes.get("dashboard_events", [])
+    status = "CANCELLED_TIMEOUT" if target.notes.get("stop_reason") == "block_timeout" else target.state.value
     return {
         "session_id": target.session_id,
         "station_id": station_id,
@@ -136,7 +137,7 @@ def build_session_payload(
             "student_id": target.student_id,
             "student_name": target.student_name,
         },
-        "status": target.state.value,
+        "status": status,
         "flags_count": sum(
             1 for event in events if event["severity"] in FLAGGED_SEVERITIES
         ),

@@ -35,9 +35,9 @@ class StationMode(str, Enum):
 
 
 #: Status que só existem na visão do dashboard, sem contrapartida na NUC.
-#: ``COMPLETED`` é atribuído ao finalizar a sessão; ``OFFLINE`` quando o
-#: heartbeat expira.
-DASHBOARD_ONLY_STATUSES = frozenset({"COMPLETED", "OFFLINE"})
+#: ``COMPLETED``/``CANCELLED_TIMEOUT`` são atribuídos ao finalizar a sessão;
+#: ``OFFLINE`` quando o heartbeat expira.
+DASHBOARD_ONLY_STATUSES = frozenset({"COMPLETED", "CANCELLED_TIMEOUT", "OFFLINE"})
 
 
 def derive_station_status(state: SessionState, mode: StationMode) -> str:

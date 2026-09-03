@@ -256,7 +256,8 @@ class DashboardStore:
             if session is None:
                 return None
             session.ended_at = ended_at or datetime.now(timezone.utc)
-            session.status = StationStatus.COMPLETED
+            if session.status != StationStatus.CANCELLED_TIMEOUT:
+                session.status = StationStatus.COMPLETED
             station = self._stations.get(session.station_id)
             if station:
                 station.status = StationStatus.IDLE

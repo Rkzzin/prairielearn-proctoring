@@ -650,6 +650,7 @@ def test_session_manager_cancels_session_after_block_timeout():
     assert engine.cancelled_timeouts == [20.0]
     assert manager._last_session is not None
     assert manager._last_session.notes["stop_reason"] == "block_timeout"
+    assert manager.dashboard_session_payload()["status"] == "CANCELLED_TIMEOUT"
     assert kiosk.stopped is True
 
 

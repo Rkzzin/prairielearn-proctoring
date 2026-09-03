@@ -62,6 +62,7 @@ _EVENT_REASON_LABELS = {
 }
 _SESSION_STATUS_LABELS = {
     "COMPLETED": "Concluída",
+    "CANCELLED_TIMEOUT": "Cancelada por timeout de bloqueio",
     "SESSION": "Em andamento",
     "BLOCKED": "Pausada",
     "UPLOADING": "Finalizando",

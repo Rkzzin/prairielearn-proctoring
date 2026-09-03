@@ -331,6 +331,17 @@ button {
 .event-line, .empty, .stack span {
   color: var(--muted);
 }
+.session-table-status {
+  display: inline-block;
+  padding: 4px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: rgba(91, 107, 115, 0.1);
+  font-family: Arial, sans-serif;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.session-table-status-cancelled_timeout { color: #8a2929; background: #fbeaea; }
 .table-wrap {
   overflow-x: auto;
 }
@@ -398,6 +409,7 @@ th, td {
   text-transform: uppercase;
 }
 .session-status-completed { color: #24652b; background: #e8f4e9; border-color: #bcd9bf; }
+.session-status-cancelled_timeout { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
 .session-status-blocked { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
 .session-status-session { color: #1e626b; background: #e3f1f2; border-color: #b7d7da; }
 .session-status-uploading { color: #435e8c; background: #eaf0fa; border-color: #c4d1e6; }
