@@ -65,20 +65,27 @@ fi
 # maioria se anuncia como 'USB Audio' no nome do dispositivo).
 CARD_LINE=""
 if command -v arecord > /dev/null 2>&1; then
-    CARD_LINE="$(arecord -l 2>/dev/null | grep -im1 -E 'usb|webcam|c920|c922|c930')"
+    CARD_LINE="$(arecord -l 2>/dev/null | grep -im1 -E 'usb|webcam|c920|c922|c930' || true)"
 else
     warn "arecord não encontrado (pacote alsa-utils). Instale com: sudo apt install alsa-utils"
 fi
 
-if [ -n "$CARD_LINE" ]; then
+PULSE_SOURCE=""
+if command -v wpctl > /dev/null 2>&1; then
+    PULSE_SOURCE="$(XDG_RUNTIME_DIR="/run/user/$(id -u)" wpctl status -n 2>/dev/null \
+        | grep -m1 -E 'alsa_input\.usb[^ ]*' \
+        | sed -E 's/.*[0-9]+\. (alsa_input\.usb[^ ]*).*/\1/' || true)"
+fi
+
+if [ -n "$CARD_LINE" ] && [ -n "$PULSE_SOURCE" ]; then
     CARD_NAME="$(echo "$CARD_LINE" | sed -E 's/^card [0-9]+: ([^ ]+).*/\1/')"
     if [ -n "$CARD_NAME" ]; then
-        sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=default#" .env
-        log "Microfone da webcam detectado: ${CARD_NAME}; usando Pulse default para compartilhar via PipeWire"
+        sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=${PULSE_SOURCE}#" .env
+        log "Microfone da webcam detectado: ${CARD_NAME} — ${PULSE_SOURCE}"
     fi
 else
-    warn "Nenhum card ALSA de webcam identificado automaticamente."
-    warn "Confira manualmente: arecord -l"
+    warn "Nenhuma entrada PipeWire de webcam USB foi identificada automaticamente."
+    warn "Confira manualmente: wpctl status -n"
     warn "e ajuste PROCTOR_REC_WEBCAM_AUDIO_DEVICE no .env à mão."
 fi
 

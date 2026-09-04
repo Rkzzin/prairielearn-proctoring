@@ -151,6 +151,10 @@ class RecorderConfig(BaseSettings):
         default="96k",
         description="Bitrate AAC usado no áudio ambiente gravado no vídeo da webcam.",
     )
+    webcam_audio_filter: str = Field(
+        default="highpass=f=80,alimiter=limit=0.891:level=false",
+        description="Filtro FFmpeg aplicado ao áudio para remover rumble e proteger contra picos.",
+    )
     display: str = Field(
         default=":0",
         description="Display X11 para captura de tela",

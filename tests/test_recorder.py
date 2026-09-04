@@ -249,6 +249,8 @@ def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, m
     assert "aac" in cmd
     assert "-b:a" in cmd
     assert "96k" in cmd
+    assert "-af" in cmd
+    assert "highpass=f=80,alimiter=limit=0.891:level=false" in cmd
     assert "-ac" in cmd
     assert "1" in cmd
     assert "-ar" in cmd
@@ -309,6 +311,7 @@ def test_capture_webcam_ffmpeg_command_can_disable_audio(tmp_path: Path, monkeyp
     assert "pulse" not in cmd
     assert "1:a:0" not in cmd
     assert "-c:a" not in cmd
+    assert "-af" not in cmd
 
 
 def test_environment_camera_records_without_preview_or_audio(tmp_path: Path, monkeypatch):

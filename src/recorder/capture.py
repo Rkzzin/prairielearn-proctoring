@@ -282,6 +282,11 @@ class Capture:
         if audio_enabled and audio_device:
             cmd.extend([
                 "-map", "1:a:0",
+            ])
+            audio_filter = self._rec_cfg.webcam_audio_filter.strip()
+            if audio_filter:
+                cmd.extend(["-af", audio_filter])
+            cmd.extend([
                 "-c:a", "aac",
                 "-b:a", self._rec_cfg.webcam_audio_bitrate,
                 "-ac", "1",
