@@ -24,6 +24,16 @@ log()   { echo -e "${GREEN}[✓]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
 fail()  { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 
+set_env() {
+    local key="$1"
+    local value="$2"
+    if grep -q "^${key}=" .env; then
+        sed -i "s#^${key}=.*#${key}=${value}#" .env
+    else
+        printf '\n%s=%s\n' "$key" "$value" >> .env
+    fi
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$PROJECT_DIR"
@@ -52,7 +62,7 @@ else
 fi
 
 if [ -n "$CAMERA_INDEX" ]; then
-    sed -i "s#^PROCTOR_FACE_CAMERA_INDEX=.*#PROCTOR_FACE_CAMERA_INDEX=${CAMERA_INDEX}#" .env
+    set_env PROCTOR_FACE_CAMERA_INDEX "$CAMERA_INDEX"
     log "Câmera detectada em $CAMERA_DEV — PROCTOR_FACE_CAMERA_INDEX=$CAMERA_INDEX"
 else
     warn "Nenhuma câmera com suporte a MJPG encontrada."
@@ -62,15 +72,25 @@ fi
 
 # ── Microfone interno ──
 PULSE_SOURCE=""
+SOURCE_ID=""
+ALSA_CARD=""
 if command -v wpctl > /dev/null 2>&1; then
-    PULSE_SOURCE="$(XDG_RUNTIME_DIR="/run/user/$(id -u)" wpctl status -n 2>/dev/null \
-        | grep -m1 -E 'alsa_input\.pci[^ ]*analog-stereo' \
-        | sed -E 's/.*[0-9]+\. (alsa_input\.pci[^ ]*analog-stereo).*/\1/' || true)"
+    SOURCE_LINE="$(XDG_RUNTIME_DIR="/run/user/$(id -u)" wpctl status -n 2>/dev/null \
+        | grep -m1 -E 'alsa_input\.pci[^ ]*analog-stereo' || true)"
+    PULSE_SOURCE="$(printf '%s' "$SOURCE_LINE" \
+        | sed -E 's/.*[0-9]+\. (alsa_input\.pci[^ ]*analog-stereo).*/\1/')"
+    SOURCE_ID="$(printf '%s' "$SOURCE_LINE" | sed -E 's/.* ([0-9]+)\. .*/\1/')"
+    if [ -n "$SOURCE_ID" ]; then
+        ALSA_CARD="$(XDG_RUNTIME_DIR="/run/user/$(id -u)" wpctl inspect "$SOURCE_ID" 2>/dev/null \
+            | sed -nE 's/^[[:space:]]*alsa\.card = "([0-9]+)"/\1/p')"
+    fi
 fi
 
-if [ -n "$PULSE_SOURCE" ]; then
-    sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=${PULSE_SOURCE}#" .env
-    log "Microfone interno detectado: ${PULSE_SOURCE}"
+if [ -n "$PULSE_SOURCE" ] && [ -n "$ALSA_CARD" ]; then
+    set_env PROCTOR_REC_WEBCAM_AUDIO_DEVICE "$PULSE_SOURCE"
+    set_env PROCTOR_REC_WEBCAM_AUDIO_ALSA_CARD "$ALSA_CARD"
+    set_env PROCTOR_REC_WEBCAM_AUDIO_CAPTURE_PERCENT "30"
+    log "Microfone interno detectado: ${PULSE_SOURCE} — ALSA card ${ALSA_CARD}, ganho 30%"
 else
     warn "Nenhuma entrada PipeWire interna foi identificada automaticamente."
     warn "Confira manualmente: wpctl status -n"
@@ -78,7 +98,7 @@ else
 fi
 
 echo ""
-if [ -z "$CAMERA_INDEX" ] || [ -z "$PULSE_SOURCE" ]; then
+if [ -z "$CAMERA_INDEX" ] || [ -z "$PULSE_SOURCE" ] || [ -z "$ALSA_CARD" ]; then
     warn "Detecção incompleta — confira o .env manualmente antes de subir o serviço."
 else
     log "Detecção completa. Reinicie o serviço para aplicar: sudo systemctl restart proctor"
