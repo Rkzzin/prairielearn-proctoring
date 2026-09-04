@@ -40,6 +40,14 @@
       <div><dt>Aluno</dt><dd>{% if station.student %}{{ station.student.student_name }}{% else %}Aguardando aluno{% endif %}</dd></div>
       <div><dt>Modo prova</dt><dd>{{ "ativo" if exam_mode_active else "inativo" }}</dd></div>
       <div><dt>Tempo restante</dt><dd>{% if station.seconds_remaining is not none %}{{ station.seconds_remaining }} s{% else %}—{% endif %}</dd></div>
+      {% if station.assigned_config %}
+      {% set primary_index = station.assigned_config.primary_camera_index %}
+      {% set secondary_index = station.assigned_config.secondary_camera_index %}
+      {% set primary_device = station.available_cameras|selectattr('index', 'equalto', primary_index)|first if primary_index is not none else none %}
+      {% set secondary_device = station.available_cameras|selectattr('index', 'equalto', secondary_index)|first if secondary_index is not none else none %}
+      <div><dt>Câmera principal</dt><dd>{{ primary_device.name ~ ' (' ~ primary_device.device ~ ')' if primary_device else ('Padrão da estação' if primary_index is none else '/dev/video' ~ primary_index) }}</dd></div>
+      <div><dt>Câmera ambiente</dt><dd>{{ secondary_device.name ~ ' (' ~ secondary_device.device ~ ')' if secondary_device else ('Desativada' if secondary_index is none else '/dev/video' ~ secondary_index) }}</dd></div>
+      {% endif %}
       {% if station.enroll_status and station.enroll_status != "idle" %}
       <div><dt>Reconhecimento facial</dt><dd>{{ station.enroll_status }}{% if station.enroll_message %} — {{ station.enroll_message }}{% endif %}</dd></div>
       {% endif %}

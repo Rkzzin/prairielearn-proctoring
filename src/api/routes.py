@@ -23,6 +23,8 @@ class ConfigUpdateRequest(BaseModel):
     no_kiosk: bool | None = None
     reidentify_timeout_sec: float | None = Field(default=None, ge=1.0)
     reidentify_matches: int | None = Field(default=None, ge=1)
+    primary_camera_index: int | None = Field(default=None, ge=0)
+    secondary_camera_index: int | None = Field(default=None, ge=0)
 
 
 class StartSessionRequest(BaseModel):
@@ -138,7 +140,16 @@ def build_router(manager: SessionManager) -> APIRouter:
 
     @router.post("/config")
     def update_config(payload: ConfigUpdateRequest) -> dict[str, Any]:
-        config = manager.update_config(**payload.model_dump())
+        camera_fields = {"primary_camera_index", "secondary_camera_index"}
+        clear_fields = {
+            field_name
+            for field_name in camera_fields.intersection(payload.model_fields_set)
+            if getattr(payload, field_name) is None
+        }
+        try:
+            config = manager.update_config(clear_fields=clear_fields, **payload.model_dump())
+        except SessionError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"config": config.__dict__}
 
     return router

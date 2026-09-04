@@ -117,6 +117,17 @@
     <label>Allowlist (uma por linha)<textarea name="allowlist_lines">prairielearn.org
 login.microsoftonline.com
 us.prairietest.com</textarea></label>
+    <fieldset class="station-selector">
+      <legend>Câmeras</legend>
+      <p>Somente a câmera principal é usada para identificação e detecções. A câmera ambiente é apenas gravada.</p>
+      <label>Câmera principal
+        <select name="primary_camera_index" id="primary-camera-select"></select>
+      </label>
+      <label>Câmera ambiente
+        <select name="secondary_camera_index" id="secondary-camera-select"></select>
+      </label>
+      <p class="form-error" id="camera-config-error" hidden></p>
+    </fieldset>
     <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
     <label>Gaze vertical (olhar para baixo)<input type="number" step="0.01" name="gaze_v_threshold" value="0.60"></label>
     <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
@@ -144,6 +155,7 @@ us.prairietest.com</textarea></label>
 
 <script>
 let currentStationId = null;
+let configStations = [];
 document.getElementById('create-station-modal').addEventListener('close', () => {
   document.getElementById('station-config-output').textContent = '';
 });
@@ -299,6 +311,7 @@ async function openConfigEditor({stationIds = null, config = null, description})
   }
   document.getElementById('new-config-station-name').textContent = description;
   await populateConfigStations(stationIds);
+  populateCameraOptions(config);
   await populateConfigTurmas(config);
   if (config) applyConfigValues(config);
   document.getElementById('new-config-modal').showModal();
@@ -310,6 +323,7 @@ async function populateConfigStations(selectedIds = null) {
   const errorEl = document.getElementById('new-config-station-error');
   const response = await fetch('/api/stations');
   const stations = await response.json();
+  configStations = stations;
   list.innerHTML = '';
   errorEl.hidden = true;
   const selected = new Set(selectedIds || stations.map((station) => station.station_id));
@@ -321,7 +335,10 @@ async function populateConfigStations(selectedIds = null) {
     input.name = 'target_station_ids';
     input.value = station.station_id;
     input.checked = selected.has(station.station_id);
-    input.addEventListener('change', syncConfigSelectAll);
+    input.addEventListener('change', () => {
+      syncConfigSelectAll();
+      populateCameraOptions();
+    });
     const copy = document.createElement('span');
     copy.textContent = `${station.station_name} (${station.station_id})`;
     label.append(input, copy);
@@ -334,11 +351,54 @@ function toggleAllConfigStations(checkbox) {
   document.querySelectorAll('#new-config-station-list input').forEach((input) => {
     input.checked = checkbox.checked;
   });
+  populateCameraOptions();
 }
 
 function syncConfigSelectAll() {
   const inputs = Array.from(document.querySelectorAll('#new-config-station-list input'));
   document.getElementById('new-config-select-all').checked = inputs.length > 0 && inputs.every((input) => input.checked);
+}
+
+function populateCameraOptions(config = null) {
+  const primary = document.getElementById('primary-camera-select');
+  const secondary = document.getElementById('secondary-camera-select');
+  const previousPrimary = config?.primary_camera_index ?? primary.value;
+  const previousSecondary = config?.secondary_camera_index ?? secondary.value;
+  const selectedIds = new Set(
+    Array.from(document.querySelectorAll('#new-config-station-list input:checked')).map((input) => input.value)
+  );
+  const selectedStations = configStations.filter((item) => selectedIds.has(item.station_id));
+  const devicesByIndex = new Map();
+  for (const station of selectedStations) {
+    for (const camera of station.available_cameras || []) {
+      if (!devicesByIndex.has(camera.index)) {
+        devicesByIndex.set(camera.index, {names: new Set(), stations: new Set()});
+      }
+      devicesByIndex.get(camera.index).names.add(`${camera.name} (${camera.device})`);
+      devicesByIndex.get(camera.index).stations.add(station.station_id);
+    }
+  }
+
+  const options = Array.from(devicesByIndex.entries())
+    .filter(([, details]) => selectedStations.length === 0 || details.stations.size === selectedStations.length)
+    .sort(([left], [right]) => left - right);
+  primary.replaceChildren(new Option('Padrão da estação', ''));
+  secondary.replaceChildren(new Option('Sem câmera ambiente', ''));
+  for (const [index, details] of options) {
+    const label = Array.from(details.names).join(' / ');
+    primary.add(new Option(label, String(index)));
+    secondary.add(new Option(label, String(index)));
+  }
+  for (const [select, value] of [[primary, previousPrimary], [secondary, previousSecondary]]) {
+    if (value === '' || value === null || value === undefined) continue;
+    if (!Array.from(select.options).some((option) => option.value === String(value))) {
+      const stale = new Option(`Câmera ${value} (indisponível nos destinos selecionados)`, String(value));
+      stale.disabled = true;
+      select.add(stale);
+    }
+  }
+  primary.value = previousPrimary ?? '';
+  secondary.value = previousSecondary ?? '';
 }
 
 async function populateConfigTurmas(config = null) {
@@ -378,6 +438,8 @@ function applyConfigValues(config) {
   form.elements.absence_timeout_sec.value = config.absence_timeout_sec;
   form.elements.multi_face_block.checked = config.multi_face_block;
   form.elements.allow_repeat_attempts.checked = config.allow_repeat_attempts;
+  form.elements.primary_camera_index.value = config.primary_camera_index ?? '';
+  form.elements.secondary_camera_index.value = config.secondary_camera_index ?? '';
   syncLocalTimerControl();
 }
 
@@ -400,6 +462,29 @@ async function submitNewConfig() {
     return;
   }
   stationError.hidden = true;
+  const primaryCamera = data.get('primary_camera_index');
+  const secondaryCamera = data.get('secondary_camera_index');
+  const cameraError = document.getElementById('camera-config-error');
+  const unavailableSelection = [
+    document.getElementById('primary-camera-select'),
+    document.getElementById('secondary-camera-select')
+  ].some((select) => select.value !== '' && select.selectedOptions[0]?.disabled);
+  if (unavailableSelection) {
+    cameraError.textContent = 'Uma câmera selecionada não está disponível em todas as estações de destino.';
+    cameraError.hidden = false;
+    return;
+  }
+  if (secondaryCamera !== '' && primaryCamera === '') {
+    cameraError.textContent = 'Selecione explicitamente a câmera principal ao ativar a câmera ambiente.';
+    cameraError.hidden = false;
+    return;
+  }
+  if (primaryCamera !== '' && primaryCamera === secondaryCamera) {
+    cameraError.textContent = 'Escolha câmeras diferentes para principal e ambiente.';
+    cameraError.hidden = false;
+    return;
+  }
+  cameraError.hidden = true;
   const localTimerEnabled = data.get('local_timer_enabled') === 'on';
   const payload = {
     turma: data.get('turma'),
@@ -416,6 +501,8 @@ async function submitNewConfig() {
     gaze_duration_sec: Number(data.get('gaze_duration_sec')),
     absence_timeout_sec: Number(data.get('absence_timeout_sec')),
     multi_face_block: data.get('multi_face_block') === 'on',
+    primary_camera_index: primaryCamera === '' ? null : Number(primaryCamera),
+    secondary_camera_index: secondaryCamera === '' ? null : Number(secondaryCamera),
     s3_prefix: ''
   };
   const response = await fetch('/api/configs', {

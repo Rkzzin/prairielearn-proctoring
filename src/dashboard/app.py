@@ -546,6 +546,7 @@ def _build_event_clips(session: SessionRecord, event_offset: int) -> list[dict[s
 
     indexed: dict[str, list[tuple[object, int, float, float]]] = {
         "webcam": [],
+        "environment": [],
         "screen": [],
     }
     for asset in session.recordings:
@@ -561,7 +562,11 @@ def _build_event_clips(session: SessionRecord, event_offset: int) -> list[dict[s
         indexed[stream].append((asset, index, start, duration))
 
     clips: list[dict[str, object]] = []
-    for stream, label in (("webcam", "Câmera"), ("screen", "Tela")):
+    for stream, label in (
+        ("webcam", "Câmera principal"),
+        ("environment", "Câmera ambiente"),
+        ("screen", "Tela"),
+    ):
         segments = []
         for asset, index, segment_start, duration in sorted(
             indexed[stream], key=lambda item: item[1]
@@ -595,15 +600,17 @@ def _recording_identity(asset) -> tuple[str | None, int | None]:
     stream = asset.stream.lower() if asset.stream else None
     index = asset.segment_index
     source = f"{asset.label} {asset.s3_key or ''}".lower()
-    match = re.search(r"(webcam|screen)[ _-]?(\d+)", source)
+    match = re.search(r"(webcam|environment|screen)[ _-]?(\d+)", source)
     if match:
         stream = stream or match.group(1)
         index = index if index is not None else int(match.group(2))
-    elif stream in {"webcam", "screen"} and index is None:
+    elif stream in {"webcam", "environment", "screen"} and index is None:
         index = 0
     elif stream is None:
         if "webcam" in source:
             stream, index = "webcam", index if index is not None else 0
+        elif "environment" in source or "ambiente" in source:
+            stream, index = "environment", index if index is not None else 0
         elif "screen" in source or "tela" in source:
             stream, index = "screen", index if index is not None else 0
     return stream, index

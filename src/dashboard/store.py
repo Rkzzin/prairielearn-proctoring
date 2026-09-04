@@ -197,6 +197,8 @@ class DashboardStore:
             if payload.update_status is not None:
                 station.update_status = payload.update_status
                 station.update_message = payload.update_message
+            if payload.available_cameras is not None:
+                station.available_cameras = payload.available_cameras
             station.seconds_remaining = payload.seconds_remaining
             station.last_seen_at = datetime.now(timezone.utc)
             station.last_event = payload.last_event

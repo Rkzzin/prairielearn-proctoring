@@ -127,6 +127,8 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
     assert "Todas" in response.text
     assert "Ativar controle de tempo" in response.text
     assert "https://us.prairietest.com" in response.text
+    assert "Câmera principal" in response.text
+    assert "Câmera ambiente" in response.text
 
 
 @pytest.mark.asyncio
@@ -204,6 +206,8 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
             "absence_timeout_sec": 5.0,
             "multi_face_block": True,
             "s3_prefix": "ES2025-T1/2026-04-16/Quiz-03",
+            "primary_camera_index": 0,
+            "secondary_camera_index": 2,
         }
         config_response = await client.post("/api/configs", json=config_payload)
         assert config_response.status_code == 201
@@ -219,6 +223,10 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
             "auto_start_enabled": True,
             "seconds_remaining": None,
             "recent_events": [],
+            "available_cameras": [
+                {"index": 0, "name": "Integrated Camera", "device": "/dev/video0"},
+                {"index": 2, "name": "Logitech BRIO", "device": "/dev/video2"},
+            ],
         }
         response = await client.post("/api/heartbeats", json=heartbeat, headers=station_headers)
 
@@ -228,6 +236,28 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
     assert payload["commands"][0]["command_type"] == "APPLY_CONFIG"
     assert payload["commands"][0]["payload"]["assessment"] == "Quiz-03"
     assert payload["commands"][0]["payload"]["allow_repeat_attempts"] is False
+    assert payload["commands"][0]["payload"]["primary_camera_index"] == 0
+    assert payload["commands"][0]["payload"]["secondary_camera_index"] == 2
+    assert payload["station"]["available_cameras"][1]["name"] == "Logitech BRIO"
+
+
+def test_legacy_heartbeat_does_not_erase_reported_cameras(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            status=StationStatus.IDLE,
+            available_cameras=[
+                {"index": 0, "name": "Integrated Camera", "device": "/dev/video0"}
+            ],
+        )
+    )
+
+    station = app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(station_id="nuc-01", status=StationStatus.IDLE)
+    )
+
+    assert station.available_cameras[0].name == "Integrated Camera"
 
 
 @pytest.mark.asyncio

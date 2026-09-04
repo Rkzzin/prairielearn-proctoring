@@ -29,6 +29,8 @@
         <div><dt>Olhar para baixo</dt><dd>{{ config.gaze_v_threshold }}</dd></div>
         <div><dt>Duração do olhar</dt><dd>{{ config.gaze_duration_sec }} s</dd></div>
         <div><dt>Ausência</dt><dd>{{ config.absence_timeout_sec }} s</dd></div>
+        <div><dt>Câmera principal</dt><dd>{{ '/dev/video' ~ config.primary_camera_index if config.primary_camera_index is not none else 'Padrão da estação' }}</dd></div>
+        <div><dt>Câmera ambiente</dt><dd>{{ '/dev/video' ~ config.secondary_camera_index if config.secondary_camera_index is not none else 'Desativada' }}</dd></div>
       </dl>
       <div class="config-rule-row">
         <span class="config-rule {{ 'is-active' if config.multi_face_block else '' }}">{{ 'Bloqueia múltiplas faces' if config.multi_face_block else 'Múltiplas faces permitidas' }}</span>

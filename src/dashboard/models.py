@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class StationStatus(str, Enum):
@@ -116,6 +116,25 @@ class ExamConfigPayload(BaseModel):
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True
     s3_prefix: str = ""
+    primary_camera_index: int | None = Field(default=None, ge=0)
+    secondary_camera_index: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def cameras_must_be_distinct(self) -> ExamConfigPayload:
+        if self.secondary_camera_index is not None and self.primary_camera_index is None:
+            raise ValueError("Selecione explicitamente a câmera principal ao ativar a câmera ambiente")
+        if (
+            self.primary_camera_index is not None
+            and self.primary_camera_index == self.secondary_camera_index
+        ):
+            raise ValueError("As câmeras principal e secundária devem ser diferentes")
+        return self
+
+
+class CameraDeviceInfo(BaseModel):
+    index: int = Field(ge=0)
+    name: str
+    device: str
 
 
 class CommandRecord(BaseModel):
@@ -146,6 +165,7 @@ class StationHeartbeat(BaseModel):
     enroll_message: str | None = None
     update_status: str | None = None
     update_message: str | None = None
+    available_cameras: list[CameraDeviceInfo] | None = None
 
 
 class StationCreatePayload(BaseModel):
@@ -172,6 +192,7 @@ class StationRecord(BaseModel):
     enroll_message: str | None = None
     update_status: str | None = None
     update_message: str | None = None
+    available_cameras: list[CameraDeviceInfo] = Field(default_factory=list)
 
     def effective_status(self, now: datetime | None = None, offline_after_sec: int = 15) -> StationStatus:
         reference = now or datetime.now(timezone.utc)

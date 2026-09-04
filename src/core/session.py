@@ -19,17 +19,19 @@ import logging
 import threading
 import time
 import unicodedata
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import boto3
 import cv2
 from botocore.exceptions import BotoCoreError, ClientError
 
-from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.camera import CameraError, SessionCamera
+from src.core.camera_devices import discover_video_devices
+from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
 from src.core.cpu_affinity import auto_split_cpu_sets, get_process_cpu_set, parse_cpu_set, set_process_cpu_set
 from src.core.dashboard_payload import (
     build_session_payload,
@@ -41,8 +43,8 @@ from src.core.models import IdentifyStatus
 from src.core.states import SessionState, StationMode, derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.face.recognizer import FaceRecognizer
-from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.allowlist import build_allowlist_config, write_extension_config
+from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.reidentify import run_reidentify
@@ -84,6 +86,8 @@ DASHBOARD_CONFIG_FIELD_MAP = {
     "auto_start": "auto_start",
     "allow_repeat_attempts": "allow_repeat_attempts",
     "s3_prefix": "s3_prefix",
+    "primary_camera_index": "primary_camera_index",
+    "secondary_camera_index": "secondary_camera_index",
 }
 
 #: Campos do payload que ajustam thresholds do proctoring em memória, não o
@@ -120,6 +124,8 @@ class SessionConfig:
     no_kiosk: bool = False
     reidentify_timeout_sec: float = 20.0
     reidentify_matches: int = 3
+    primary_camera_index: int | None = None
+    secondary_camera_index: int | None = None
 
 
 @dataclass
@@ -189,6 +195,7 @@ class SessionManager:
     ):
         self._app_cfg = app_config or AppConfig()
         self._face_cfg = face_config or FaceConfig()
+        self._default_camera_index = self._face_cfg.camera_index
         self._proctor_cfg = proctor_config or ProctorConfig()
         self._rec_cfg = recorder_config or self._app_cfg.recorder
         self._s3_cfg = s3_config or self._app_cfg.s3
@@ -272,6 +279,7 @@ class SessionManager:
         self._original_cpu_set: set[int] | None = None
         self._runtime_ffmpeg_cpu_cores: str | None = None
         self._runtime_proctor_cpu_set: set[int] | None = None
+        self._session_secondary_camera_index: int | None = None
 
     @property
     def state(self) -> SessionState:
@@ -288,7 +296,7 @@ class SessionManager:
         with self._lock:
             return SessionConfig(**asdict(self._next_config))
 
-    def update_config(self, **kwargs: Any) -> SessionConfig:
+    def update_config(self, *, clear_fields: set[str] | None = None, **kwargs: Any) -> SessionConfig:
         """Aplica um patch parcial na config da próxima sessão.
 
         ``None`` significa "não mexer neste campo" — é o que dá semântica de
@@ -298,7 +306,8 @@ class SessionManager:
         """
         with self._lock:
             current = asdict(self._next_config)
-            unknown = sorted(set(kwargs) - set(current))
+            fields_to_clear = clear_fields or set()
+            unknown = sorted((set(kwargs) | fields_to_clear) - set(current))
             if unknown:
                 raise SessionError(
                     "Campos desconhecidos em update_config: "
@@ -307,7 +316,11 @@ class SessionManager:
             for key, value in kwargs.items():
                 if value is not None:
                     current[key] = value
-            self._next_config = SessionConfig(**current)
+            for key in fields_to_clear:
+                current[key] = None
+            next_config = SessionConfig(**current)
+            self._validate_camera_config(next_config)
+            self._next_config = next_config
             self._persist_config()
             return self.next_config
 
@@ -451,7 +464,13 @@ class SessionManager:
         declarado — config da sessão, threshold de proctoring ou roteamento do
         dashboard.
         """
+        camera_fields = {"primary_camera_index", "secondary_camera_index"}
         config = self.update_config(
+            clear_fields={
+                field_name
+                for field_name in camera_fields
+                if field_name in payload and payload[field_name] is None
+            },
             **{
                 session_field: payload.get(payload_field)
                 for payload_field, session_field in DASHBOARD_CONFIG_FIELD_MAP.items()
@@ -480,6 +499,7 @@ class SessionManager:
             status=self.get_status(),
             config=self._next_config,
             runtime=self._runtime,
+            available_cameras=discover_video_devices(),
         )
 
     def prepare_exam_mode(self) -> dict[str, Any]:
@@ -617,6 +637,7 @@ class SessionManager:
                 )
                 if not cfg.turma_id:
                     raise SessionError("turma_id é obrigatório para iniciar a sessão")
+                self._apply_camera_selection(cfg)
 
                 self._set_state(SessionState.IDENTIFYING)
                 self._recognizer = self._recognizer_factory()
@@ -1049,6 +1070,10 @@ class SessionManager:
 
     def _preview_watchdog_loop(self) -> None:
         while not self._preview_watchdog_stop.wait(0.5):
+            if self._capture is not None:
+                ensure_environment = getattr(self._capture, "ensure_environment_running", None)
+                if callable(ensure_environment):
+                    ensure_environment()
             if (
                 self._capture is None
                 or self._camera_read_active.is_set()
@@ -1141,7 +1166,29 @@ class SessionManager:
             on_segment_ready=None if self._uploader is None else self._uploader.enqueue,
             display=self._rec_cfg.display,
             screen_size=self._rec_cfg.screen_size,
+            secondary_camera_index=self._session_secondary_camera_index,
         )
+
+    def _apply_camera_selection(self, config: SessionConfig) -> None:
+        primary_index = self._validate_camera_config(config)
+        if self._face_cfg.camera_index != primary_index:
+            self._camera.release()
+            self._face_cfg.camera_index = primary_index
+        self._session_secondary_camera_index = config.secondary_camera_index
+
+    def _validate_camera_config(self, config: SessionConfig) -> int:
+        primary_index = (
+            self._default_camera_index
+            if config.primary_camera_index is None
+            else config.primary_camera_index
+        )
+        if primary_index < 0 or (
+            config.secondary_camera_index is not None and config.secondary_camera_index < 0
+        ):
+            raise SessionError("O índice da câmera não pode ser negativo")
+        if config.secondary_camera_index == primary_index:
+            raise SessionError("As câmeras principal e secundária devem ser diferentes")
+        return primary_index
 
     def _default_uploader_factory(self, session_id: str):
         return Uploader(

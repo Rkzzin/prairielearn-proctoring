@@ -370,6 +370,41 @@ def test_session_manager_switches_from_device_camera_to_capture_preview():
     assert preview_camera.released is True
 
 
+def test_configured_primary_camera_is_used_for_identification():
+    direct_camera = FakeCamera(["identify-frame"])
+    preview_camera = RepeatingCamera("loop-frame")
+    opened_sources = []
+
+    def video_capture_factory(source):
+        opened_sources.append(source)
+        return preview_camera if isinstance(source, str) else direct_camera
+
+    manager, *_ = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=[],
+        video_capture_factory=video_capture_factory,
+    )
+    manager.update_config(
+        turma_id="ES2025-T1",
+        primary_camera_index=4,
+        secondary_camera_index=6,
+    )
+
+    manager.start_session()
+
+    assert opened_sources[0] == 4
+    assert manager._session_secondary_camera_index == 6
+    manager.stop_session(reason="test")
+
+
 def test_camera_handoff_prevents_probe_from_reopening_physical_device():
     opened_sources = []
 
@@ -1369,6 +1404,8 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
             "gaze_duration_sec": 4.0,
             "absence_timeout_sec": 6.0,
             "multi_face_block": False,
+            "primary_camera_index": 2,
+            "secondary_camera_index": 4,
         }
     )
 
@@ -1377,6 +1414,8 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert config.timer_minutes == 30
     assert config.local_timer_enabled is False
     assert config.prairielearn_url == "https://pl.test/exam"
+    assert config.primary_camera_index == 2
+    assert config.secondary_camera_index == 4
     assert config.allowlist == ["example.edu"]
     assert config.auto_start is True
     assert config.s3_prefix == "ES2025-T1/quiz-03"
@@ -1386,6 +1425,32 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert manager._proctor_cfg.gaze_duration_sec == 4.0
     assert manager._proctor_cfg.absence_timeout_sec == 6.0
     assert manager._proctor_cfg.multi_face_block is False
+
+
+def test_dashboard_config_can_disable_secondary_camera():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    manager.update_config(secondary_camera_index=4)
+
+    config = manager.apply_dashboard_config({"secondary_camera_index": None})
+
+    assert config.secondary_camera_index is None
+
+
+def test_update_config_rejects_effective_camera_collision():
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+
+    with pytest.raises(SessionError, match="diferentes"):
+        manager.update_config(secondary_camera_index=manager._default_camera_index)
+
+
+def test_exam_config_requires_explicit_primary_for_environment_camera():
+    with pytest.raises(ValueError, match="principal"):
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            prairielearn_url="https://pl.test/exam",
+            secondary_camera_index=4,
+        )
 
 
 def test_apply_dashboard_config_ignores_missing_optional_fields():
@@ -1540,6 +1605,23 @@ async def test_api_routes_expose_phase5_flow():
         response = await client.post("/config", json={"turma_id": "ES2025-T1"})
         assert response.status_code == 200
         assert response.json()["config"]["turma_id"] == "ES2025-T1"
+
+        await client.post(
+            "/config",
+            json={"primary_camera_index": 2, "secondary_camera_index": 4},
+        )
+        reset_cameras = await client.post(
+            "/config",
+            json={"primary_camera_index": None, "secondary_camera_index": None},
+        )
+        assert reset_cameras.json()["config"]["primary_camera_index"] is None
+        assert reset_cameras.json()["config"]["secondary_camera_index"] is None
+
+        invalid_cameras = await client.post(
+            "/config",
+            json={"primary_camera_index": 2, "secondary_camera_index": 2},
+        )
+        assert invalid_cameras.status_code == 400
 
         enter = await client.post("/exam-mode/enter")
         assert enter.status_code == 200

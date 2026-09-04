@@ -3,7 +3,8 @@
 Arquitetura:
   - Stream webcam: FFmpeg captura /dev/videoN diretamente e publica
     um preview local para o proctoring.
-  - Stream tela:   x11grab independente.
+  - Stream ambiente: segunda câmera opcional, somente para gravação.
+  - Stream tela:     x11grab independente.
 
 O proctoring consome o preview local, então a câmera física fica
 aberta só no processo do FFmpeg. Isso evita:
@@ -14,6 +15,7 @@ Layout dos arquivos locais:
     {data_dir}/sessions/{session_id}/recordings/
         webcam_000.mp4
         webcam_001.mp4
+        environment_000.mp4
         screen_000.mp4
         screen_001.mp4
 
@@ -27,16 +29,15 @@ Uso típico:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import signal
 import subprocess
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
-
-import os
 
 from src.core.config import AppConfig, FaceConfig, RecorderConfig, S3Config
 from src.core.cpu_affinity import parse_cpu_set, split_ffmpeg_stream_cpu_sets
@@ -79,6 +80,7 @@ class Capture:
         on_segment_ready: Callable[[SegmentInfo], None] | None = None,
         display: str | None = None,
         screen_size: str | None = None,
+        secondary_camera_index: int | None = None,
     ):
         self.session_id = session_id
         self._s3_cfg = s3_config or S3Config()
@@ -88,6 +90,7 @@ class Capture:
         self._on_segment_ready = on_segment_ready
         self._display = display or self._rec_cfg.display
         self._screen_size = screen_size or self._rec_cfg.screen_size
+        self._secondary_camera_index = secondary_camera_index
 
         self._rec_dir = (
             Path(self._app_cfg.data_dir)
@@ -124,8 +127,14 @@ class Capture:
         self._stop_event.clear()
         self._notified_segments.clear()
         self._running = True
-        self._start_webcam_with_fallback()
-        self._start_screen_stream()
+        try:
+            self._start_webcam_with_fallback()
+            if self._secondary_camera_index is not None:
+                self._start_environment_stream()
+            self._start_screen_stream()
+        except Exception:
+            self.stop()
+            raise
         logger.info("Gravação iniciada — sessão '%s'", self.session_id)
 
     def stop(self) -> None:
@@ -140,7 +149,7 @@ class Capture:
 
         self._stop_event.set()
 
-        for stream in ("webcam", "screen"):
+        for stream in tuple(self._procs):
             proc = self._procs.get(stream)
             if proc is None or proc.poll() is not None:
                 continue
@@ -154,6 +163,8 @@ class Capture:
                 proc.wait()
 
         self._flush_pending_segments("webcam")
+        if self._secondary_camera_index is not None:
+            self._flush_pending_segments("environment")
         self._flush_pending_segments("screen")
         self._running = False
 
@@ -187,6 +198,23 @@ class Capture:
                 return True
             except RuntimeError as exc:
                 logger.error("Não foi possível recuperar stream de webcam: %s", exc)
+                return False
+
+    def ensure_environment_running(self) -> bool:
+        """Reinicia a gravação ambiente se a câmera foi configurada e caiu."""
+        if self._secondary_camera_index is None:
+            return True
+        with self._stream_lock:
+            if not self._running:
+                return False
+            proc = self._procs.get("environment")
+            if proc is not None and proc.poll() is None:
+                return True
+            try:
+                self._start_environment_stream()
+                return True
+            except RuntimeError as exc:
+                logger.error("Não foi possível recuperar câmera ambiente: %s", exc)
                 return False
 
     # ──────────────────────────────────────────────
@@ -348,6 +376,65 @@ class Capture:
         self._ensure_process_started("screen", proc)
         logger.info("Stream tela iniciado (x11grab → %s)", pattern)
 
+    def _start_environment_stream(self) -> None:
+        """Grava a câmera ambiente sem preview, áudio ou processamento de detecção."""
+        index = self._secondary_camera_index
+        if index is None:
+            return
+        w = self._face_cfg.camera_width
+        h = self._face_cfg.camera_height
+        fps = self._face_cfg.camera_fps
+        pattern = str(self._rec_dir / "environment_%03d.mp4")
+        start_number = self._next_segment_number("environment")
+        video_device = f"/dev/video{index}"
+        input_format = self._rec_cfg.webcam_input_format.strip()
+        cmd = ["ffmpeg", "-f", "v4l2", "-thread_queue_size", "512"]
+        if input_format:
+            cmd.extend(["-input_format", input_format])
+        cmd.extend([
+            "-use_wallclock_as_timestamps", "1",
+            "-framerate", str(fps),
+            "-video_size", f"{w}x{h}",
+            "-i", video_device,
+            "-an",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "26",
+            "-profile:v", "high",
+            "-pix_fmt", "yuv420p",
+            "-threads", str(max(1, self._rec_cfg.ffmpeg_threads)),
+            "-fps_mode", "passthrough",
+            "-f", "segment",
+            "-segment_time", str(self._s3_cfg.segment_duration_sec),
+            "-segment_start_number", str(start_number),
+            "-segment_format_options", "movflags=+faststart",
+            "-reset_timestamps", "1",
+            "-strftime", "0",
+            "-y",
+            pattern,
+        ])
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            preexec_fn=self._build_affinity_preexec_fn("environment"),
+        )
+        self._procs["environment"] = proc
+        self._ensure_process_started("environment", proc, timeout_sec=2.5)
+        self._start_monitor_threads("environment", proc)
+        logger.info("Stream da câmera ambiente iniciado (v4l2 %s → %s)", video_device, pattern)
+
+    def _next_segment_number(self, stream: str) -> int:
+        indexes: list[int] = []
+        for path in set(self._rec_dir.glob(f"{stream}_*.mp4")) | self._notified_segments:
+            if not path.name.startswith(f"{stream}_"):
+                continue
+            try:
+                indexes.append(int(path.stem.rsplit("_", 1)[1]))
+            except (IndexError, ValueError):
+                continue
+        return max(indexes, default=-1) + 1
+
     def _resolve_screen_capture_size(self) -> str:
         display_size = self._detect_display_size()
         if display_size:
@@ -393,7 +480,7 @@ class Capture:
         return int(match.group(1)), int(match.group(2))
 
     def _build_affinity_preexec_fn(self, stream: str):
-        cpus = self._stream_cpu_sets.get(stream)
+        cpus = self._stream_cpu_sets.get("webcam" if stream == "environment" else stream)
         if not cpus or not hasattr(os, "sched_setaffinity"):
             return None
 

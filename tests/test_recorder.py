@@ -311,6 +311,82 @@ def test_capture_webcam_ffmpeg_command_can_disable_audio(tmp_path: Path, monkeyp
     assert "-c:a" not in cmd
 
 
+def test_environment_camera_records_without_preview_or_audio(tmp_path: Path, monkeypatch):
+    commands: list[list[str]] = []
+
+    class FakeProc(DummyProc):
+        def __init__(self, cmd):
+            super().__init__()
+            self.stderr = []
+            commands.append(cmd)
+
+    monkeypatch.setattr("src.recorder.capture.subprocess.Popen", lambda cmd, **_kwargs: FakeProc(cmd))
+    capture = Capture(
+        session_id="sess-environment",
+        s3_config=S3Config(segment_duration_sec=300),
+        face_config=FaceConfig(camera_index=2),
+        app_config=AppConfig(data_dir=tmp_path),
+        recorder_config=RecorderConfig(preview_port=19191),
+        secondary_camera_index=4,
+    )
+    monkeypatch.setattr(capture, "_start_monitor_threads", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(capture, "_ensure_process_started", lambda *_args, **_kwargs: None)
+
+    capture._start_environment_stream()
+
+    cmd = commands[0]
+    assert "/dev/video4" in cmd
+    assert "environment_%03d.mp4" in " ".join(cmd)
+    assert "-an" in cmd
+    start_number = cmd.index("-segment_start_number")
+    assert cmd[start_number + 1] == "0"
+    assert "udp://127.0.0.1:19191?pkt_size=1316" not in cmd
+    assert "-filter_complex" not in cmd
+
+
+def test_capture_start_cleans_up_primary_if_environment_camera_fails(tmp_path: Path, monkeypatch):
+    capture = Capture(
+        session_id="sess-partial-start",
+        app_config=AppConfig(data_dir=tmp_path),
+        secondary_camera_index=4,
+    )
+    primary = DummyProc()
+
+    def start_webcam():
+        capture._procs["webcam"] = primary
+
+    monkeypatch.setattr(capture, "_start_webcam_with_fallback", start_webcam)
+    monkeypatch.setattr(
+        capture,
+        "_start_environment_stream",
+        lambda: (_ for _ in ()).throw(RuntimeError("camera unavailable")),
+    )
+
+    try:
+        capture.start()
+    except RuntimeError as exc:
+        assert "camera unavailable" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("esperava falha da câmera ambiente")
+
+    assert capture.is_running is False
+    assert capture._procs == {}
+
+
+def test_environment_camera_restart_continues_segment_numbering(tmp_path: Path):
+    capture = Capture(
+        session_id="sess-environment-restart",
+        app_config=AppConfig(data_dir=tmp_path),
+        secondary_camera_index=4,
+    )
+    existing = capture._rec_dir / "environment_002.mp4"
+    existing.write_bytes(b"segment")
+    uploaded = capture._rec_dir / "environment_004.mp4"
+    capture._notified_segments.add(uploaded)
+
+    assert capture._next_segment_number("environment") == 5
+
+
 def test_capture_retries_webcam_without_audio_when_audio_start_fails(tmp_path: Path, monkeypatch):
     capture = Capture(
         session_id="sess-audio-fallback",

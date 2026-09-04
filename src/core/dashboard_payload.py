@@ -67,9 +67,14 @@ def collect_session_recordings(
     """
     if uploader is None:
         return []
+    stream_labels = {
+        "webcam": "Câmera principal",
+        "environment": "Câmera ambiente",
+        "screen": "Tela",
+    }
     return [
         {
-            "label": f"{segment.stream.capitalize()} {segment.index:03d}",
+            "label": f"{stream_labels.get(segment.stream, segment.stream.capitalize())} {segment.index:03d}",
             "s3_bucket": bucket,
             "s3_key": s3_key,
             "kind": "video",
@@ -87,6 +92,7 @@ def build_station_snapshot(
     status: dict[str, Any],
     config: SessionConfig,
     runtime: SessionRuntime | None,
+    available_cameras: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Monta o corpo do heartbeat (``StationHeartbeat``) da estação."""
     student = None
@@ -108,6 +114,7 @@ def build_station_snapshot(
         "auto_start_enabled": config.auto_start,
         "seconds_remaining": status["seconds_remaining"],
         "recent_events": [],
+        "available_cameras": available_cameras or [],
     }
 
 
