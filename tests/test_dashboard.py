@@ -149,6 +149,9 @@ async def test_camera_check_queues_idle_station_and_skips_active_session(tmp_pat
             station_name="NUC Livre",
             status=StationStatus.WAITING_STUDENT,
             mode="WAITING_STUDENT",
+            available_cameras=[
+                {"index": 0, "name": "Integrated Camera", "device": "/dev/video0"}
+            ],
         )
     )
     app.state.store.upsert_station_heartbeat(
@@ -157,6 +160,9 @@ async def test_camera_check_queues_idle_station_and_skips_active_session(tmp_pat
             station_name="NUC Ocupada",
             status=StationStatus.SESSION,
             active_session_id="session-1",
+            available_cameras=[
+                {"index": 0, "name": "Integrated Camera", "device": "/dev/video0"}
+            ],
         )
     )
 

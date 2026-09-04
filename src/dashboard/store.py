@@ -365,6 +365,7 @@ class DashboardStore:
                         StationStatus.WAITING_STUDENT,
                     }
                     and station.active_session_id is None
+                    and bool(station.available_cameras)
                     and station.enroll_status != "running"
                     and station.update_status != "running"
                     and not capture_in_progress
@@ -373,7 +374,12 @@ class DashboardStore:
                     if capture_in_progress:
                         skipped.append({"station_id": station.station_id, "reason": "captura em andamento"})
                         continue
-                    reason = "offline" if status == StationStatus.OFFLINE else "com avaliação ativa"
+                    if status == StationStatus.OFFLINE:
+                        reason = "offline"
+                    elif not station.available_cameras:
+                        reason = "sem suporte à captura"
+                    else:
+                        reason = "com avaliação ativa"
                     station.camera_snapshots = []
                     station.camera_capture_batch_id = batch_id
                     station.camera_capture_requested_at = now
