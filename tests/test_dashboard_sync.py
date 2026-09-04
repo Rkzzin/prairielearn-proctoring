@@ -115,6 +115,38 @@ def test_dashboard_worker_applies_config_and_stop_command():
     assert manager.stop_reasons == ["dashboard_command"]
 
 
+def test_dashboard_worker_dispatches_camera_snapshot_command():
+    class FakeSnapshotRunner:
+        def __init__(self):
+            self.batch_ids = []
+
+        def start(self, batch_id):
+            self.batch_ids.append(batch_id)
+
+        def status_dict(self):
+            return {
+                "camera_capture_status": "idle",
+                "camera_capture_message": "",
+                "camera_capture_batch_id": None,
+            }
+
+    runner = FakeSnapshotRunner()
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(),
+        session_manager=FakeSessionManager(),
+        camera_snapshot_runner=runner,
+    )
+
+    worker._apply_command(
+        {
+            "command_type": "CAPTURE_CAMERA_SNAPSHOTS",
+            "payload": {"batch_id": "batch-1"},
+        }
+    )
+
+    assert runner.batch_ids == ["batch-1"]
+
+
 def test_dashboard_worker_unblocks_only_when_station_is_blocked():
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(

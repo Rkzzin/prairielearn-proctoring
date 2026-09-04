@@ -23,6 +23,7 @@
     </div>
     <div class="panel-actions">
       <button type="button" class="button-secondary" onclick="openCreateStationModal()">Nova estação</button>
+      <button type="button" class="button-secondary" id="capture-cameras-button" onclick="captureAllCameras()">Fotografar câmeras</button>
       <button type="button" onclick="openBulkConfigModal()">Configurar estações</button>
     </div>
   </div>
@@ -33,6 +34,25 @@
     hx-swap="innerHTML"
   >
     {% include "_stations.html" %}
+  </div>
+</section>
+
+<section class="panel camera-diagnostics">
+  <div class="panel-header">
+    <div>
+      <p class="eyebrow">Diagnóstico visual</p>
+      <h2>Fotos das câmeras</h2>
+      <p>Última captura solicitada. Estações com avaliação ativa são ignoradas.</p>
+    </div>
+    <span id="camera-capture-feedback" class="camera-capture-feedback" aria-live="polite"></span>
+  </div>
+  <div
+    id="camera-gallery-panel"
+    hx-get="/partials/camera-gallery"
+    hx-trigger="load, every 3s"
+    hx-swap="innerHTML"
+  >
+    {% include "_camera_gallery.html" %}
   </div>
 </section>
 
@@ -211,6 +231,28 @@ async function createStation(event) {
   } finally {
     submit.disabled = false;
     submit.textContent = 'Gerar estação e token';
+  }
+}
+
+async function captureAllCameras() {
+  const button = document.getElementById('capture-cameras-button');
+  const feedback = document.getElementById('camera-capture-feedback');
+  button.disabled = true;
+  button.textContent = 'Solicitando...';
+  feedback.textContent = '';
+  try {
+    const response = await fetch('/api/camera-checks', {method: 'POST'});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+    const queued = payload.queued_station_ids?.length || 0;
+    const skipped = payload.skipped?.length || 0;
+    feedback.textContent = `${queued} estação(ões) acionada(s); ${skipped} ignorada(s).`;
+    if (window.htmx) htmx.ajax('GET', '/partials/camera-gallery', '#camera-gallery-panel');
+  } catch (requestError) {
+    feedback.textContent = `Falha ao solicitar fotos: ${requestError.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Fotografar câmeras';
   }
 }
 

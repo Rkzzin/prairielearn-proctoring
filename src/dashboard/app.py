@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import csv
+import hashlib
 import hmac
 import json
 import re
 import secrets
 import unicodedata
-from datetime import timezone
+from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 
@@ -23,7 +26,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -31,6 +34,8 @@ from src.core.config import AppConfig
 from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
 from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.models import (
+    CameraSnapshotPayload,
+    CameraSnapshotRecord,
     CommandType,
     ExamConfigPayload,
     SessionEventPayload,
@@ -43,7 +48,11 @@ from src.dashboard.store import DashboardStore
 #: Rotas que só a NUC chama — autenticadas por token de estação
 #: (`require_station_token`), não pela senha do professor. O middleware de
 #: Basic Auth abaixo pula exatamente estas.
-_STATION_EXACT_ROUTES = {("POST", "/api/heartbeats"), ("POST", "/api/sessions")}
+_STATION_EXACT_ROUTES = {
+    ("POST", "/api/heartbeats"),
+    ("POST", "/api/sessions"),
+    ("POST", "/api/camera-snapshots"),
+}
 _STATION_SESSION_ACTION_RE = re.compile(r"^/api/sessions/[^/]+/(finalize|events)$")
 _EVENT_CLIP_CONTEXT_SECONDS = 5
 _LEGACY_SEGMENT_DURATION_SECONDS = 300
@@ -90,6 +99,8 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         app_config.dashboard.database_url,
         app_config=app_config,
     )
+    camera_snapshot_dir = Path(app_config.data_dir) / "dashboard-camera-snapshots"
+    camera_snapshot_dir.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Proctor Station Dashboard")
     app.mount(
@@ -146,6 +157,11 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             raise HTTPException(status_code=401, detail="Token de estação inválido.")
         return station_id
 
+    def require_same_origin(request: Request) -> None:
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            raise HTTPException(status_code=403, detail="Origem inválida.")
+
     def _ensure_station_owns_session(session_id: str, authenticated_station_id: str) -> None:
         session = dashboard_store.get_session(session_id)
         if session is not None and session.station_id != authenticated_station_id:
@@ -180,6 +196,25 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             title="Configurações distribuídas",
             **snapshot,
         )
+
+    @app.get("/partials/camera-gallery", response_class=HTMLResponse)
+    async def camera_gallery(request: Request) -> HTMLResponse:
+        return render_template(
+            request,
+            "_camera_gallery.html",
+            stations=dashboard_store.list_stations(),
+        )
+
+    @app.get("/camera-snapshots/{filename}")
+    async def camera_snapshot_image(filename: str) -> FileResponse:
+        if not auth_username:
+            raise HTTPException(status_code=404, detail="Foto não encontrada.")
+        if not re.fullmatch(r"camera-[a-f0-9]{16}-\d{1,2}\.jpg", filename):
+            raise HTTPException(status_code=404, detail="Foto não encontrada.")
+        path = camera_snapshot_dir / filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="Foto não encontrada.")
+        return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=30"})
 
     @app.get("/enrollment", response_class=HTMLResponse)
     async def enrollment_page(request: Request) -> HTMLResponse:
@@ -238,7 +273,10 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     @app.get("/api/stations")
     async def list_stations() -> JSONResponse:
         return JSONResponse(
-            [station.model_dump(mode="json") for station in dashboard_store.list_stations()]
+            [
+                station.model_dump(mode="json", exclude={"camera_snapshots"})
+                for station in dashboard_store.list_stations()
+            ]
         )
 
     @app.post("/api/stations")
@@ -303,7 +341,7 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         commands = dashboard_store.drain_commands(payload.station_id)
         return JSONResponse(
             {
-                "station": station.model_dump(mode="json"),
+                "station": station.model_dump(mode="json", exclude={"camera_snapshots"}),
                 "commands": [command.model_dump(mode="json") for command in commands],
             }
         )
@@ -312,6 +350,60 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     async def create_config(payload: ExamConfigPayload) -> JSONResponse:
         config_record = dashboard_store.create_config(payload)
         return JSONResponse(config_record.model_dump(mode="json"), status_code=201)
+
+    @app.post("/api/camera-checks")
+    async def capture_all_cameras(request: Request) -> JSONResponse:
+        if not auth_username:
+            raise HTTPException(status_code=503, detail="Configure o login administrativo para usar fotos das câmeras.")
+        require_same_origin(request)
+        result = dashboard_store.queue_camera_snapshots()
+        return JSONResponse(result, status_code=202)
+
+    @app.post("/api/camera-snapshots")
+    async def upload_camera_snapshot(
+        payload: CameraSnapshotPayload,
+        authenticated_station_id: str = Depends(require_station_token),
+    ) -> JSONResponse:
+        try:
+            image = base64.b64decode(payload.image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Imagem base64 inválida.") from exc
+        if len(image) > 500_000 or not image.startswith(b"\xff\xd8"):
+            raise HTTPException(status_code=400, detail="A imagem deve ser um JPEG de até 500 KB.")
+        try:
+            dashboard_store.validate_camera_snapshot(
+                authenticated_station_id,
+                payload.batch_id,
+                payload.camera_index,
+            )
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Estação não encontrada.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        station_hash = hashlib.sha256(authenticated_station_id.encode("utf-8")).hexdigest()[:16]
+        filename = f"camera-{station_hash}-{payload.camera_index}.jpg"
+        image_path = camera_snapshot_dir / filename
+        temporary_path = camera_snapshot_dir / f".{filename}.{secrets.token_hex(4)}.tmp"
+        temporary_path.write_bytes(image)
+        temporary_path.replace(image_path)
+        snapshot = CameraSnapshotRecord(
+            batch_id=payload.batch_id,
+            camera_index=payload.camera_index,
+            camera_name=payload.camera_name,
+            device=payload.device,
+            image_url=f"/camera-snapshots/{filename}?batch={payload.batch_id}",
+            captured_at=datetime.now(timezone.utc),
+        )
+        try:
+            station = dashboard_store.store_camera_snapshot(authenticated_station_id, snapshot)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Estação não encontrada.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return JSONResponse(
+            {"stored": True, "camera_index": snapshot.camera_index},
+            status_code=201,
+        )
 
     @app.get("/api/configs")
     async def list_configs() -> JSONResponse:
@@ -460,6 +552,22 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
 
     @app.websocket("/ws/stations")
     async def stations_websocket(websocket: WebSocket) -> None:
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host")
+        stored_hash = dashboard_store.get_credential_hash(auth_username) if auth_username else None
+        credentials = parse_basic_auth(websocket.headers.get("authorization"))
+        if (
+            not auth_username
+            or not origin
+            or not host
+            or not re.fullmatch(rf"https?://{re.escape(host)}", origin.rstrip("/"))
+            or stored_hash is None
+            or credentials is None
+            or not hmac.compare_digest(credentials[0], auth_username)
+            or not verify_password(credentials[1], stored_hash)
+        ):
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
         queue = dashboard_store.subscribe()
         try:

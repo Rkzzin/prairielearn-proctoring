@@ -1,0 +1,32 @@
+{% set capture_stations = stations|selectattr('camera_capture_status', 'ne', 'idle')|list %}
+{% if capture_stations %}
+<div class="camera-station-grid">
+  {% for station in capture_stations %}
+  <article class="camera-station-card">
+    <header>
+      <div>
+        <p class="station-kicker">{{ station.station_id }}</p>
+        <h3>{{ station.station_name }}</h3>
+      </div>
+      <span class="camera-capture-state state-{{ station.camera_capture_status }}">{{ station.camera_capture_status }}</span>
+    </header>
+    <p class="camera-capture-message">{{ station.camera_capture_message or 'Aguardando resultado...' }}</p>
+    {% if station.camera_snapshots %}
+    <div class="camera-photo-grid">
+      {% for snapshot in station.camera_snapshots %}
+      <figure>
+        <img src="{{ snapshot.image_url }}" alt="Foto de diagnóstico da câmera {{ snapshot.camera_name }} em {{ station.station_name }}">
+        <figcaption>
+          <strong>{{ snapshot.camera_name }}</strong>
+          <span>{{ snapshot.device }} · {{ snapshot.captured_at.strftime('%d/%m/%Y %H:%M:%S') }}</span>
+        </figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<p class="empty">Clique em “Fotografar câmeras” para gerar o primeiro diagnóstico.</p>
+{% endif %}

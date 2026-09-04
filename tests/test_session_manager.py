@@ -4,6 +4,7 @@ import dataclasses
 import threading
 from collections import deque
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -403,6 +404,34 @@ def test_configured_primary_camera_is_used_for_identification():
     assert opened_sources[0] == 4
     assert manager._session_secondary_camera_index == 6
     manager.stop_session(reason="test")
+
+
+def test_camera_diagnostics_capture_all_reported_devices_with_ffmpeg(monkeypatch):
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    commands = []
+    monkeypatch.setattr(
+        "src.core.session.discover_video_devices",
+        lambda: [
+            {"index": 0, "name": "Integrated Camera", "device": "/dev/video0"},
+            {"index": 2, "name": "C922", "device": "/dev/video2"},
+        ],
+    )
+
+    def run(command, **kwargs):
+        commands.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout=b"\xff\xd8jpeg", stderr=b"")
+
+    monkeypatch.setattr("src.core.session.subprocess.run", run)
+
+    snapshots, errors = manager.capture_camera_snapshots()
+
+    assert errors == []
+    assert [snapshot["index"] for snapshot in snapshots] == [0, 2]
+    assert [command[0][command[0].index("-i") + 1] for command in commands] == [
+        "/dev/video0",
+        "/dev/video2",
+    ]
+    assert all(command[1]["timeout"] == 10 for command in commands)
 
 
 def test_camera_handoff_prevents_probe_from_reopening_physical_device():

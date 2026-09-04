@@ -262,6 +262,20 @@ button {
 .station-maintenance[open] summary { margin-bottom: 10px; color: var(--ink); }
 .station-maintenance-actions { padding-top: 2px; }
 .station-card button:disabled { cursor: not-allowed; opacity: 0.5; }
+.camera-diagnostics { display: grid; gap: 18px; }
+.camera-capture-feedback { color: var(--muted); font-size: 0.86rem; font-weight: 700; }
+.camera-station-grid { display: grid; gap: 16px; }
+.camera-station-card { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-strong); }
+.camera-station-card > header { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+.camera-station-card h3, .camera-capture-message { margin: 0; }
+.camera-capture-state { padding: 5px 8px; border-radius: 999px; color: var(--muted); background: var(--surface); font-size: 0.72rem; font-weight: 700; text-transform: uppercase; }
+.camera-capture-state.state-done { color: #145f42; background: #e4f4ec; }
+.camera-capture-state.state-error, .camera-capture-state.state-skipped { color: #8f2f2f; background: #fff0f0; }
+.camera-photo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.camera-photo-grid figure { margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.camera-photo-grid img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #202325; }
+.camera-photo-grid figcaption { display: grid; gap: 3px; padding: 10px 12px; }
+.camera-photo-grid figcaption span { color: var(--muted); font-size: 0.78rem; }
 .station-card button:focus-visible, .station-maintenance summary:focus-visible {
   outline: 3px solid rgba(187, 90, 42, 0.35);
   outline-offset: 2px;

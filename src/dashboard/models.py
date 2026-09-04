@@ -39,6 +39,7 @@ class CommandType(str, Enum):
     UNBLOCK_SESSION = "UNBLOCK_SESSION"
     RUN_ENROLL = "RUN_ENROLL"
     UPDATE_AND_REBOOT = "UPDATE_AND_REBOOT"
+    CAPTURE_CAMERA_SNAPSHOTS = "CAPTURE_CAMERA_SNAPSHOTS"
 
 
 class EventSeverity(str, Enum):
@@ -137,6 +138,23 @@ class CameraDeviceInfo(BaseModel):
     device: str
 
 
+class CameraSnapshotPayload(BaseModel):
+    batch_id: str = Field(min_length=1, max_length=100)
+    camera_index: int = Field(ge=0, le=63)
+    camera_name: str = Field(min_length=1, max_length=200)
+    device: str = Field(min_length=1, max_length=100)
+    image_base64: str = Field(min_length=1, max_length=700_000)
+
+
+class CameraSnapshotRecord(BaseModel):
+    batch_id: str
+    camera_index: int
+    camera_name: str
+    device: str
+    image_url: str
+    captured_at: datetime
+
+
 class CommandRecord(BaseModel):
     command_id: str
     station_id: str
@@ -166,6 +184,9 @@ class StationHeartbeat(BaseModel):
     update_status: str | None = None
     update_message: str | None = None
     available_cameras: list[CameraDeviceInfo] | None = None
+    camera_capture_status: str | None = None
+    camera_capture_message: str | None = None
+    camera_capture_batch_id: str | None = None
 
 
 class StationCreatePayload(BaseModel):
@@ -193,6 +214,11 @@ class StationRecord(BaseModel):
     update_status: str | None = None
     update_message: str | None = None
     available_cameras: list[CameraDeviceInfo] = Field(default_factory=list)
+    camera_capture_status: str = "idle"
+    camera_capture_message: str = ""
+    camera_capture_batch_id: str | None = None
+    camera_capture_requested_at: datetime | None = None
+    camera_snapshots: list[CameraSnapshotRecord] = Field(default_factory=list)
 
     def effective_status(self, now: datetime | None = None, offline_after_sec: int = 15) -> StationStatus:
         reference = now or datetime.now(timezone.utc)

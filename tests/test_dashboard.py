@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,7 @@ from src.dashboard.app import (
 from src.dashboard.auth import hash_password
 from src.dashboard.enrollment_service import S3EnrollmentStudent, S3EnrollmentSummary
 from src.dashboard.models import (
+    CommandType,
     EventSeverity,
     ExamConfigPayload,
     RecordingAsset,
@@ -31,8 +33,13 @@ from src.dashboard.models import (
 from src.dashboard.store import DashboardStore
 
 
-def _make_app(tmp_path, database_url):
-    config = AppConfig(data_dir=tmp_path, dashboard=DashboardConfig(database_url=database_url))
+def _make_app(tmp_path, database_url, *, admin_auth: bool = False):
+    dashboard = DashboardConfig(
+        database_url=database_url,
+        admin_user="prof" if admin_auth else None,
+        admin_password="secret" if admin_auth else None,
+    )
+    config = AppConfig(data_dir=tmp_path, dashboard=dashboard)
     return create_app(config=config)
 
 
@@ -129,6 +136,97 @@ async def test_dashboard_home_renders(tmp_path, dashboard_database_url):
     assert "https://us.prairietest.com" in response.text
     assert "Câmera principal" in response.text
     assert "Câmera ambiente" in response.text
+    assert "Fotografar câmeras" in response.text
+    assert "Fotos das câmeras" in response.text
+
+
+@pytest.mark.asyncio
+async def test_camera_check_queues_idle_station_and_skips_active_session(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-idle",
+            station_name="NUC Livre",
+            status=StationStatus.WAITING_STUDENT,
+            mode="WAITING_STUDENT",
+        )
+    )
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-busy",
+            station_name="NUC Ocupada",
+            status=StationStatus.SESSION,
+            active_session_id="session-1",
+        )
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        auth=("prof", "secret"),
+    ) as client:
+        response = await client.post("/api/camera-checks")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["queued_station_ids"] == ["nuc-idle"]
+    assert payload["skipped"] == [{"station_id": "nuc-busy", "reason": "com avaliação ativa"}]
+    command = app.state.store.get_station("nuc-idle").pending_commands[0]
+    assert command.command_type == CommandType.CAPTURE_CAMERA_SNAPSHOTS
+
+
+@pytest.mark.asyncio
+async def test_station_uploads_camera_snapshot_and_gallery_displays_it(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    headers = _station_headers(app, "nuc-01")
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.IDLE,
+            available_cameras=[
+                {"index": 2, "name": "C922 Pro Stream Webcam", "device": "/dev/video2"}
+            ],
+        )
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        auth=("prof", "secret"),
+    ) as client:
+        queued = (await client.post("/api/camera-checks")).json()
+        batch_id = queued["batch_id"]
+        response = await client.post(
+            "/api/camera-snapshots",
+            headers=headers,
+            json={
+                "batch_id": batch_id,
+                "camera_index": 2,
+                "camera_name": "C922 Pro Stream Webcam",
+                "device": "/dev/video2",
+                "image_base64": base64.b64encode(b"\xff\xd8jpeg").decode("ascii"),
+            },
+        )
+        gallery = await client.get("/partials/camera-gallery")
+        image_url = app.state.store.get_station("nuc-01").camera_snapshots[0].image_url
+        image = await client.get(image_url)
+
+    assert response.status_code == 201
+    assert "C922 Pro Stream Webcam" in gallery.text
+    assert "/camera-snapshots/" in gallery.text
+    assert image.status_code == 200
+    assert image.content == b"\xff\xd8jpeg"
+
+
+@pytest.mark.asyncio
+async def test_camera_capture_fails_closed_without_admin_auth(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post("/api/camera-checks")
+
+    assert response.status_code == 503
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 import threading
 import time
 import unicodedata
@@ -611,6 +612,47 @@ class SessionManager:
             frame = self._copy_camera_frame(frame)
         ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
         return encoded.tobytes() if ok else None
+
+    def capture_camera_snapshots(self) -> tuple[list[dict[str, Any]], list[str]]:
+        """Fotografa todas as câmeras enquanto a estação está em manutenção."""
+        with self._lock:
+            if self._state != SessionState.IDLE:
+                raise SessionError("Estação com avaliação ativa")
+            self._camera.release()
+            devices = discover_video_devices()
+            snapshots: list[dict[str, Any]] = []
+            errors: list[str] = []
+            if not devices:
+                return [], ["Nenhuma câmera detectada"]
+            for device in devices:
+                try:
+                    command = ["ffmpeg", "-loglevel", "error", "-f", "v4l2"]
+                    input_format = self._rec_cfg.webcam_input_format.strip()
+                    if input_format:
+                        command.extend(["-input_format", input_format])
+                    command.extend([
+                        "-video_size", f"{self._face_cfg.camera_width}x{self._face_cfg.camera_height}",
+                        "-i", device["device"],
+                        "-frames:v", "1",
+                        "-vf", "scale='min(640,iw)':-2",
+                        "-q:v", "4",
+                        "-f", "image2pipe",
+                        "-vcodec", "mjpeg",
+                        "pipe:1",
+                    ])
+                    result = subprocess.run(
+                        command,
+                        capture_output=True,
+                        timeout=10,
+                        check=False,
+                    )
+                    if result.returncode != 0 or not result.stdout.startswith(b"\xff\xd8"):
+                        detail = result.stderr.decode("utf-8", errors="replace").strip()
+                        raise CameraError(detail or "a câmera não forneceu imagem")
+                    snapshots.append({**device, "jpeg": result.stdout})
+                except (CameraError, OSError, subprocess.TimeoutExpired) as exc:
+                    errors.append(f"{device['name']} ({device['device']}): {exc}")
+            return snapshots, errors
 
     def start_session(
         self,

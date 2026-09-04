@@ -9,6 +9,7 @@ from typing import Any, Callable
 import httpx
 
 from src.core.config import DashboardConfig
+from src.core.camera_snapshot_runner import CameraSnapshotRunner
 from src.core.dashboard_payload import event_to_payload, session_events_path
 from src.core.enroll_runner import EnrollRunner
 from src.core.session import SessionError, SessionManager, SessionState, StationMode
@@ -30,12 +31,17 @@ class DashboardHeartbeatWorker:
         client_factory: Callable[[], httpx.Client] | None = None,
         enroll_runner: EnrollRunner | None = None,
         update_runner: UpdateRunner | None = None,
+        camera_snapshot_runner: CameraSnapshotRunner | None = None,
     ):
         self._config = config
         self._session_manager = session_manager
         self._client_factory = client_factory or self._default_client_factory
         self._enroll_runner = enroll_runner or EnrollRunner(session_manager=session_manager)
         self._update_runner = update_runner or UpdateRunner(session_manager=session_manager)
+        self._camera_snapshot_runner = camera_snapshot_runner or CameraSnapshotRunner(
+            config=config,
+            session_manager=session_manager,
+        )
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._registered_sessions: set[str] = set()
@@ -126,6 +132,12 @@ class DashboardHeartbeatWorker:
             logger.info("UPDATE_AND_REBOOT processado")
             return
 
+        if command_type == "CAPTURE_CAMERA_SNAPSHOTS":
+            batch_id = str(payload.get("batch_id") or "")
+            if batch_id:
+                self._camera_snapshot_runner.start(batch_id)
+            return
+
         logger.warning("Comando desconhecido do dashboard: %s", command_type)
 
     def _enter_exam_mode_if_idle(self) -> None:
@@ -163,6 +175,7 @@ class DashboardHeartbeatWorker:
         payload = self._session_manager.dashboard_snapshot()
         payload.update(self._enroll_runner.status_dict())
         payload.update(self._update_runner.status_dict())
+        payload.update(self._camera_snapshot_runner.status_dict())
         session = self._session_manager.dashboard_session_payload(include_completed=False)
         if session is None:
             return payload

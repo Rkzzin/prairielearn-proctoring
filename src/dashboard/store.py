@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 from uuid import uuid4
 
@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 from src.dashboard.models import (
     CommandRecord,
     CommandType,
+    CameraSnapshotRecord,
     EnrollmentRecord,
     EventSeverity,
     ExamConfigPayload,
@@ -199,6 +200,16 @@ class DashboardStore:
                 station.update_message = payload.update_message
             if payload.available_cameras is not None:
                 station.available_cameras = payload.available_cameras
+            if (
+                payload.camera_capture_status is not None
+                and (
+                    station.camera_capture_batch_id is None
+                    or payload.camera_capture_batch_id == station.camera_capture_batch_id
+                )
+            ):
+                station.camera_capture_status = payload.camera_capture_status
+                station.camera_capture_message = payload.camera_capture_message or ""
+                station.camera_capture_batch_id = payload.camera_capture_batch_id
             station.seconds_remaining = payload.seconds_remaining
             station.last_seen_at = datetime.now(timezone.utc)
             station.last_event = payload.last_event
@@ -332,6 +343,114 @@ class DashboardStore:
 
         self._broadcast()
         return result
+
+    def queue_camera_snapshots(self) -> dict[str, object]:
+        """Enfileira um lote para todas as estações online em manutenção."""
+        batch_id = str(uuid4())
+        queued: list[str] = []
+        skipped: list[dict[str, str]] = []
+        now = datetime.now(timezone.utc)
+        with self._lock:
+            for station in self._stations.values():
+                status = station.effective_status(now)
+                capture_in_progress = (
+                    station.camera_capture_status in {"queued", "running"}
+                    and station.camera_capture_requested_at is not None
+                    and now - station.camera_capture_requested_at <= timedelta(seconds=30)
+                )
+                ready = (
+                    status in {
+                        StationStatus.IDLE,
+                        StationStatus.EXAM_READY,
+                        StationStatus.WAITING_STUDENT,
+                    }
+                    and station.active_session_id is None
+                    and station.enroll_status != "running"
+                    and station.update_status != "running"
+                    and not capture_in_progress
+                )
+                if not ready:
+                    if capture_in_progress:
+                        skipped.append({"station_id": station.station_id, "reason": "captura em andamento"})
+                        continue
+                    reason = "offline" if status == StationStatus.OFFLINE else "com avaliação ativa"
+                    station.camera_snapshots = []
+                    station.camera_capture_batch_id = batch_id
+                    station.camera_capture_requested_at = now
+                    station.camera_capture_status = "skipped"
+                    station.camera_capture_message = f"Ignorada: estação {reason}"
+                    skipped.append({"station_id": station.station_id, "reason": reason})
+                else:
+                    station.camera_snapshots = []
+                    station.camera_capture_batch_id = batch_id
+                    station.camera_capture_requested_at = now
+                    station.camera_capture_status = "queued"
+                    station.camera_capture_message = "Aguardando a estação..."
+                    station.pending_commands = [
+                        command
+                        for command in station.pending_commands
+                        if command.command_type != CommandType.CAPTURE_CAMERA_SNAPSHOTS
+                    ]
+                    station.pending_commands.append(
+                        CommandRecord(
+                            command_id=str(uuid4()),
+                            station_id=station.station_id,
+                            command_type=CommandType.CAPTURE_CAMERA_SNAPSHOTS,
+                            issued_at=now,
+                            payload={"batch_id": batch_id},
+                        )
+                    )
+                    queued.append(station.station_id)
+                self._save_station(station)
+        self._broadcast()
+        return {"batch_id": batch_id, "queued_station_ids": queued, "skipped": skipped}
+
+    def store_camera_snapshot(self, station_id: str, snapshot: CameraSnapshotRecord) -> StationRecord:
+        with self._lock:
+            station = self._validate_camera_snapshot_locked(
+                station_id,
+                snapshot.batch_id,
+                snapshot.camera_index,
+            )
+            station.camera_snapshots = [
+                item for item in station.camera_snapshots if item.camera_index != snapshot.camera_index
+            ]
+            if len(station.camera_snapshots) >= 8:
+                raise ValueError("Limite de fotos do lote atingido")
+            station.camera_snapshots.append(snapshot)
+            station.camera_snapshots.sort(key=lambda item: item.camera_index)
+            station.camera_capture_status = "running"
+            station.camera_capture_message = f"{len(station.camera_snapshots)} foto(s) recebida(s)"
+            self._save_station(station)
+            result = station.model_copy(deep=True)
+        self._broadcast()
+        return result
+
+    def validate_camera_snapshot(self, station_id: str, batch_id: str, camera_index: int) -> None:
+        with self._lock:
+            self._validate_camera_snapshot_locked(station_id, batch_id, camera_index)
+
+    def _validate_camera_snapshot_locked(
+        self,
+        station_id: str,
+        batch_id: str,
+        camera_index: int,
+    ) -> StationRecord:
+        station = self._stations.get(station_id)
+        if station is None:
+            raise KeyError(station_id)
+        if station.camera_capture_batch_id != batch_id:
+            raise ValueError("Lote de captura expirado")
+        if station.camera_capture_status not in {"queued", "running"}:
+            raise ValueError("Lote de captura já encerrado")
+        if (
+            station.camera_capture_requested_at is None
+            or datetime.now(timezone.utc) - station.camera_capture_requested_at > timedelta(minutes=2)
+        ):
+            raise ValueError("Lote de captura expirado")
+        if camera_index not in {camera.index for camera in station.available_cameras}:
+            raise ValueError("Câmera não reportada pela estação")
+        return station
 
     def set_station_autostart(self, station_id: str, enabled: bool) -> CommandRecord:
         with self._lock:
