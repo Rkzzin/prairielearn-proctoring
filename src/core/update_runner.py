@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -68,7 +70,9 @@ class UpdateRunner:
         with self._lock:
             self._status = "reiniciando"
             self._message = "repositório atualizado; reiniciando estação"
-        subprocess.Popen(["sudo", "/usr/bin/systemctl", "reboot"])
+        # A unit usa Restart=always; encerrar o próprio processo carrega o
+        # checkout novo sem depender de sudo interativo na estação.
+        os.kill(os.getpid(), signal.SIGTERM)
 
     def _set_error(self, message: str) -> None:
         with self._lock:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 from pathlib import Path
 
@@ -21,21 +23,18 @@ def test_update_runner_refuses_when_a_session_is_active(tmp_path):
     assert "prova ativa" in runner.status_dict()["update_message"]
 
 
-def test_update_runner_reboots_only_after_a_successful_pull(tmp_path, monkeypatch):
-    commands = []
+def test_update_runner_restarts_service_only_after_a_successful_pull(tmp_path, monkeypatch):
+    signals = []
 
     def fake_run(*args, **kwargs):
         return subprocess.CompletedProcess(args[0], 0, "", "")
 
-    def fake_popen(command):
-        commands.append(command)
-
     monkeypatch.setattr("src.core.update_runner.subprocess.run", fake_run)
-    monkeypatch.setattr("src.core.update_runner.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("src.core.update_runner.os.kill", lambda pid, sig: signals.append((pid, sig)))
     runner = UpdateRunner(session_manager=FakeSessionManager(), project_root=Path(tmp_path))
 
     runner.start()
     runner._thread.join(timeout=1)
 
-    assert commands == [["sudo", "/usr/bin/systemctl", "reboot"]]
+    assert signals == [(os.getpid(), signal.SIGTERM)]
     assert runner.status_dict()["update_status"] == "reiniciando"
