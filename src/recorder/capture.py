@@ -222,6 +222,8 @@ class Capture:
     # ──────────────────────────────────────────────
 
     def _start_webcam_with_fallback(self) -> None:
+        if self._rec_cfg.webcam_audio_enabled:
+            self._prepare_internal_microphone()
         try:
             self._start_webcam_stream()
         except RuntimeError as exc:
@@ -229,6 +231,28 @@ class Capture:
                 raise
             logger.warning("Áudio indisponível (%s); reiniciando webcam somente com vídeo", exc)
             self._start_webcam_stream(audio_enabled=False)
+
+    def _prepare_internal_microphone(self) -> None:
+        """Reduz o ganho físico antes de o Pulse abrir o microfone interno."""
+        card = str(self._rec_cfg.webcam_audio_alsa_card)
+        percent = f"{self._rec_cfg.webcam_audio_capture_percent}%"
+        commands = [
+            ["amixer", "-c", card, "sset", "Capture", percent],
+            ["amixer", "-c", card, "sset", "Internal Mic Boost", "0%"],
+        ]
+        for command in commands:
+            try:
+                result = subprocess.run(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+                if result.returncode != 0:
+                    logger.warning("Não foi possível ajustar ganho do microfone: %s", result.stderr.strip())
+            except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+                logger.warning("Não foi possível ajustar ganho do microfone: %s", exc)
 
     def _start_webcam_stream(self, *, audio_enabled: bool | None = None) -> None:
         """Inicia FFmpeg de webcam capturando /dev/videoN diretamente."""

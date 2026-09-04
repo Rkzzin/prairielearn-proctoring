@@ -155,6 +155,17 @@ class RecorderConfig(BaseSettings):
         default="highpass=f=80,alimiter=limit=0.891:level=false",
         description="Filtro FFmpeg aplicado ao áudio para remover rumble e proteger contra picos.",
     )
+    webcam_audio_alsa_card: int = Field(
+        default=0,
+        ge=0,
+        description="Placa ALSA do microfone interno cujo ganho será ajustado antes da gravação.",
+    )
+    webcam_audio_capture_percent: int = Field(
+        default=30,
+        ge=0,
+        le=100,
+        description="Ganho físico de captura do microfone interno.",
+    )
     display: str = Field(
         default=":0",
         description="Display X11 para captura de tela",

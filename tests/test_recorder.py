@@ -397,6 +397,7 @@ def test_capture_retries_webcam_without_audio_when_audio_start_fails(tmp_path: P
         recorder_config=RecorderConfig(webcam_audio_enabled=True),
     )
     attempts = []
+    monkeypatch.setattr(capture, "_prepare_internal_microphone", lambda: None)
 
     def start_webcam(*, audio_enabled=None):
         attempts.append(audio_enabled)
@@ -408,6 +409,29 @@ def test_capture_retries_webcam_without_audio_when_audio_start_fails(tmp_path: P
     capture._start_webcam_with_fallback()
 
     assert attempts == [None, False]
+
+
+def test_capture_prepares_internal_microphone_gain(tmp_path: Path, monkeypatch):
+    commands = []
+    monkeypatch.setattr(
+        "src.recorder.capture.subprocess.run",
+        lambda command, **_kwargs: commands.append(command) or SimpleNamespace(returncode=0, stderr=""),
+    )
+    capture = Capture(
+        session_id="sess-audio-gain",
+        app_config=AppConfig(data_dir=tmp_path),
+        recorder_config=RecorderConfig(
+            webcam_audio_alsa_card=0,
+            webcam_audio_capture_percent=30,
+        ),
+    )
+
+    capture._prepare_internal_microphone()
+
+    assert commands == [
+        ["amixer", "-c", "0", "sset", "Capture", "30%"],
+        ["amixer", "-c", "0", "sset", "Internal Mic Boost", "0%"],
+    ]
 
 
 def test_capture_ensure_process_started_raises_if_ffmpeg_exits_early(tmp_path: Path, monkeypatch):

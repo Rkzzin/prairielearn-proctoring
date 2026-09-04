@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
 #  detect_camera_audio.sh
-#  Detecta a webcam USB conectada agora e ajusta PROCTOR_FACE_CAMERA_INDEX e
-#  PROCTOR_REC_WEBCAM_AUDIO_DEVICE no .env.
+#  Detecta a webcam USB e o microfone interno do notebook, ajustando
+#  PROCTOR_FACE_CAMERA_INDEX e PROCTOR_REC_WEBCAM_AUDIO_DEVICE no .env.
 #
 #  Rode isto DEPOIS de conectar a webcam definitiva da estação, não durante
 #  o bootstrap (que costuma rodar antes do hardware final estar plugado).
@@ -60,37 +60,25 @@ else
     warn "PROCTOR_FACE_CAMERA_INDEX no .env não foi alterado."
 fi
 
-# ── Microfone ──
-# Procura o primeiro card ALSA de captura que pareça ser webcam USB (a
-# maioria se anuncia como 'USB Audio' no nome do dispositivo).
-CARD_LINE=""
-if command -v arecord > /dev/null 2>&1; then
-    CARD_LINE="$(arecord -l 2>/dev/null | grep -im1 -E 'usb|webcam|c920|c922|c930' || true)"
-else
-    warn "arecord não encontrado (pacote alsa-utils). Instale com: sudo apt install alsa-utils"
-fi
-
+# ── Microfone interno ──
 PULSE_SOURCE=""
 if command -v wpctl > /dev/null 2>&1; then
     PULSE_SOURCE="$(XDG_RUNTIME_DIR="/run/user/$(id -u)" wpctl status -n 2>/dev/null \
-        | grep -m1 -E 'alsa_input\.usb[^ ]*' \
-        | sed -E 's/.*[0-9]+\. (alsa_input\.usb[^ ]*).*/\1/' || true)"
+        | grep -m1 -E 'alsa_input\.pci[^ ]*analog-stereo' \
+        | sed -E 's/.*[0-9]+\. (alsa_input\.pci[^ ]*analog-stereo).*/\1/' || true)"
 fi
 
-if [ -n "$CARD_LINE" ] && [ -n "$PULSE_SOURCE" ]; then
-    CARD_NAME="$(echo "$CARD_LINE" | sed -E 's/^card [0-9]+: ([^ ]+).*/\1/')"
-    if [ -n "$CARD_NAME" ]; then
-        sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=${PULSE_SOURCE}#" .env
-        log "Microfone da webcam detectado: ${CARD_NAME} — ${PULSE_SOURCE}"
-    fi
+if [ -n "$PULSE_SOURCE" ]; then
+    sed -i "s#^PROCTOR_REC_WEBCAM_AUDIO_DEVICE=.*#PROCTOR_REC_WEBCAM_AUDIO_DEVICE=${PULSE_SOURCE}#" .env
+    log "Microfone interno detectado: ${PULSE_SOURCE}"
 else
-    warn "Nenhuma entrada PipeWire de webcam USB foi identificada automaticamente."
+    warn "Nenhuma entrada PipeWire interna foi identificada automaticamente."
     warn "Confira manualmente: wpctl status -n"
     warn "e ajuste PROCTOR_REC_WEBCAM_AUDIO_DEVICE no .env à mão."
 fi
 
 echo ""
-if [ -z "$CAMERA_INDEX" ] || [ -z "${CARD_NAME:-}" ]; then
+if [ -z "$CAMERA_INDEX" ] || [ -z "$PULSE_SOURCE" ]; then
     warn "Detecção incompleta — confira o .env manualmente antes de subir o serviço."
 else
     log "Detecção completa. Reinicie o serviço para aplicar: sudo systemctl restart proctor"
