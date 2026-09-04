@@ -111,6 +111,7 @@ class ExamConfigPayload(BaseModel):
     allow_repeat_attempts: bool = True
     target_station_ids: list[str] = Field(default_factory=list)
     gaze_h_threshold: float = 0.35
+    gaze_v_threshold: float = 0.60
     gaze_duration_sec: float = 3.0
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True

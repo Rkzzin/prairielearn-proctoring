@@ -1365,6 +1365,7 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
             "s3_prefix": "ES2025-T1/quiz-03",
             "target_station_ids": ["nuc-01"],
             "gaze_h_threshold": 0.4,
+            "gaze_v_threshold": 0.45,
             "gaze_duration_sec": 4.0,
             "absence_timeout_sec": 6.0,
             "multi_face_block": False,
@@ -1381,6 +1382,7 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert config.s3_prefix == "ES2025-T1/quiz-03"
 
     assert manager._proctor_cfg.gaze_h_threshold == 0.4
+    assert manager._proctor_cfg.gaze_v_threshold == 0.45
     assert manager._proctor_cfg.gaze_duration_sec == 4.0
     assert manager._proctor_cfg.absence_timeout_sec == 6.0
     assert manager._proctor_cfg.multi_face_block is False

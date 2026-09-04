@@ -199,6 +199,7 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
             "allow_repeat_attempts": False,
             "target_station_ids": ["nuc-01"],
             "gaze_h_threshold": 0.35,
+            "gaze_v_threshold": 0.60,
             "gaze_duration_sec": 3.0,
             "absence_timeout_sec": 5.0,
             "multi_face_block": True,

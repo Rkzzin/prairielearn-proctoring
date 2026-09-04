@@ -88,10 +88,9 @@ DASHBOARD_CONFIG_FIELD_MAP = {
 
 #: Campos do payload que ajustam thresholds do proctoring em memória, não o
 #: ``SessionConfig``. O valor é o cast aplicado.
-#: Nota: o payload do dashboard não expõe ``gaze_v_threshold`` — o limiar
-#: vertical só é configurável por `.env`.
 DASHBOARD_PROCTOR_FIELD_CASTS = {
     "gaze_h_threshold": float,
+    "gaze_v_threshold": float,
     "gaze_duration_sec": float,
     "absence_timeout_sec": float,
     "multi_face_block": bool,

@@ -100,6 +100,21 @@ def _format_clock_time(now: datetime | None = None) -> str:
     return (now or datetime.now()).strftime("%H:%M:%S")
 
 
+def _clamp_overlay_position(
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    screen_width: int,
+    screen_height: int,
+) -> tuple[int, int]:
+    """Mantém o painel de controles acessível dentro da tela."""
+    return (
+        max(0, min(x, max(0, screen_width - width))),
+        max(0, min(y, max(0, screen_height - height))),
+    )
+
+
 def _send_stop_request(stop_url: str) -> tuple[bool, str | None]:
     request = urllib.request.Request(
         stop_url,
@@ -155,17 +170,43 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
 
     frame = tk.Frame(root, bg=PANEL, padx=8, pady=8)
     frame.pack()
+    drag_state = {"offset_x": 0, "offset_y": 0, "positioned": False}
 
     def place_controls() -> None:
+        if drag_state["positioned"]:
+            return
         root.update_idletasks()
         button_width = max(root.winfo_reqwidth(), root.winfo_width())
         button_height = max(root.winfo_reqheight(), root.winfo_height())
         screen_width = root.winfo_screenwidth()
         screen_height = root.winfo_screenheight()
         inset = 4
-        x = max(screen_width - button_width - inset, 0)
-        y = max(screen_height - button_height - inset, 0)
+        x, y = _clamp_overlay_position(
+            screen_width - button_width - inset,
+            screen_height - button_height - inset,
+            button_width,
+            button_height,
+            screen_width,
+            screen_height,
+        )
         root.geometry(f"{button_width}x{button_height}+{x}+{y}")
+
+    def begin_drag(event) -> None:
+        drag_state["offset_x"] = event.x_root - root.winfo_x()
+        drag_state["offset_y"] = event.y_root - root.winfo_y()
+
+    def drag_controls(event) -> None:
+        root.update_idletasks()
+        x, y = _clamp_overlay_position(
+            event.x_root - drag_state["offset_x"],
+            event.y_root - drag_state["offset_y"],
+            root.winfo_width(),
+            root.winfo_height(),
+            root.winfo_screenwidth(),
+            root.winfo_screenheight(),
+        )
+        drag_state["positioned"] = True
+        root.geometry(f"+{x}+{y}")
 
     ewmh_applied = False
 
@@ -295,6 +336,18 @@ def _controls_mode(stop_url: str, status_url: str) -> int:
                 "A avaliação continua ativa. Tente novamente em alguns instantes."
                 + (f"\n\nDetalhe: {error}" if error else ""),
             )
+
+    drag_handle = tk.Label(
+        frame,
+        text="ARRASTE PARA MOVER",
+        fg=MUTED,
+        bg=PANEL,
+        cursor="fleur",
+        font=(FONT, 9, "bold"),
+    )
+    drag_handle.pack(fill="x", pady=(0, 4))
+    drag_handle.bind("<ButtonPress-1>", begin_drag)
+    drag_handle.bind("<B1-Motion>", drag_controls)
 
     _add_status_box(
         frame,

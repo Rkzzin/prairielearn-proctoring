@@ -14,6 +14,7 @@ from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.overlay_app import (
     _blocked_reason_message,
+    _clamp_overlay_position,
     _format_clock_time,
     _format_remaining_time,
     _show_preview_during_block,
@@ -56,6 +57,11 @@ def test_blocked_overlay_reports_absence_and_multiple_faces():
     assert _violation_report_message("MULTI_FACE") == expected
     assert _violation_report_message("DIFFERENT_USER") == expected
     assert _violation_report_message("GAZE") is None
+
+
+def test_controls_overlay_drag_position_stays_on_screen():
+    assert _clamp_overlay_position(-20, 900, 300, 120, 1280, 720) == (0, 600)
+    assert _clamp_overlay_position(500, 400, 300, 120, 1280, 720) == (500, 400)
 
 
 def test_blocked_overlay_hides_preview_for_proctoring_violations():

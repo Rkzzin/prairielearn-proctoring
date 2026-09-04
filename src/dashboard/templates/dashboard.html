@@ -118,6 +118,7 @@
 login.microsoftonline.com
 us.prairietest.com</textarea></label>
     <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
+    <label>Gaze vertical (olhar para baixo)<input type="number" step="0.01" name="gaze_v_threshold" value="0.60"></label>
     <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
     <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="5.0"></label>
     <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
@@ -372,6 +373,7 @@ function applyConfigValues(config) {
   form.elements.prairielearn_url.value = config.prairielearn_url;
   form.elements.allowlist_lines.value = (config.allowlist || []).join('\n');
   form.elements.gaze_h_threshold.value = config.gaze_h_threshold;
+  if (config.gaze_v_threshold !== undefined) form.elements.gaze_v_threshold.value = config.gaze_v_threshold;
   form.elements.gaze_duration_sec.value = config.gaze_duration_sec;
   form.elements.absence_timeout_sec.value = config.absence_timeout_sec;
   form.elements.multi_face_block.checked = config.multi_face_block;
@@ -410,6 +412,7 @@ async function submitNewConfig() {
     allow_repeat_attempts: data.get('allow_repeat_attempts') === 'on',
     target_station_ids: targetStationIds,
     gaze_h_threshold: Number(data.get('gaze_h_threshold')),
+    gaze_v_threshold: Number(data.get('gaze_v_threshold')),
     gaze_duration_sec: Number(data.get('gaze_duration_sec')),
     absence_timeout_sec: Number(data.get('absence_timeout_sec')),
     multi_face_block: data.get('multi_face_block') === 'on',
