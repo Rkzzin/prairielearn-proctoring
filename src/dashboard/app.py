@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 from src.core.config import AppConfig
 from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
 from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
+from src.dashboard.integrity_score import compute_integrity_score
 from src.dashboard.models import (
     CameraSnapshotPayload,
     CameraSnapshotRecord,
@@ -95,6 +96,10 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     app_config = config or AppConfig()
     dashboard_dir = Path(__file__).parent
     templates = Jinja2Templates(directory=str(dashboard_dir / "templates"))
+    #: Exposto aos templates como `integrity_score(session)` — usado tanto na
+    #: lista de sessões (_sessions.html) quanto no detalhe (session_detail.html)
+    #: sem precisar recalcular/pré-carregar em cada rota que renderiza sessões.
+    templates.env.globals["integrity_score"] = compute_integrity_score
     dashboard_store = store or DashboardStore(
         app_config.dashboard.database_url,
         app_config=app_config,
@@ -247,6 +252,7 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
             session=session,
             timeline=timeline,
             event_counts=_event_counts(timeline),
+            integrity=compute_integrity_score(session),
             duration_label=_format_duration(session.duration_seconds),
             status_label=_SESSION_STATUS_LABELS.get(
                 session.status.value,
@@ -735,6 +741,8 @@ def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -
             "assessment",
             "student_id",
             "student_name",
+            "integrity_score",
+            "integrity_band",
             "timestamp",
             "offset_seconds",
             "event_type",
@@ -749,6 +757,7 @@ def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -
             continue
         student_id = session.student.student_id if session.student else ""
         student_name = session.student.student_name if session.student else ""
+        integrity = compute_integrity_score(session)
         for event in session.events:
             offset_seconds = max(
                 0,
@@ -767,6 +776,8 @@ def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -
                     session.assessment,
                     student_id,
                     student_name,
+                    integrity.score,
+                    integrity.band,
                     event.timestamp.isoformat(),
                     offset_seconds,
                     event.event_type,

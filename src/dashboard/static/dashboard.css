@@ -440,6 +440,39 @@ th, td {
 .session-status-blocked { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
 .session-status-session { color: #1e626b; background: #e3f1f2; border-color: #b7d7da; }
 .session-status-uploading { color: #435e8c; background: #eaf0fa; border-color: #c4d1e6; }
+
+/* Índice de Integridade da Sessão — pedido do prof. Corsi (04/09/2026),
+   ver src/dashboard/integrity_score.py. Faixas A (melhor) a E (pior). */
+.integrity-badge {
+  display: inline-block;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 0.78rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.integrity-badge-large {
+  padding: 6px 12px;
+  font-size: 0.95rem;
+}
+.integrity-band-a { color: #24652b; background: #e8f4e9; border-color: #bcd9bf; }
+.integrity-band-b { color: #4a7a1f; background: #eef4e2; border-color: #cddcb2; }
+.integrity-band-c { color: #9a6818; background: #fbf1e0; border-color: #e8d3a9; }
+.integrity-band-d { color: #a1531f; background: #fbe9e0; border-color: #e8bfa9; }
+.integrity-band-e { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
+.integrity-summary {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: flex-start;
+}
+.integrity-caption {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0;
+}
 .session-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

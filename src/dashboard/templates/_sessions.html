@@ -7,12 +7,14 @@
         <th>Estação</th>
         <th>Aluno</th>
         <th>Status</th>
+        <th>Integridade</th>
         <th>Flags</th>
         <th></th>
       </tr>
     </thead>
     <tbody>
       {% for session in sessions %}
+      {% set integrity = integrity_score(session) %}
       <tr>
         <td data-label="Sessão">{{ session.assessment }}</td>
         <td data-label="Estação">{{ session.station_id }}</td>
@@ -20,6 +22,11 @@
         <td data-label="Status">
           <span class="session-table-status session-table-status-{{ session.status.value|lower }}">
             {{ "TIMEOUT" if session.status.value == "TIMEOUT" else session.status.value }}
+          </span>
+        </td>
+        <td data-label="Integridade">
+          <span class="integrity-badge integrity-band-{{ integrity.band|lower }}" title="{{ integrity.band_label }}">
+            {{ integrity.score }} · {{ integrity.band }}
           </span>
         </td>
         <td data-label="Flags">{{ session.flags_count }}</td>

@@ -27,6 +27,17 @@
       <dd>{{ duration_label }}</dd>
     </div>
   </dl>
+  <div class="integrity-summary">
+    <span class="integrity-badge integrity-band-{{ integrity.band|lower }} integrity-badge-large" title="{{ integrity.band_label }}">
+      Índice de Integridade: {{ integrity.score }} · {{ integrity.band }}
+    </span>
+    <p class="integrity-caption">
+      {{ integrity.band_label }}.
+      {% if integrity.blocked_seconds > 0 %}{{ integrity.blocked_seconds }}s bloqueado de {{ integrity.duration_seconds }}s totais.{% endif %}
+      {% if integrity.capped_by_timeout %}Sessão encerrada por bloqueio não resolvido (timeout) — score limitado.{% endif %}
+      Não é a nota da prova — é um sinal de triagem pra priorizar revisão manual.
+    </p>
+  </div>
   <p class="session-event-summary">
     <strong>{{ event_counts.CRITICAL }}</strong> crítico{% if event_counts.CRITICAL != 1 %}s{% endif %}
     <span>·</span>
