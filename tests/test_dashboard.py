@@ -19,6 +19,7 @@ from src.dashboard.app import (
 )
 from src.dashboard.auth import hash_password
 from src.dashboard.enrollment_service import S3EnrollmentStudent, S3EnrollmentSummary
+from src.dashboard.integrity_score import compute_integrity_score
 from src.dashboard.models import (
     CommandType,
     EventSeverity,
@@ -1281,15 +1282,16 @@ def test_session_review_template_prioritizes_human_event_information():
     )
     timeline = _build_timeline(session)
     template_dir = Path(__file__).parents[1] / "src" / "dashboard" / "templates"
-    template = Environment(loader=FileSystemLoader(template_dir)).get_template(
-        "session_detail.html"
-    )
+    env = Environment(loader=FileSystemLoader(template_dir))
+    env.globals["integrity_score"] = compute_integrity_score
+    template = env.get_template("session_detail.html")
 
     html = template.render(
         title="Sessão sess-readable",
         session=session,
         timeline=timeline,
         event_counts=_event_counts(timeline),
+        integrity=compute_integrity_score(session),
         duration_label=_format_duration(session.duration_seconds),
         status_label="Concluída",
     )
