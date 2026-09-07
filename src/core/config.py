@@ -119,6 +119,17 @@ class ProctorConfig(BaseSettings):
     gaze_duration_sec: float = 5.0   # segundos em GAZE_WARN antes de BLOCKED
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True
+    gaze_debounce_frames: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Frames consecutivos desviados exigidos antes de logar GAZE_WARNING "
+            "e transitar para GAZE_WARN. Filtra ruído de frame único do "
+            "preview (baixa resolução/alta compressão) sem atrasar detecção "
+            "de desvio sustentado — o timer gaze_duration_sec só começa a "
+            "contar depois desse debounce."
+        ),
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="PROCTOR_",

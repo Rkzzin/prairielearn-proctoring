@@ -41,6 +41,7 @@ def _make_config(
     gaze_dur: float = 3.0,
     absence_timeout: float = 5.0,
     multi_face_block: bool = True,
+    gaze_debounce_frames: int = 1,
 ) -> ProctorConfig:
     return ProctorConfig(
         gaze_h_threshold=gaze_h,
@@ -48,6 +49,7 @@ def _make_config(
         gaze_duration_sec=gaze_dur,
         absence_timeout_sec=absence_timeout,
         multi_face_block=multi_face_block,
+        gaze_debounce_frames=gaze_debounce_frames,
     )
 
 
@@ -160,6 +162,81 @@ class TestGazeFSM:
         assert state == ProctorState.GAZE_WARN
 
 
+class TestGazeDebounceAndSmoothing:
+    """Cobre o fix de ruído do preview: pitch suavizado + debounce de frames.
+
+    Contexto: sessões de prova reais geravam 68-548 GAZE_WARNING num único
+    exame sem nenhum bloqueio real (aluno nunca ficou 5s seguidos desviado)
+    — sintoma de ruído de pose estimation em frames isolados sendo tratado
+    como sinal, não filtro de ruído.
+    """
+
+    def test_single_noisy_pitch_frame_does_not_warn_with_debounce(self, tmp_path: Path):
+        """Um frame isolado de pitch desviado, com debounce >1, não dispara warning."""
+        cfg = _make_config(gaze_debounce_frames=3)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        state = _feed(engine, _gaze(pitch=45.0))  # 1 frame ruidoso só
+        assert state == ProctorState.NORMAL
+
+    def test_single_noisy_yaw_frame_does_not_warn_with_debounce(self, tmp_path: Path):
+        cfg = _make_config(gaze_debounce_frames=3)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        state = _feed(engine, _gaze(yaw=45.0))
+        assert state == ProctorState.NORMAL
+
+    def test_debounce_frames_consecutive_deviation_still_warns(self, tmp_path: Path):
+        """Desvio sustentado por N frames consecutivos ainda dispara warning."""
+        cfg = _make_config(gaze_debounce_frames=3)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        _feed(engine, _gaze(yaw=45.0))
+        _feed(engine, _gaze(yaw=45.0))
+        assert engine.state == ProctorState.NORMAL  # ainda no debounce
+        state = _feed(engine, _gaze(yaw=45.0))  # 3º frame consecutivo
+        assert state == ProctorState.GAZE_WARN
+
+    def test_debounce_streak_resets_on_normal_frame(self, tmp_path: Path):
+        """Um frame normal no meio do debounce reseta a contagem."""
+        cfg = _make_config(gaze_debounce_frames=3)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        _feed(engine, _gaze(yaw=45.0))
+        _feed(engine, _gaze(yaw=45.0))
+        _feed(engine, _gaze(yaw=0.0))  # olhar volta — reseta streak
+        state = _feed(engine, _gaze(yaw=45.0))  # só 1 frame desviado de novo
+        assert state == ProctorState.NORMAL
+
+    def test_pitch_is_smoothed_like_yaw(self, tmp_path: Path):
+        """Um pico isolado de pitch, entre frames normais, não vira desvio
+        sustentado — a janela de suavização absorve o outlier."""
+        cfg = _make_config(gaze_debounce_frames=1)  # isola o efeito da suavização
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        # Popula a janela com frames normais primeiro (média puxa pro centro)
+        for _ in range(9):
+            _feed(engine, _gaze(pitch=180.0))  # 180 = neutro (ver _gaze docstring)
+        assert engine.state == ProctorState.NORMAL
+
+        # Um pico isolado de pitch: smooth_pitch = (9*180 + 135)/10 = 175.5
+        # pitch_ratio = |175.5-180|/90 = 0.05, bem abaixo do threshold 0.30
+        state = _feed(engine, _gaze(pitch=135.0))
+        assert state == ProctorState.NORMAL
+
+    def test_gaze_warn_details_include_smoothed_values(self, tmp_path: Path):
+        cfg = _make_config(gaze_debounce_frames=1)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        _feed(engine, _gaze(yaw=45.0, pitch=225.0))
+        engine._logger.close()
+
+        events = EventLogger.read_session(tmp_path / "sessions" / "TEST-001" / "events.jsonl")
+        warning = next(e for e in events if e.type == EventType.GAZE_WARNING.value)
+        assert "smooth_yaw" in warning.details
+        assert "smooth_pitch" in warning.details
+
+
 # ── Testes de FSM: ausência ──────────────────────────────────────────────────
 
 
@@ -216,6 +293,8 @@ class TestAbsenceFSM:
         assert engine.state == ProctorState.ABSENCE
         assert engine._warn_start == 0.0  # timer de gaze resetado
         assert len(engine._yaw_window) == 0
+        assert len(engine._pitch_window) == 0
+        assert engine._deviation_streak == 0
 
 
 # ── Testes de FSM: multi-face ────────────────────────────────────────────────
@@ -276,6 +355,8 @@ class TestUnblock:
         engine.unblock()
 
         assert len(engine._yaw_window) == 0
+        assert len(engine._pitch_window) == 0
+        assert engine._deviation_streak == 0
 
     def test_unblock_on_normal_is_noop(self, engine: ProctorEngine):
         engine.unblock()

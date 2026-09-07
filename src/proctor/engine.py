@@ -115,8 +115,17 @@ class ProctorEngine:
             app_config=self._app_cfg,
         )
 
-        # Suavização: janela deslizante de yaw
+        # Suavização: janela deslizante de yaw e pitch (mesmo tratamento —
+        # pitch não tinha suavização antes, causando GAZE_WARNING disparado
+        # por ruído de frame único do preview de baixa resolução).
         self._yaw_window: deque[float] = deque(maxlen=10)
+        self._pitch_window: deque[float] = deque(maxlen=10)
+
+        # Debounce: contagem de frames consecutivos com desvio detectado
+        # (pós-suavização), exigidos antes de considerar "desviado de fato"
+        # e logar GAZE_WARNING/entrar em GAZE_WARN. Reseta a cada frame
+        # não-desviado. Ver ProctorConfig.gaze_debounce_frames.
+        self._deviation_streak: int = 0
 
         # Timers
         self._warn_start: float = 0.0    # quando entrou em GAZE_WARN
@@ -182,6 +191,8 @@ class ProctorEngine:
             self.state = ProctorState.NORMAL
             self.block_reason = None
             self._yaw_window.clear()
+            self._pitch_window.clear()
+            self._deviation_streak = 0
 
             self._logger.log_event(
                 frame=self._frame_count,
@@ -257,6 +268,8 @@ class ProctorEngine:
         # NORMAL ou GAZE_WARN → iniciar ausência
         self._warn_start = 0.0  # descartar timer de gaze se estava em GAZE_WARN
         self._yaw_window.clear()
+        self._pitch_window.clear()
+        self._deviation_streak = 0
         self.state = ProctorState.ABSENCE
         self._absence_start = now
         self._logger.log_event(
@@ -267,10 +280,24 @@ class ProctorEngine:
         )
 
     def _handle_gaze(self, data: GazeData) -> None:
-        """Gerencia desvio de olhar com suavização."""
-        # Suavizar yaw
+        """Gerencia desvio de olhar com suavização e debounce.
+
+        Yaw e pitch são suavizados por janela deslizante (o preview lido
+        pelo proctoring é 640x360 com compressão agressiva — um único frame
+        ruidoso pode cruzar o threshold sem o aluno ter desviado de fato).
+        Além disso, exige `gaze_debounce_frames` frames CONSECUTIVOS já
+        suavizados acima do threshold antes de considerar "desviado" —
+        filtra oscilação frame-a-frame do pose estimation sem atrasar a
+        detecção de desvio sustentado (gaze_duration_sec só começa a contar
+        depois desse debounce, não antes).
+        """
+        # Suavizar yaw e pitch (mesma técnica para os dois — antes só o yaw
+        # era suavizado, e o pitch cru é a fonte mais comum de ruído porque
+        # o preview de baixa resolução degrada mais a estimativa vertical).
         self._yaw_window.append(data.yaw)
+        self._pitch_window.append(data.pitch)
         smooth_yaw = sum(self._yaw_window) / len(self._yaw_window)
+        smooth_pitch = sum(self._pitch_window) / len(self._pitch_window)
 
         # Desvio horizontal: yaw varia ±90° → ratio 0.0–1.0
         yaw_ratio = abs(smooth_yaw) / 90.0
@@ -278,18 +305,27 @@ class ProctorEngine:
         # Desvio vertical: solvePnP retorna pitch ~180° quando cabeça ereta
         # (ambiguidade de decomposição de Euler). Normalizamos subtraindo 180°
         # para que cabeça ereta → ~0°, olhar para baixo → positivo.
-        pitch_centered = abs(data.pitch) - 180.0
+        pitch_centered = abs(smooth_pitch) - 180.0
         pitch_ratio = abs(pitch_centered) / 90.0
 
-        is_deviated = (
+        frame_deviated = (
             yaw_ratio > self._cfg.gaze_h_threshold
             or pitch_ratio > self._cfg.gaze_v_threshold
         )
 
-        # Sinal secundário de olho (se ativo)
+        # Sinal secundário de olho (se ativo) — não suavizado, mas
+        # desligado por padrão (enable_eye_gaze=False) então não é a fonte
+        # do ruído observado em produção.
         if data.eye_ratio is not None:
             # eye_ratio ~1.0 = centralizado; >1.5 ou <0.5 = desviado
-            is_deviated = is_deviated or not (0.5 <= data.eye_ratio <= 1.5)
+            frame_deviated = frame_deviated or not (0.5 <= data.eye_ratio <= 1.5)
+
+        if frame_deviated:
+            self._deviation_streak += 1
+        else:
+            self._deviation_streak = 0
+
+        is_deviated = self._deviation_streak >= self._cfg.gaze_debounce_frames
 
         now = time.time()
 
@@ -305,6 +341,7 @@ class ProctorEngine:
                         "yaw": round(data.yaw, 2),
                         "smooth_yaw": round(smooth_yaw, 2),
                         "pitch": round(data.pitch, 2),
+                        "smooth_pitch": round(smooth_pitch, 2),
                         "eye_ratio": round(data.eye_ratio, 3) if data.eye_ratio else None,
                     },
                 )
