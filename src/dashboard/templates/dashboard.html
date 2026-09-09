@@ -24,6 +24,7 @@
     <div class="panel-actions">
       <button type="button" class="button-secondary" onclick="openCreateStationModal()">Nova estação</button>
       <button type="button" class="button-secondary" id="capture-cameras-button" onclick="captureAllCameras()">Fotografar câmeras</button>
+      <button type="button" class="button-secondary" id="calibrate-electronics-button" onclick="calibrateElectronics()">Calibrar eletrônicos</button>
       <button type="button" onclick="openBulkConfigModal()">Configurar estações</button>
     </div>
   </div>
@@ -265,6 +266,32 @@ async function captureAllCameras() {
   } finally {
     button.disabled = false;
     button.textContent = 'Fotografar câmeras';
+  }
+}
+
+async function calibrateElectronics() {
+  const confirmed = window.confirm(
+    'Deixe visíveis somente os notebooks permitidos. Celulares nunca serão autorizados. Continuar?'
+  );
+  if (!confirmed) return;
+  const button = document.getElementById('calibrate-electronics-button');
+  const feedback = document.getElementById('camera-capture-feedback');
+  button.disabled = true;
+  button.textContent = 'Calibrando...';
+  feedback.textContent = '';
+  try {
+    const response = await fetch('/api/electronic-device-calibration', {method: 'POST'});
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+    const queued = payload.queued_station_ids?.length || 0;
+    const skipped = payload.skipped?.length || 0;
+    feedback.textContent = `${queued} estação(ões) em calibração; ${skipped} ignorada(s).`;
+    if (window.htmx) htmx.ajax('GET', '/partials/camera-gallery', '#camera-gallery-panel');
+  } catch (requestError) {
+    feedback.textContent = `Falha ao calibrar: ${requestError.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Calibrar eletrônicos';
   }
 }
 

@@ -200,6 +200,9 @@ class DashboardStore:
                 station.update_message = payload.update_message
             if payload.available_cameras is not None:
                 station.available_cameras = payload.available_cameras
+            station.electronic_device_calibration_supported = bool(
+                payload.electronic_device_calibration_supported
+            )
             if (
                 payload.camera_capture_status is not None
                 and (
@@ -344,7 +347,11 @@ class DashboardStore:
         self._broadcast()
         return result
 
-    def queue_camera_snapshots(self) -> dict[str, object]:
+    def queue_camera_snapshots(
+        self,
+        *,
+        calibrate_electronics: bool = False,
+    ) -> dict[str, object]:
         """Enfileira um lote para todas as estações online em manutenção."""
         batch_id = str(uuid4())
         queued: list[str] = []
@@ -369,12 +376,21 @@ class DashboardStore:
                     and station.enroll_status != "running"
                     and station.update_status != "running"
                     and not capture_in_progress
+                    and (
+                        not calibrate_electronics
+                        or station.electronic_device_calibration_supported
+                    )
                 )
                 if not ready:
                     if capture_in_progress:
                         skipped.append({"station_id": station.station_id, "reason": "captura em andamento"})
                         continue
-                    if status == StationStatus.OFFLINE:
+                    if (
+                        calibrate_electronics
+                        and not station.electronic_device_calibration_supported
+                    ):
+                        reason = "sem suporte à calibração"
+                    elif status == StationStatus.OFFLINE:
                         reason = "offline"
                     elif not station.available_cameras:
                         reason = "sem suporte à captura"
@@ -391,7 +407,11 @@ class DashboardStore:
                     station.camera_capture_batch_id = batch_id
                     station.camera_capture_requested_at = now
                     station.camera_capture_status = "queued"
-                    station.camera_capture_message = "Aguardando a estação..."
+                    station.camera_capture_message = (
+                        "Aguardando calibração da estação..."
+                        if calibrate_electronics
+                        else "Aguardando a estação..."
+                    )
                     station.pending_commands = [
                         command
                         for command in station.pending_commands
@@ -403,7 +423,10 @@ class DashboardStore:
                             station_id=station.station_id,
                             command_type=CommandType.CAPTURE_CAMERA_SNAPSHOTS,
                             issued_at=now,
-                            payload={"batch_id": batch_id},
+                            payload={
+                                "batch_id": batch_id,
+                                "calibrate_electronics": calibrate_electronics,
+                            },
                         )
                     )
                     queued.append(station.station_id)

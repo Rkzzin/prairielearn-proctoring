@@ -28,6 +28,7 @@ from typing import Any
 
 import boto3
 import cv2
+import numpy as np
 from botocore.exceptions import BotoCoreError, ClientError
 
 from src.core.camera import CameraError, SessionCamera
@@ -279,6 +280,9 @@ class SessionManager:
             station_name=self._app_cfg.dashboard.station_name,
         )
         self._config_store_path = Path(self._app_cfg.data_dir) / "station-config.json"
+        self._electronic_device_baseline_path = (
+            Path(self._app_cfg.data_dir) / "electronic-device-baseline.json"
+        )
         self._load_persisted_config()
         self._runtime: SessionRuntime | None = None
         self._last_session: SessionRuntime | None = None
@@ -693,6 +697,74 @@ class SessionManager:
                 except (CameraError, OSError, subprocess.TimeoutExpired) as exc:
                     errors.append(f"{device['name']} ({device['device']}): {exc}")
             return snapshots, errors
+
+    def calibrate_electronic_devices(self, snapshots: list[dict[str, Any]]) -> int:
+        """Autoriza notebooks estacionários encontrados nas fotos das câmeras."""
+        with self._lock:
+            if self._state != SessionState.IDLE or self._runtime is not None:
+                raise SessionError("Estação com avaliação ativa")
+            detector = YoloXElectronicDeviceDetector(
+                self._face_cfg.electronic_device_model_path,
+                confidence_threshold=0.60,
+            )
+            cameras: dict[str, dict[str, Any]] = {}
+            total = 0
+            for snapshot in snapshots:
+                frame = cv2.imdecode(
+                    np.frombuffer(snapshot["jpeg"], dtype=np.uint8),
+                    cv2.IMREAD_COLOR,
+                )
+                if frame is None:
+                    continue
+                height, width = frame.shape[:2]
+                regions = []
+                for detection in detector.detect(frame):
+                    # Celulares nunca podem ser autorizados por calibração.
+                    if detection.label != "notebook":
+                        continue
+                    x, y, box_width, box_height = detection.box
+                    left = max(0, x)
+                    top = max(0, y)
+                    right = min(width, x + box_width)
+                    bottom = min(height, y + box_height)
+                    if right <= left or bottom <= top:
+                        continue
+                    regions.append(
+                        {
+                            "label": detection.label,
+                            "box": [
+                                left / width,
+                                top / height,
+                                (right - left) / width,
+                                (bottom - top) / height,
+                            ],
+                        }
+                    )
+                cameras[str(snapshot["index"])] = {
+                    "name": snapshot.get("name", ""),
+                    "hardware_id": snapshot.get("hardware_id", ""),
+                    "regions": regions,
+                }
+                total += len(regions)
+
+            payload = {
+                "version": 1,
+                "calibrated_at": datetime.now(timezone.utc).isoformat(),
+                "cameras": cameras,
+            }
+            self._electronic_device_baseline_path.parent.mkdir(parents=True, exist_ok=True)
+            temporary = self._electronic_device_baseline_path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.replace(self._electronic_device_baseline_path)
+            logger.info(
+                "Calibração de eletrônicos salva: %d notebook(s) em %d câmera(s)",
+                total,
+                len(cameras),
+            )
+            return total
 
     def start_session(
         self,
@@ -1413,7 +1485,95 @@ class SessionManager:
         detector = YoloXElectronicDeviceDetector(
             self._face_cfg.electronic_device_model_path,
         )
-        return ElectronicDeviceMonitor(detector=detector, **kwargs)
+        baseline = self._load_electronic_device_baseline()
+        cameras = baseline.get("cameras", {})
+        current_devices = {device["index"]: device for device in discover_video_devices()}
+
+        def regions_for(index: int | None) -> list[dict[str, Any]]:
+            if index is None:
+                return []
+            camera = cameras.get(str(index), {})
+            current = current_devices.get(index, {})
+            if (
+                camera.get("name") != current.get("name")
+                or camera.get("hardware_id") != current.get("hardware_id")
+            ):
+                return []
+            return camera.get("regions", [])
+
+        ignored_regions = {
+            "principal": regions_for(self._face_cfg.camera_index),
+            "ambiente": regions_for(self._session_secondary_camera_index),
+        }
+        return ElectronicDeviceMonitor(
+            detector=detector,
+            ignored_regions=ignored_regions,
+            **kwargs,
+        )
+
+    def _load_electronic_device_baseline(self) -> dict[str, Any]:
+        try:
+            payload = json.loads(
+                self._electronic_device_baseline_path.read_text(encoding="utf-8")
+            )
+            if (
+                not isinstance(payload, dict)
+                or payload.get("version") != 1
+                or not isinstance(payload.get("cameras"), dict)
+            ):
+                raise ValueError("formato inválido")
+            cameras = {}
+            for camera_index, camera in payload["cameras"].items():
+                if not isinstance(camera_index, str) or not isinstance(camera, dict):
+                    raise ValueError("câmera inválida")
+                name = camera.get("name")
+                hardware_id = camera.get("hardware_id")
+                regions = camera.get("regions")
+                if (
+                    not isinstance(name, str)
+                    or not isinstance(hardware_id, str)
+                    or not hardware_id
+                    or not isinstance(regions, list)
+                ):
+                    raise ValueError("dados de câmera inválidos")
+                sanitized_regions = []
+                for region in regions:
+                    if not isinstance(region, dict) or region.get("label") != "notebook":
+                        raise ValueError("região inválida")
+                    box = region.get("box")
+                    if (
+                        not isinstance(box, list)
+                        or len(box) != 4
+                        or any(
+                            isinstance(value, bool) or not isinstance(value, (int, float))
+                            for value in box
+                        )
+                    ):
+                        raise ValueError("coordenadas inválidas")
+                    x, y, width, height = (float(value) for value in box)
+                    if not (
+                        0 <= x <= 1
+                        and 0 <= y <= 1
+                        and 0 < width <= 1
+                        and 0 < height <= 1
+                        and x + width <= 1.001
+                        and y + height <= 1.001
+                    ):
+                        raise ValueError("coordenadas fora da imagem")
+                    sanitized_regions.append(
+                        {"label": "notebook", "box": [x, y, width, height]}
+                    )
+                cameras[camera_index] = {
+                    "name": name,
+                    "hardware_id": hardware_id,
+                    "regions": sanitized_regions,
+                }
+            return {**payload, "cameras": cameras}
+        except FileNotFoundError:
+            return {"cameras": {}}
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning("Calibração de eletrônicos inválida: %s", exc)
+            return {"cameras": {}}
 
     def _merged_config(
         self,

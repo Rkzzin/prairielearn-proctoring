@@ -135,7 +135,10 @@ class DashboardHeartbeatWorker:
         if command_type == "CAPTURE_CAMERA_SNAPSHOTS":
             batch_id = str(payload.get("batch_id") or "")
             if batch_id:
-                self._camera_snapshot_runner.start(batch_id)
+                self._camera_snapshot_runner.start(
+                    batch_id,
+                    calibrate_electronics=bool(payload.get("calibrate_electronics")),
+                )
             return
 
         logger.warning("Comando desconhecido do dashboard: %s", command_type)

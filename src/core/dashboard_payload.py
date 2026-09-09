@@ -115,6 +115,7 @@ def build_station_snapshot(
         "seconds_remaining": status["seconds_remaining"],
         "recent_events": [],
         "available_cameras": available_cameras or [],
+        "electronic_device_calibration_supported": True,
     }
 
 

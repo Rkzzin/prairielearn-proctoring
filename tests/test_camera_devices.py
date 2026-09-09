@@ -14,5 +14,10 @@ def test_discover_video_devices_reports_kernel_names_and_skips_metadata_nodes(tm
     (metadata / "index").write_text("1", encoding="utf-8")
 
     assert discover_video_devices(tmp_path) == [
-        {"index": 2, "name": "Logitech BRIO", "device": "/dev/video2"}
+        {
+            "index": 2,
+            "name": "Logitech BRIO",
+            "device": "/dev/video2",
+            "hardware_id": str(primary.resolve().parent.parent),
+        }
     ]

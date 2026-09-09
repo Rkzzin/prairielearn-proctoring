@@ -120,8 +120,8 @@ def test_dashboard_worker_dispatches_camera_snapshot_command():
         def __init__(self):
             self.batch_ids = []
 
-        def start(self, batch_id):
-            self.batch_ids.append(batch_id)
+        def start(self, batch_id, *, calibrate_electronics=False):
+            self.batch_ids.append((batch_id, calibrate_electronics))
 
         def status_dict(self):
             return {
@@ -140,11 +140,11 @@ def test_dashboard_worker_dispatches_camera_snapshot_command():
     worker._apply_command(
         {
             "command_type": "CAPTURE_CAMERA_SNAPSHOTS",
-            "payload": {"batch_id": "batch-1"},
+            "payload": {"batch_id": "batch-1", "calibrate_electronics": True},
         }
     )
 
-    assert runner.batch_ids == ["batch-1"]
+    assert runner.batch_ids == [("batch-1", True)]
 
 
 def test_dashboard_worker_unblocks_only_when_station_is_blocked():

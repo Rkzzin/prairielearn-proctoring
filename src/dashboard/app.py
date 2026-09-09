@@ -367,6 +367,14 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         result = dashboard_store.queue_camera_snapshots()
         return JSONResponse(result, status_code=202)
 
+    @app.post("/api/electronic-device-calibration")
+    async def calibrate_electronic_devices(request: Request) -> JSONResponse:
+        if not auth_username:
+            raise HTTPException(status_code=503, detail="Configure o login administrativo.")
+        require_same_origin(request)
+        result = dashboard_store.queue_camera_snapshots(calibrate_electronics=True)
+        return JSONResponse(result, status_code=202)
+
     @app.post("/api/camera-snapshots")
     async def upload_camera_snapshot(
         payload: CameraSnapshotPayload,

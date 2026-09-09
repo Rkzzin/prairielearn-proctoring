@@ -69,3 +69,31 @@ def test_monitor_requires_two_of_three_detections_and_emits_clear():
         ("principal", True),
         ("principal", False),
     ]
+
+
+def test_monitor_ignores_calibrated_device_region():
+    detection = ElectronicDeviceDetection("notebook", 0.9, (100, 50, 200, 100))
+
+    class Detector:
+        def detect(self, _frame):
+            return [detection]
+
+    monitor = ElectronicDeviceMonitor(
+        detector=Detector(),
+        primary_enabled=True,
+        secondary_enabled=False,
+        secondary_preview_url=None,
+        interval_sec=0.01,
+        ignored_regions={
+            "principal": [
+                {"label": "notebook", "box": [0.15, 0.12, 0.33, 0.30]}
+            ]
+        },
+    )
+    monitor.submit_primary(np.zeros((360, 640, 3), dtype=np.uint8))
+    monitor.start()
+    time.sleep(0.06)
+    transitions = monitor.drain_transitions()
+    monitor.stop()
+
+    assert transitions == []

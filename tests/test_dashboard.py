@@ -180,6 +180,37 @@ async def test_camera_check_queues_idle_station_and_skips_active_session(tmp_pat
     assert payload["skipped"] == [{"station_id": "nuc-busy", "reason": "com avaliação ativa"}]
     command = app.state.store.get_station("nuc-idle").pending_commands[0]
     assert command.command_type == CommandType.CAPTURE_CAMERA_SNAPSHOTS
+    assert command.payload["calibrate_electronics"] is False
+
+
+@pytest.mark.asyncio
+async def test_electronic_calibration_reuses_camera_snapshot_command(
+    tmp_path,
+    dashboard_database_url,
+):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-idle",
+            status=StationStatus.IDLE,
+            electronic_device_calibration_supported=True,
+            available_cameras=[
+                {"index": 0, "name": "Integrated Camera", "device": "/dev/video0"}
+            ],
+        )
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        auth=("prof", "secret"),
+    ) as client:
+        response = await client.post("/api/electronic-device-calibration")
+
+    assert response.status_code == 202
+    command = app.state.store.get_station("nuc-idle").pending_commands[0]
+    assert command.command_type == CommandType.CAPTURE_CAMERA_SNAPSHOTS
+    assert command.payload["calibrate_electronics"] is True
 
 
 @pytest.mark.asyncio

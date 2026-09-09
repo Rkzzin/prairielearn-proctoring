@@ -215,11 +215,13 @@ class ElectronicDeviceMonitor:
         secondary_enabled: bool,
         secondary_preview_url: str | None,
         interval_sec: float = 1.0,
+        ignored_regions: dict[str, list[dict[str, Any]]] | None = None,
         preview_capture_factory: Callable[[int | str], Any] = open_video_capture,
     ):
         self._detector = detector
         self._primary_enabled = primary_enabled
         self._interval_sec = interval_sec
+        self._ignored_regions = ignored_regions or {}
         self._primary_frame: np.ndarray | None = None
         self._frame_lock = threading.Lock()
         self._reader = (
@@ -280,6 +282,11 @@ class ElectronicDeviceMonitor:
                 except (RuntimeError, ValueError, cv2.error) as exc:  # pragma: no cover
                     logger.warning("Falha ao detectar eletrônicos na câmera %s: %s", camera, exc)
                     continue
+                detections = [
+                    detection
+                    for detection in detections
+                    if not self._is_ignored(camera, detection, frame.shape)
+                ]
                 logger.debug(
                     "Detecção de eletrônicos em %s concluída em %.3fs",
                     camera,
@@ -293,3 +300,39 @@ class ElectronicDeviceMonitor:
                     self._results.put(
                         ElectronicDeviceTransition(camera, active, tuple(detections))
                     )
+
+    def _is_ignored(
+        self,
+        camera: str,
+        detection: ElectronicDeviceDetection,
+        frame_shape: tuple[int, ...],
+    ) -> bool:
+        height, width = frame_shape[:2]
+        x, y, box_width, box_height = detection.box
+        normalized = (
+            x / width,
+            y / height,
+            box_width / width,
+            box_height / height,
+        )
+        return any(
+            region.get("label") == detection.label
+            and _box_iou(normalized, tuple(region.get("box") or ())) >= 0.35
+            for region in self._ignored_regions.get(camera, [])
+        )
+
+
+def _box_iou(first: tuple[float, ...], second: tuple[float, ...]) -> float:
+    if len(first) != 4 or len(second) != 4:
+        return 0.0
+    first_x, first_y, first_width, first_height = first
+    second_x, second_y, second_width, second_height = second
+    intersection_left = max(first_x, second_x)
+    intersection_top = max(first_y, second_y)
+    intersection_right = min(first_x + first_width, second_x + second_width)
+    intersection_bottom = min(first_y + first_height, second_y + second_height)
+    intersection = max(0.0, intersection_right - intersection_left) * max(
+        0.0, intersection_bottom - intersection_top
+    )
+    union = first_width * first_height + second_width * second_height - intersection
+    return intersection / union if union > 0 else 0.0

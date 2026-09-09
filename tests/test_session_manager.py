@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import cv2
+import numpy as np
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -458,6 +459,48 @@ def test_electronic_device_monitor_is_not_started_during_authentication():
         manager.start_session()
 
     assert monitor_factory_calls == []
+
+
+def test_electronic_device_calibration_persists_normalized_regions(tmp_path, monkeypatch):
+    class Detector:
+        def detect(self, _frame):
+            return [
+                ElectronicDeviceDetection("notebook", 0.91, (20, 10, 40, 30)),
+                ElectronicDeviceDetection("celular", 0.95, (100, 10, 20, 30)),
+            ]
+
+    monkeypatch.setattr(
+        "src.core.session.YoloXElectronicDeviceDetector",
+        lambda _path, **_kwargs: Detector(),
+    )
+    manager = SessionManager(
+        app_config=AppConfig(
+            data_dir=tmp_path,
+            persist_session_config=False,
+            restore_exam_mode_on_startup=False,
+        )
+    )
+    ok, jpeg = cv2.imencode(".jpg", np.zeros((100, 200, 3), dtype=np.uint8))
+    assert ok
+
+    count = manager.calibrate_electronic_devices(
+        [
+            {
+                "index": 2,
+                "name": "C922",
+                "hardware_id": "/sys/devices/c922",
+                "jpeg": jpeg.tobytes(),
+            }
+        ]
+    )
+
+    baseline = manager._load_electronic_device_baseline()
+    assert count == 1
+    assert baseline["cameras"]["2"] == {
+        "name": "C922",
+        "hardware_id": "/sys/devices/c922",
+        "regions": [{"label": "notebook", "box": [0.1, 0.1, 0.2, 0.3]}],
+    }
 
 
 def test_session_manager_switches_from_device_camera_to_capture_preview():

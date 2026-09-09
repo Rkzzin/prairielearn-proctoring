@@ -10,6 +10,9 @@ from src.core.config import DashboardConfig
 
 
 class SnapshotManager:
+    def __init__(self):
+        self.calibrated = []
+
     def capture_camera_snapshots(self):
         return (
             [
@@ -22,6 +25,10 @@ class SnapshotManager:
             ],
             [],
         )
+
+    def calibrate_electronic_devices(self, snapshots):
+        self.calibrated.extend(snapshots)
+        return 2
 
 
 def test_camera_snapshot_runner_uploads_each_camera_with_station_auth():
@@ -89,3 +96,24 @@ def test_camera_snapshot_runner_runs_replacement_batch_after_current_batch():
 
     assert manager.calls == [1, 2]
     assert runner.status_dict()["camera_capture_batch_id"] == "batch-2"
+
+
+def test_camera_snapshot_runner_calibrates_from_same_captured_images():
+    manager = SnapshotManager()
+    runner = CameraSnapshotRunner(
+        config=DashboardConfig(),
+        session_manager=manager,
+        client_factory=lambda: httpx.Client(
+            base_url="https://dashboard.test",
+            transport=httpx.MockTransport(lambda _request: httpx.Response(201))
+        ),
+    )
+
+    runner.start("calibration-1", calibrate_electronics=True)
+    deadline = time.monotonic() + 2
+    while runner.status_dict()["camera_capture_status"] == "running" and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    status = runner.status_dict()
+    assert len(manager.calibrated) == 1
+    assert "2 notebook(s) autorizado(s)" in status["camera_capture_message"]

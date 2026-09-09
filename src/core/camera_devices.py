@@ -27,11 +27,16 @@ def discover_video_devices(sys_class_path: Path = Path("/sys/class/video4linux")
         except OSError:
             name = "Câmera sem nome"
         index = int(suffix)
+        try:
+            hardware_id = str(entry.resolve().parent.parent)
+        except OSError:
+            hardware_id = ""
         devices.append(
             {
                 "index": index,
                 "name": name or "Câmera sem nome",
                 "device": f"/dev/video{index}",
+                "hardware_id": hardware_id,
             }
         )
     return sorted(devices, key=lambda item: item["index"])

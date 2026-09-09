@@ -31,7 +31,7 @@ class CameraSnapshotRunner:
         self._status = "idle"
         self._message = ""
         self._batch_id: str | None = None
-        self._pending_batch_id: str | None = None
+        self._pending_request: tuple[str, bool] | None = None
 
     def status_dict(self) -> dict[str, Any]:
         with self._lock:
@@ -41,27 +41,36 @@ class CameraSnapshotRunner:
                 "camera_capture_batch_id": self._batch_id,
             }
 
-    def start(self, batch_id: str) -> None:
+    def start(self, batch_id: str, *, calibrate_electronics: bool = False) -> None:
         with self._lock:
             if self._status == "running":
                 if batch_id != self._batch_id:
-                    self._pending_batch_id = batch_id
+                    self._pending_request = (batch_id, calibrate_electronics)
                 return
             self._status = "running"
-            self._message = "Capturando câmeras..."
+            self._message = (
+                "Calibrando eletrônicos..."
+                if calibrate_electronics
+                else "Capturando câmeras..."
+            )
             self._batch_id = batch_id
         threading.Thread(
             target=self._run,
-            args=(batch_id,),
+            args=(batch_id, calibrate_electronics),
             name="camera-snapshot-runner",
             daemon=True,
         ).start()
 
-    def _run(self, batch_id: str) -> None:
+    def _run(self, batch_id: str, calibrate_electronics: bool) -> None:
         status = "error"
         message = "Falha inesperada na captura"
         try:
             snapshots, errors = self._session_manager.capture_camera_snapshots()
+            calibrated_count = (
+                self._session_manager.calibrate_electronic_devices(snapshots)
+                if calibrate_electronics and snapshots
+                else 0
+            )
             with self._client_factory() as client:
                 for snapshot in snapshots:
                     upload_error: Exception | None = None
@@ -85,26 +94,33 @@ class CameraSnapshotRunner:
                         errors.append(f"{snapshot['name']}: falha no envio")
             status = "done" if not errors else ("partial" if snapshots else "error")
             message = f"{len(snapshots)} câmera(s) fotografada(s)"
+            if calibrate_electronics:
+                message += f"; {calibrated_count} notebook(s) autorizado(s)"
             if errors:
                 message += f"; {len(errors)} falha(s)"
         except Exception as exc:  # noqa: BLE001  # pragma: no cover - proteção da thread
             logger.warning("Captura diagnóstica das câmeras falhou: %s", exc)
             message = str(exc)
         next_batch = None
+        next_calibration = False
         with self._lock:
-            if self._pending_batch_id is not None:
-                next_batch = self._pending_batch_id
-                self._pending_batch_id = None
+            if self._pending_request is not None:
+                next_batch, next_calibration = self._pending_request
+                self._pending_request = None
                 self._batch_id = next_batch
                 self._status = "running"
-                self._message = "Capturando câmeras..."
+                self._message = (
+                    "Calibrando eletrônicos..."
+                    if next_calibration
+                    else "Capturando câmeras..."
+                )
             else:
                 self._status = status
                 self._message = message
         if next_batch is not None:
             threading.Thread(
                 target=self._run,
-                args=(next_batch,),
+                args=(next_batch, next_calibration),
                 name="camera-snapshot-runner",
                 daemon=True,
             ).start()

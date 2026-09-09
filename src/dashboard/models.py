@@ -145,6 +145,7 @@ class CameraDeviceInfo(BaseModel):
     index: int = Field(ge=0)
     name: str
     device: str
+    hardware_id: str | None = None
 
 
 class CameraSnapshotPayload(BaseModel):
@@ -196,6 +197,7 @@ class StationHeartbeat(BaseModel):
     camera_capture_status: str | None = None
     camera_capture_message: str | None = None
     camera_capture_batch_id: str | None = None
+    electronic_device_calibration_supported: bool | None = None
 
 
 class StationCreatePayload(BaseModel):
@@ -228,6 +230,7 @@ class StationRecord(BaseModel):
     camera_capture_batch_id: str | None = None
     camera_capture_requested_at: datetime | None = None
     camera_snapshots: list[CameraSnapshotRecord] = Field(default_factory=list)
+    electronic_device_calibration_supported: bool = False
 
     def effective_status(self, now: datetime | None = None, offline_after_sec: int = 15) -> StationStatus:
         reference = now or datetime.now(timezone.utc)
