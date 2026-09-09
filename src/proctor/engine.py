@@ -228,7 +228,7 @@ class ProctorEngine:
                 if active
                 else EventType.ELECTRONIC_DEVICE_CLEARED
             ),
-            severity=Severity.WARNING if active else Severity.INFO,
+            severity=Severity.CRITICAL if active else Severity.INFO,
             details=details,
         )
 

@@ -507,4 +507,4 @@ class TestEngineLifecycle:
         )
         assert engine.state == ProctorState.NORMAL
         assert events[-1].type == EventType.ELECTRONIC_DEVICE_DETECTED.value
-        assert events[-1].severity == Severity.WARNING.value
+        assert events[-1].severity == Severity.CRITICAL.value

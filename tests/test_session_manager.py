@@ -405,7 +405,7 @@ def test_initial_identification_uses_average_liveness_score(scores, shadow_mode,
     manager.stop_session(reason="test")
 
 
-def test_electronic_device_transition_warns_without_blocking_session():
+def test_electronic_device_transition_is_silent_without_blocking_session():
     manager, _recognizer, engine, *_rest = _make_manager(
         identify_results=[],
         engine_states=[],
@@ -438,7 +438,8 @@ def test_electronic_device_transition_warns_without_blocking_session():
 
     assert engine.electronic_device_events == [(True, transition.details())]
     assert engine.external_blocks == []
-    assert overlay.electronic_warning_shown == 1
+    assert overlay.electronic_warning_shown == 0
+    assert overlay.electronic_warning_hidden == 0
     assert manager._runtime.notes["electronic_device_active_cameras"] == ["principal"]
 
 

@@ -290,6 +290,33 @@ async def test_station_partial_offers_exit_when_station_reports_waiting_student(
 
 
 @pytest.mark.asyncio
+async def test_station_partial_highlights_critical_electronic_device_event(
+    tmp_path, dashboard_database_url
+):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.SESSION,
+            last_event=SessionEventPayload(
+                timestamp=datetime.now(timezone.utc),
+                event_type="ELECTRONIC_DEVICE_DETECTED",
+                severity=EventSeverity.CRITICAL,
+            ),
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/partials/stations")
+
+    assert response.status_code == 200
+    assert "event-line-critical" in response.text
+    assert "ELECTRONIC_DEVICE_DETECTED" in response.text
+    assert "CRÍTICO" in response.text
+
+
+@pytest.mark.asyncio
 async def test_dashboard_queues_update_and_reboot_only_when_station_is_idle(tmp_path, dashboard_database_url):
     app = _make_app(tmp_path, dashboard_database_url)
     app.state.store.upsert_station_heartbeat(

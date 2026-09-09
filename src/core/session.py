@@ -1052,8 +1052,6 @@ class SessionManager:
                 self._kiosk.unblock()
             if self._overlay is not None:
                 self._overlay.hide_blocked()
-                if self._electronic_device_active_cameras:
-                    self._overlay.show_electronic_device_warning()
             if self._runtime is not None:
                 self._runtime.block_reason = None
             self._block_handled = False
@@ -1114,12 +1112,6 @@ class SessionManager:
                 self._runtime.notes["electronic_device_active_cameras"] = sorted(
                     self._electronic_device_active_cameras
                 )
-            if self._overlay is None:
-                continue
-            if self._electronic_device_active_cameras:
-                self._overlay.show_electronic_device_warning()
-            else:
-                self._overlay.hide_electronic_device_warning()
 
     def _verify_session_identity(self, frame: Any) -> None:
         """Compara periodicamente o rosto presente com o aluno autenticado."""
@@ -1171,7 +1163,6 @@ class SessionManager:
             if self._kiosk is not None:
                 self._kiosk.block()
             if self._overlay is not None:
-                self._overlay.hide_electronic_device_warning()
                 self._overlay.show_blocked(
                     reason,
                     student_id=self._runtime.student_id if self._runtime is not None else None,
@@ -1195,8 +1186,6 @@ class SessionManager:
                     self._kiosk.unblock()
                 if self._overlay is not None:
                     self._overlay.hide_blocked()
-                    if self._electronic_device_active_cameras:
-                        self._overlay.show_electronic_device_warning()
                 if self._runtime is not None:
                     self._runtime.block_reason = None
                 self._block_handled = False
@@ -1845,7 +1834,6 @@ class SessionManager:
                     }
                 )
             if self._overlay is not None:
-                self._overlay.hide_electronic_device_warning()
                 self._overlay.show_blocked(
                     "BROWSER_EXIT",
                     student_id=self._runtime.student_id if self._runtime is not None else None,
