@@ -243,11 +243,10 @@ class SessionCamera:
     # ── interno ───────────────────────────────────────────────
 
     def _open(self, source: int | str) -> Any:
-        if isinstance(source, int):
-            self._apply_device_controls(source)
         cap = self._factory(source)
         if isinstance(source, int):
             self._tune_device(cap)
+            self._apply_device_controls(source)
         if not _is_opened(cap):
             raise CameraError(f"Não foi possível abrir a câmera {source}")
         return cap
