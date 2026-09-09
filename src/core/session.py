@@ -34,7 +34,12 @@ from botocore.exceptions import BotoCoreError, ClientError
 from src.core.camera import CameraError, SessionCamera
 from src.core.camera_devices import discover_video_devices
 from src.core.config import AppConfig, FaceConfig, ProctorConfig, RecorderConfig, S3Config
-from src.core.cpu_affinity import auto_split_cpu_sets, get_process_cpu_set, parse_cpu_set, set_process_cpu_set
+from src.core.cpu_affinity import (
+    auto_split_cpu_sets,
+    get_process_cpu_set,
+    parse_cpu_set,
+    set_process_cpu_set,
+)
 from src.core.dashboard_payload import (
     build_session_payload,
     build_station_snapshot,
@@ -51,11 +56,12 @@ from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.reidentify import run_reidentify
-from src.proctor.engine import BlockReason, ProctorEngine, ProctorState
 from src.proctor.electronic_devices import (
     ElectronicDeviceMonitor,
     YoloXElectronicDeviceDetector,
+    _box_iou,
 )
+from src.proctor.engine import BlockReason, ProctorEngine, ProctorState
 from src.recorder.capture import Capture
 from src.recorder.uploader import Uploader
 
@@ -657,7 +663,7 @@ class SessionManager:
         ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
         return encoded.tobytes() if ok else None
 
-    def capture_camera_snapshots(self) -> tuple[list[dict[str, Any]], list[str]]:
+    def capture_camera_snapshots(self, *, sample_count: int = 1) -> tuple[list[dict[str, Any]], list[str]]:
         """Fotografa todas as câmeras enquanto a estação está em manutenção."""
         with self._lock:
             if self._state != SessionState.IDLE:
@@ -669,33 +675,34 @@ class SessionManager:
             if not devices:
                 return [], ["Nenhuma câmera detectada"]
             for device in devices:
-                try:
-                    command = ["ffmpeg", "-loglevel", "error", "-f", "v4l2"]
-                    input_format = self._rec_cfg.webcam_input_format.strip()
-                    if input_format:
-                        command.extend(["-input_format", input_format])
-                    command.extend([
-                        "-video_size", f"{self._face_cfg.camera_width}x{self._face_cfg.camera_height}",
-                        "-i", device["device"],
-                        "-frames:v", "1",
-                        "-vf", "scale='min(640,iw)':-2",
-                        "-q:v", "4",
-                        "-f", "image2pipe",
-                        "-vcodec", "mjpeg",
-                        "pipe:1",
-                    ])
-                    result = subprocess.run(
-                        command,
-                        capture_output=True,
-                        timeout=10,
-                        check=False,
-                    )
-                    if result.returncode != 0 or not result.stdout.startswith(b"\xff\xd8"):
-                        detail = result.stderr.decode("utf-8", errors="replace").strip()
-                        raise CameraError(detail or "a câmera não forneceu imagem")
-                    snapshots.append({**device, "jpeg": result.stdout})
-                except (CameraError, OSError, subprocess.TimeoutExpired) as exc:
-                    errors.append(f"{device['name']} ({device['device']}): {exc}")
+                for _sample in range(max(1, sample_count)):
+                    try:
+                        command = ["ffmpeg", "-loglevel", "error", "-f", "v4l2"]
+                        input_format = self._rec_cfg.webcam_input_format.strip()
+                        if input_format:
+                            command.extend(["-input_format", input_format])
+                        command.extend([
+                            "-video_size", f"{self._face_cfg.camera_width}x{self._face_cfg.camera_height}",
+                            "-i", device["device"],
+                            "-frames:v", "1",
+                            "-vf", "scale='min(640,iw)':-2",
+                            "-q:v", "4",
+                            "-f", "image2pipe",
+                            "-vcodec", "mjpeg",
+                            "pipe:1",
+                        ])
+                        result = subprocess.run(
+                            command,
+                            capture_output=True,
+                            timeout=10,
+                            check=False,
+                        )
+                        if result.returncode != 0 or not result.stdout.startswith(b"\xff\xd8"):
+                            detail = result.stderr.decode("utf-8", errors="replace").strip()
+                            raise CameraError(detail or "a câmera não forneceu imagem")
+                        snapshots.append({**device, "jpeg": result.stdout})
+                    except (CameraError, OSError, subprocess.TimeoutExpired) as exc:
+                        errors.append(f"{device['name']} ({device['device']}): {exc}")
             return snapshots, errors
 
     def calibrate_electronic_devices(self, snapshots: list[dict[str, Any]]) -> int:
@@ -705,8 +712,10 @@ class SessionManager:
                 raise SessionError("Estação com avaliação ativa")
             detector = YoloXElectronicDeviceDetector(
                 self._face_cfg.electronic_device_model_path,
+                confidence_threshold=0.30,
             )
             cameras: dict[str, dict[str, Any]] = {}
+            candidates: dict[str, list[dict[str, Any]]] = {}
             total = 0
             for snapshot in snapshots:
                 frame = cv2.imdecode(
@@ -716,7 +725,9 @@ class SessionManager:
                 if frame is None:
                     continue
                 height, width = frame.shape[:2]
-                regions = []
+                camera_key = str(snapshot["index"])
+                camera_candidates = candidates.setdefault(camera_key, [])
+                matched_candidates: set[int] = set()
                 for detection in detector.detect(frame):
                     # Celulares nunca podem ser autorizados por calibração.
                     if detection.label != "notebook":
@@ -728,22 +739,49 @@ class SessionManager:
                     bottom = min(height, y + box_height)
                     if right <= left or bottom <= top:
                         continue
-                    regions.append(
-                        {
-                            "label": detection.label,
-                            "box": [
-                                left / width,
-                                top / height,
-                                (right - left) / width,
-                                (bottom - top) / height,
-                            ],
-                        }
+                    normalized_box = (
+                        left / width,
+                        top / height,
+                        (right - left) / width,
+                        (bottom - top) / height,
                     )
-                cameras[str(snapshot["index"])] = {
+                    match = next(
+                        (
+                            index
+                            for index, candidate in enumerate(camera_candidates)
+                            if index not in matched_candidates
+                            and _box_iou(normalized_box, candidate["box"]) >= 0.35
+                        ),
+                        None,
+                    )
+                    if match is None:
+                        camera_candidates.append({"box": normalized_box, "samples": 1})
+                        matched_candidates.add(len(camera_candidates) - 1)
+                    else:
+                        candidate = camera_candidates[match]
+                        samples = candidate["samples"]
+                        candidate["box"] = tuple(
+                            (old * samples + new) / (samples + 1)
+                            for old, new in zip(candidate["box"], normalized_box, strict=True)
+                        )
+                        candidate["samples"] = samples + 1
+                        matched_candidates.add(match)
+                cameras[camera_key] = {
                     "name": snapshot.get("name", ""),
                     "hardware_id": snapshot.get("hardware_id", ""),
-                    "regions": regions,
+                    "regions": [],
                 }
+
+            for camera_key, camera_candidates in candidates.items():
+                regions = [
+                    {
+                        "label": "notebook",
+                        "box": [round(value, 6) for value in candidate["box"]],
+                    }
+                    for candidate in camera_candidates
+                    if candidate["samples"] >= 2
+                ]
+                cameras[camera_key]["regions"] = regions
                 total += len(regions)
 
             payload = {

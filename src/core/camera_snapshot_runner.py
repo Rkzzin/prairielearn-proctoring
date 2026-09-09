@@ -65,14 +65,19 @@ class CameraSnapshotRunner:
         status = "error"
         message = "Falha inesperada na captura"
         try:
-            snapshots, errors = self._session_manager.capture_camera_snapshots()
+            snapshots, errors = self._session_manager.capture_camera_snapshots(
+                sample_count=3 if calibrate_electronics else 1
+            )
             calibrated_count = (
                 self._session_manager.calibrate_electronic_devices(snapshots)
                 if calibrate_electronics and snapshots
                 else 0
             )
             with self._client_factory() as client:
-                for snapshot in snapshots:
+                snapshots_to_upload = {
+                    snapshot["index"]: snapshot for snapshot in snapshots
+                }.values()
+                for snapshot in snapshots_to_upload:
                     upload_error: Exception | None = None
                     for _attempt in range(2):
                         try:
@@ -93,7 +98,8 @@ class CameraSnapshotRunner:
                     if upload_error is not None:
                         errors.append(f"{snapshot['name']}: falha no envio")
             status = "done" if not errors else ("partial" if snapshots else "error")
-            message = f"{len(snapshots)} câmera(s) fotografada(s)"
+            camera_count = len({snapshot["index"] for snapshot in snapshots})
+            message = f"{camera_count} câmera(s) fotografada(s)"
             if calibrate_electronics:
                 message += f"; {calibrated_count} notebook(s) autorizado(s)"
             if errors:

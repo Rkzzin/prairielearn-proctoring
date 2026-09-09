@@ -463,15 +463,24 @@ def test_electronic_device_monitor_is_not_started_during_authentication():
 
 def test_electronic_device_calibration_persists_normalized_regions(tmp_path, monkeypatch):
     class Detector:
+        calls = 0
+
         def detect(self, _frame):
-            return [
-                ElectronicDeviceDetection("notebook", 0.91, (20, 10, 40, 30)),
-                ElectronicDeviceDetection("celular", 0.95, (100, 10, 20, 30)),
-            ]
+            self.calls += 1
+            detections = [ElectronicDeviceDetection("celular", 0.95, (100, 10, 20, 30))]
+            if self.calls != 2:
+                detections.append(ElectronicDeviceDetection("notebook", 0.91, (20, 10, 40, 30)))
+            return detections
+
+    detector_options = {}
+
+    def detector_factory(_path, **kwargs):
+        detector_options.update(kwargs)
+        return Detector()
 
     monkeypatch.setattr(
         "src.core.session.YoloXElectronicDeviceDetector",
-        lambda _path, **_kwargs: Detector(),
+        detector_factory,
     )
     manager = SessionManager(
         app_config=AppConfig(
@@ -491,11 +500,13 @@ def test_electronic_device_calibration_persists_normalized_regions(tmp_path, mon
                 "hardware_id": "/sys/devices/c922",
                 "jpeg": jpeg.tobytes(),
             }
+            for _sample in range(3)
         ]
     )
 
     baseline = manager._load_electronic_device_baseline()
     assert count == 1
+    assert detector_options == {"confidence_threshold": 0.30}
     assert baseline["cameras"]["2"] == {
         "name": "C922",
         "hardware_id": "/sys/devices/c922",

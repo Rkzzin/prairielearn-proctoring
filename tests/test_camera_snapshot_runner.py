@@ -12,8 +12,10 @@ from src.core.config import DashboardConfig
 class SnapshotManager:
     def __init__(self):
         self.calibrated = []
+        self.sample_counts = []
 
-    def capture_camera_snapshots(self):
+    def capture_camera_snapshots(self, *, sample_count=1):
+        self.sample_counts.append(sample_count)
         return (
             [
                 {
@@ -22,6 +24,7 @@ class SnapshotManager:
                     "device": "/dev/video2",
                     "jpeg": b"\xff\xd8photo",
                 }
+                for _sample in range(sample_count)
             ],
             [],
         )
@@ -72,7 +75,7 @@ def test_camera_snapshot_runner_runs_replacement_batch_after_current_batch():
             self.first_started = threading.Event()
             self.release_first = threading.Event()
 
-        def capture_camera_snapshots(self):
+        def capture_camera_snapshots(self, *, sample_count=1):
             self.calls.append(len(self.calls) + 1)
             if len(self.calls) == 1:
                 self.first_started.set()
@@ -115,5 +118,6 @@ def test_camera_snapshot_runner_calibrates_from_same_captured_images():
         time.sleep(0.01)
 
     status = runner.status_dict()
-    assert len(manager.calibrated) == 1
+    assert manager.sample_counts == [3]
+    assert len(manager.calibrated) == 3
     assert "2 notebook(s) autorizado(s)" in status["camera_capture_message"]
