@@ -705,7 +705,6 @@ class SessionManager:
                 raise SessionError("Estação com avaliação ativa")
             detector = YoloXElectronicDeviceDetector(
                 self._face_cfg.electronic_device_model_path,
-                confidence_threshold=0.60,
             )
             cameras: dict[str, dict[str, Any]] = {}
             total = 0
