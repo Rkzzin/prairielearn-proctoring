@@ -69,6 +69,19 @@ class FaceConfig(BaseSettings):
     camera_width: int = Field(default=1280)
     camera_height: int = Field(default=720)
     camera_fps: int = Field(default=30)
+    camera_auto_exposure: bool = Field(
+        default=True,
+        description="Manter exposição automática da câmera principal.",
+    )
+    camera_auto_white_balance: bool = Field(
+        default=True,
+        description="Manter balanço de branco automático da câmera principal.",
+    )
+    camera_backlight_compensation: int = Field(
+        default=0,
+        ge=0,
+        description="Compensação de contraluz; zero evita realces estourados na câmera integrada.",
+    )
 
     # Performance
     detection_scale: float = Field(

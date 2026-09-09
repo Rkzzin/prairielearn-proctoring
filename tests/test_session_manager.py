@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import cv2
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -42,11 +43,13 @@ class FakeCamera:
     def __init__(self, frames):
         self.frames = deque(frames)
         self.released = False
+        self.set_calls = []
 
     def isOpened(self):
         return True
 
-    def set(self, *_args, **_kwargs):
+    def set(self, *args, **_kwargs):
+        self.set_calls.append((args, _kwargs))
         return True
 
     def read(self):
@@ -453,6 +456,25 @@ def test_camera_handoff_prevents_probe_from_reopening_physical_device():
     assert camera.source == CameraSource.EXTERNAL
     assert camera.probe() is True
     assert opened_sources == [0]
+
+
+def test_camera_applies_automatic_exposure_without_backlight_compensation():
+    device = RepeatingCamera("frame")
+    camera = SessionCamera(
+        face_config=FaceConfig(
+            camera_auto_exposure=True,
+            camera_auto_white_balance=True,
+            camera_backlight_compensation=0,
+        ),
+        capture_factory=lambda _source: device,
+    )
+
+    camera.open_device()
+
+    configured = {args[0]: args[1] for args, _kwargs in device.set_calls}
+    assert configured[cv2.CAP_PROP_AUTO_EXPOSURE] == 0.75
+    assert configured[cv2.CAP_PROP_AUTO_WB] == 1
+    assert configured[cv2.CAP_PROP_BACKLIGHT] == 0
 
 
 def test_camera_moves_from_external_owner_to_preview_without_device_probe():

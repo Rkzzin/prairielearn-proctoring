@@ -258,6 +258,9 @@ class SessionCamera:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.camera_height)
         cap.set(cv2.CAP_PROP_FPS, self._cfg.camera_fps)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75 if self._cfg.camera_auto_exposure else 0.25)
+        cap.set(cv2.CAP_PROP_AUTO_WB, 1 if self._cfg.camera_auto_white_balance else 0)
+        cap.set(cv2.CAP_PROP_BACKLIGHT, self._cfg.camera_backlight_compensation)
 
 
 def _is_opened(cap: Any) -> bool:
