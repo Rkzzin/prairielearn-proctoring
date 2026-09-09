@@ -43,6 +43,7 @@ from src.core.dashboard_payload import (
 from src.core.models import IdentifyStatus
 from src.core.states import SessionState, StationMode, derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
+from src.face.liveness import PassiveLivenessDetector
 from src.face.recognizer import FaceRecognizer
 from src.kiosk.allowlist import build_allowlist_config, write_extension_config
 from src.kiosk.chromium import ChromiumKiosk
@@ -89,6 +90,9 @@ DASHBOARD_CONFIG_FIELD_MAP = {
     "s3_prefix": "s3_prefix",
     "primary_camera_index": "primary_camera_index",
     "secondary_camera_index": "secondary_camera_index",
+    "liveness_enabled": "liveness_enabled",
+    "liveness_average_threshold": "liveness_average_threshold",
+    "liveness_shadow_mode": "liveness_shadow_mode",
 }
 
 #: Campos do payload que ajustam thresholds do proctoring em memória, não o
@@ -105,6 +109,7 @@ DASHBOARD_PROCTOR_FIELD_CASTS = {
 DASHBOARD_ROUTING_FIELDS = frozenset({"target_station_ids"})
 PRE_EXAM_CONFIRMATION_TIMEOUT_SEC = 20.0
 SESSION_IDENTITY_CHECK_INTERVAL_SEC = 10.0
+LIVENESS_REQUIRED_SAMPLES = 3
 
 
 @dataclass
@@ -125,6 +130,9 @@ class SessionConfig:
     no_kiosk: bool = False
     reidentify_timeout_sec: float = 20.0
     reidentify_matches: int = 3
+    liveness_enabled: bool = False
+    liveness_average_threshold: float = 0.80
+    liveness_shadow_mode: bool = True
     primary_camera_index: int | None = None
     secondary_camera_index: int | None = None
 
@@ -182,6 +190,7 @@ class SessionManager:
         recorder_config: RecorderConfig | None = None,
         s3_config: S3Config | None = None,
         recognizer_factory: Callable[..., Any] | None = None,
+        liveness_factory: Callable[..., Any] | None = None,
         engine_factory: Callable[..., Any] | None = None,
         capture_factory: Callable[..., Any] | None = None,
         uploader_factory: Callable[..., Any] | None = None,
@@ -202,6 +211,9 @@ class SessionManager:
         self._s3_cfg = s3_config or self._app_cfg.s3
 
         self._recognizer_factory = recognizer_factory or (lambda: FaceRecognizer(self._face_cfg))
+        self._liveness_factory = liveness_factory or (
+            lambda: PassiveLivenessDetector(self._face_cfg.liveness_model_path)
+        )
         self._engine_factory = engine_factory or self._default_engine_factory
         self._capture_factory = capture_factory or self._default_capture_factory
         self._uploader_factory = uploader_factory or self._default_uploader_factory
@@ -253,6 +265,8 @@ class SessionManager:
         self._last_identity_check_at = 0.0
 
         self._recognizer = None
+        self._liveness = None
+        self._last_liveness_result: dict[str, Any] | None = None
         self._engine = None
         self._capture = None
         self._uploader = None
@@ -321,6 +335,7 @@ class SessionManager:
                 current[key] = None
             next_config = SessionConfig(**current)
             self._validate_camera_config(next_config)
+            self._validate_liveness_config(next_config)
             self._next_config = next_config
             self._persist_config()
             return self.next_config
@@ -333,12 +348,14 @@ class SessionManager:
             if not isinstance(payload, dict):
                 raise ValueError("configuração persistida não é um objeto JSON")
             self._next_config = SessionConfig(**payload)
+            self._validate_camera_config(self._next_config)
+            self._validate_liveness_config(self._next_config)
             logger.info(
                 "Configuração restaurada: %s / %s",
                 self._next_config.turma_id,
                 self._next_config.assessment,
             )
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        except (OSError, TypeError, ValueError, json.JSONDecodeError, SessionError) as exc:
             logger.warning("Configuração persistida inválida em %s: %s", self._config_store_path, exc)
 
     def _persist_config(self) -> None:
@@ -684,9 +701,25 @@ class SessionManager:
                 self._set_state(SessionState.IDENTIFYING)
                 self._recognizer = self._recognizer_factory()
                 self._recognizer.load_turma(cfg.turma_id)
+                self._liveness = None
+                self._last_liveness_result = None
+                if cfg.liveness_enabled:
+                    try:
+                        self._liveness = self._liveness_factory()
+                    except Exception:
+                        if not cfg.liveness_shadow_mode:
+                            raise
+                        logger.exception(
+                            "Prova de vida indisponível; continuando por estar em modo sombra"
+                        )
                 self._ensure_identification_camera_open()
 
-                identified_id, identified_name = self._identify_student(student_id, student_name)
+                identified_id, identified_name = self._identify_student(
+                    student_id,
+                    student_name,
+                    liveness_threshold=cfg.liveness_average_threshold,
+                    liveness_shadow_mode=cfg.liveness_shadow_mode,
+                )
                 if self._is_repeated_autostart_student(
                     turma_id=cfg.turma_id,
                     assessment=cfg.assessment,
@@ -732,6 +765,7 @@ class SessionManager:
                     notes={
                         "exam_mode_active": self._mode == StationMode.WAITING_STUDENT,
                         "no_kiosk": cfg.no_kiosk,
+                        "liveness": self._last_liveness_result,
                     },
                 )
 
@@ -993,18 +1027,59 @@ class SessionManager:
         self,
         student_id: str | None,
         student_name: str | None,
+        *,
+        liveness_threshold: float,
+        liveness_shadow_mode: bool,
     ) -> tuple[str, str]:
         if student_id and student_name:
             return student_id, student_name
 
         max_attempts = self._face_cfg.max_identification_attempts
-        for _ in range(max_attempts):
+        liveness_scores: list[float] = []
+        matched_result = None
+        attempts = max_attempts if self._liveness is None else max_attempts * 2
+        for _ in range(attempts):
             ret, frame = self._read_camera_frame()
             if not ret or frame is None:
                 continue
             result = self._recognizer.identify(frame)
             if result.is_match:
-                return result.student_id, result.student_name
+                if self._liveness is None:
+                    return result.student_id, result.student_name
+                if result.face_location is None:
+                    continue
+                if matched_result is not None and result.student_id != matched_result.student_id:
+                    matched_result = None
+                    liveness_scores.clear()
+                matched_result = result
+                liveness_scores.append(self._liveness.score(frame, result.face_location))
+                if len(liveness_scores) >= LIVENESS_REQUIRED_SAMPLES:
+                    break
+
+        if matched_result is not None and liveness_scores:
+            average = sum(liveness_scores) / len(liveness_scores)
+            passed = average >= liveness_threshold
+            self._last_liveness_result = {
+                "average_score": round(average, 4),
+                "threshold": liveness_threshold,
+                "samples": len(liveness_scores),
+                "passed": passed,
+                "shadow_mode": liveness_shadow_mode,
+            }
+            logger.info(
+                "Prova de vida: média=%.4f limite=%.4f amostras=%d resultado=%s sombra=%s",
+                average,
+                liveness_threshold,
+                len(liveness_scores),
+                "aprovado" if passed else "reprovado",
+                liveness_shadow_mode,
+            )
+            if passed or liveness_shadow_mode:
+                return matched_result.student_id, matched_result.student_name
+            raise SessionError(
+                f"Prova de vida não confirmada (score médio {average:.2f}, "
+                f"mínimo {liveness_threshold:.2f})"
+            )
 
         raise SessionError(
             f"Aluno não identificado após {max_attempts} tentativas"
@@ -1231,6 +1306,11 @@ class SessionManager:
         if config.secondary_camera_index == primary_index:
             raise SessionError("As câmeras principal e secundária devem ser diferentes")
         return primary_index
+
+    @staticmethod
+    def _validate_liveness_config(config: SessionConfig) -> None:
+        if not 0.0 <= config.liveness_average_threshold <= 1.0:
+            raise SessionError("O score médio mínimo de prova de vida deve estar entre 0 e 1")
 
     def _default_uploader_factory(self, session_id: str):
         return Uploader(
@@ -1513,8 +1593,9 @@ class SessionManager:
                 logger.warning("Falha ao encerrar componente %s: %s", type(component).__name__, exc)
         for name in self._SESSION_SCOPED_COMPONENTS:
             setattr(self, name, None)
-        # O recognizer não tem stop(); basta soltar a referência.
+        # Reconhecimento e prova de vida não têm stop(); basta soltar as referências.
         self._recognizer = None
+        self._liveness = None
 
         if not policy.keep_lockdown:
             self._disable_exam_lockdown()

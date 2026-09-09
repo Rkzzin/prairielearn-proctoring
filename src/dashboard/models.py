@@ -116,6 +116,9 @@ class ExamConfigPayload(BaseModel):
     gaze_duration_sec: float = 3.0
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True
+    liveness_enabled: bool = False
+    liveness_average_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    liveness_shadow_mode: bool = True
     s3_prefix: str = ""
     primary_camera_index: int | None = Field(default=None, ge=0)
     secondary_camera_index: int | None = Field(default=None, ge=0)

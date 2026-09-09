@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Download dlib pre-trained model files.
+# Download dlib and passive-liveness pre-trained model files.
 # These are the same models that face_recognition_models shipped,
 # but fetched directly from dlib's official source.
 #
@@ -36,6 +36,20 @@ for archive in "${MODELS[@]}"; do
     bunzip2 -f "$TARGET/$archive"
     echo "  ✓ $dat"
 done
+
+LIVENESS_MODEL="minifasnet_v2.onnx"
+LIVENESS_URL="https://huggingface.co/garciafido/minifasnet-v2-anti-spoofing-onnx/resolve/d29c87568ca9b5662da803b10f217c4db20b142b/$LIVENESS_MODEL"
+LIVENESS_SHA256="d7b3cd9ba8a7ceb13baa8c4720902e27ca3112eff52f926c08804af6b6eecc7b"
+
+if [ -f "$TARGET/$LIVENESS_MODEL" ] && printf '%s  %s\n' "$LIVENESS_SHA256" "$TARGET/$LIVENESS_MODEL" | sha256sum --check --status; then
+    echo "  ✓ $LIVENESS_MODEL (already exists)"
+else
+    echo "  ↓ $LIVENESS_MODEL ..."
+    curl -fSL "$LIVENESS_URL" -o "$TARGET/$LIVENESS_MODEL.tmp"
+    printf '%s  %s\n' "$LIVENESS_SHA256" "$TARGET/$LIVENESS_MODEL.tmp" | sha256sum --check --status
+    mv "$TARGET/$LIVENESS_MODEL.tmp" "$TARGET/$LIVENESS_MODEL"
+    echo "  ✓ $LIVENESS_MODEL"
+fi
 
 echo ""
 echo "All models ready in $TARGET/"

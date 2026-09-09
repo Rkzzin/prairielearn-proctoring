@@ -23,6 +23,9 @@ class ConfigUpdateRequest(BaseModel):
     no_kiosk: bool | None = None
     reidentify_timeout_sec: float | None = Field(default=None, ge=1.0)
     reidentify_matches: int | None = Field(default=None, ge=1)
+    liveness_enabled: bool | None = None
+    liveness_average_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
+    liveness_shadow_mode: bool | None = None
     primary_camera_index: int | None = Field(default=None, ge=0)
     secondary_camera_index: int | None = Field(default=None, ge=0)
 

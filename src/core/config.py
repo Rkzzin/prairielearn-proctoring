@@ -82,6 +82,7 @@ class FaceConfig(BaseSettings):
         ge=0,
         description="Compensação de contraluz; zero evita realces estourados na câmera integrada.",
     )
+    liveness_model_filename: str = "minifasnet_v2.onnx"
 
     # Performance
     detection_scale: float = Field(
@@ -104,6 +105,10 @@ class FaceConfig(BaseSettings):
     @property
     def cnn_detector_path(self) -> Path:
         return self.models_dir / "mmod_human_face_detector.dat"
+
+    @property
+    def liveness_model_path(self) -> Path:
+        return self.models_dir / self.liveness_model_filename
 
     def validate_models(self) -> list[str]:
         """Retorna lista de modelos dlib faltantes."""

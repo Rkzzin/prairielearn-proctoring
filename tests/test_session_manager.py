@@ -258,6 +258,7 @@ def _make_manager(
     frames,
     reidentify_fn=None,
     video_capture_factory=None,
+    liveness_factory=None,
     confirmation_fn=lambda _student_id, _student_name, _timeout_sec: True,
 ):
     fake_recognizer = FakeRecognizer(identify_results)
@@ -291,6 +292,7 @@ def _make_manager(
         overlay_factory=lambda: fake_overlay,
         lockdown_factory=lambda: fake_lockdown,
         video_capture_factory=video_capture_factory or (lambda _index: fake_camera),
+        liveness_factory=liveness_factory,
         reidentify_fn=reidentify_fn or (lambda **_kwargs: True),
         confirmation_fn=confirmation_fn,
         s3_probe=lambda: True,
@@ -335,6 +337,53 @@ def test_session_manager_start_and_stop_manual_session():
     assert overlay.stopped is True
     assert lockdown.disabled is True
     assert camera.released is True
+
+
+@pytest.mark.parametrize(
+    ("scores", "shadow_mode", "starts"),
+    [
+        ([0.91, 0.87, 0.89], False, True),
+        ([0.20, 0.10, 0.30], True, True),
+        ([0.20, 0.10, 0.30], False, False),
+    ],
+)
+def test_initial_identification_uses_average_liveness_score(scores, shadow_mode, starts):
+    results = [
+        IdentifyResult(
+            status=IdentifyStatus.MATCH,
+            student_id="123",
+            student_name="Alice",
+            confidence=0.9,
+            face_location=(10, 110, 110, 10),
+        )
+        for _ in scores
+    ]
+    detector = SimpleNamespace(score=lambda _frame, _location: scores.pop(0))
+    manager, *_ = _make_manager(
+        identify_results=results,
+        engine_states=[ProctorState.NORMAL],
+        frames=["frame-1", "frame-2", "frame-3", "loop-frame"],
+        liveness_factory=lambda: detector,
+    )
+    manager.update_config(
+        turma_id="ES2025-T1",
+        liveness_enabled=True,
+        liveness_average_threshold=0.80,
+        liveness_shadow_mode=shadow_mode,
+    )
+
+    if not starts:
+        with pytest.raises(SessionError, match="score médio 0.20"):
+            manager.start_session()
+        return
+
+    manager.start_session()
+    liveness = manager.get_session()["notes"]["liveness"]
+    assert liveness["average_score"] == pytest.approx(0.89 if not shadow_mode else 0.20)
+    assert liveness["samples"] == 3
+    assert liveness["passed"] is (not shadow_mode)
+    assert liveness["shadow_mode"] is shadow_mode
+    manager.stop_session(reason="test")
 
 
 def test_session_manager_switches_from_device_camera_to_capture_preview():
@@ -1468,6 +1517,9 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
             "gaze_duration_sec": 4.0,
             "absence_timeout_sec": 6.0,
             "multi_face_block": False,
+            "liveness_enabled": True,
+            "liveness_average_threshold": 0.82,
+            "liveness_shadow_mode": True,
             "primary_camera_index": 2,
             "secondary_camera_index": 4,
         }
@@ -1483,6 +1535,9 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert config.allowlist == ["example.edu"]
     assert config.auto_start is True
     assert config.s3_prefix == "ES2025-T1/quiz-03"
+    assert config.liveness_enabled is True
+    assert config.liveness_average_threshold == 0.82
+    assert config.liveness_shadow_mode is True
 
     assert manager._proctor_cfg.gaze_h_threshold == 0.4
     assert manager._proctor_cfg.gaze_v_threshold == 0.45
