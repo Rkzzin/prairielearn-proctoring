@@ -17,6 +17,7 @@ A fábrica de captura é injetável, o que é o que permite testar sem hardware.
 from __future__ import annotations
 
 import logging
+import subprocess
 import threading
 import time
 from enum import Enum
@@ -104,10 +105,14 @@ class SessionCamera:
         *,
         face_config: Any,
         capture_factory: Callable[[Any], Any] | None = None,
+        control_runner: Callable[..., Any] | None = None,
         sleep_fn: Callable[[float], None] | None = None,
     ):
         self._cfg = face_config
         self._factory = capture_factory or open_video_capture
+        self._control_runner = control_runner or (
+            subprocess.run if capture_factory is None else None
+        )
         self._sleep = sleep_fn or time.sleep
         self._handle: Any | None = None
         self._lock = threading.RLock()
@@ -238,6 +243,8 @@ class SessionCamera:
     # ── interno ───────────────────────────────────────────────
 
     def _open(self, source: int | str) -> Any:
+        if isinstance(source, int):
+            self._apply_device_controls(source)
         cap = self._factory(source)
         if isinstance(source, int):
             self._tune_device(cap)
@@ -258,9 +265,40 @@ class SessionCamera:
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self._cfg.camera_height)
         cap.set(cv2.CAP_PROP_FPS, self._cfg.camera_fps)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75 if self._cfg.camera_auto_exposure else 0.25)
-        cap.set(cv2.CAP_PROP_AUTO_WB, 1 if self._cfg.camera_auto_white_balance else 0)
-        cap.set(cv2.CAP_PROP_BACKLIGHT, self._cfg.camera_backlight_compensation)
+
+    def _apply_device_controls(self, index: int) -> None:
+        """Configura controles UVC sem depender da tradução do OpenCV."""
+        if self._control_runner is None:
+            return
+        controls = {
+            "auto_exposure": 3 if self._cfg.camera_auto_exposure else 1,
+            "white_balance_automatic": 1 if self._cfg.camera_auto_white_balance else 0,
+            "backlight_compensation": self._cfg.camera_backlight_compensation,
+            "exposure_dynamic_framerate": 0,
+        }
+        for name, value in controls.items():
+            try:
+                result = self._control_runner(
+                    [
+                        "v4l2-ctl",
+                        "-d",
+                        f"/dev/video{index}",
+                        f"--set-ctrl={name}={value}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=3,
+                    check=False,
+                )
+                if getattr(result, "returncode", 0) != 0:
+                    logger.warning(
+                        "Falha ao configurar %s na câmera %s: %s",
+                        name,
+                        index,
+                        getattr(result, "stderr", "").strip(),
+                    )
+            except (OSError, subprocess.SubprocessError) as exc:
+                logger.warning("Falha ao configurar %s na câmera %s: %s", name, index, exc)
 
 
 def _is_opened(cap: Any) -> bool:

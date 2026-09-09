@@ -460,6 +460,12 @@ def test_camera_handoff_prevents_probe_from_reopening_physical_device():
 
 def test_camera_applies_automatic_exposure_without_backlight_compensation():
     device = RepeatingCamera("frame")
+    commands = []
+
+    def control_runner(command, **kwargs):
+        commands.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stderr="")
+
     camera = SessionCamera(
         face_config=FaceConfig(
             camera_auto_exposure=True,
@@ -467,14 +473,21 @@ def test_camera_applies_automatic_exposure_without_backlight_compensation():
             camera_backlight_compensation=0,
         ),
         capture_factory=lambda _source: device,
+        control_runner=control_runner,
     )
 
     camera.open_device()
 
     configured = {args[0]: args[1] for args, _kwargs in device.set_calls}
-    assert configured[cv2.CAP_PROP_AUTO_EXPOSURE] == 0.75
-    assert configured[cv2.CAP_PROP_AUTO_WB] == 1
-    assert configured[cv2.CAP_PROP_BACKLIGHT] == 0
+    assert cv2.CAP_PROP_AUTO_EXPOSURE not in configured
+    assert [command[-1] for command, _kwargs in commands] == [
+        "--set-ctrl=auto_exposure=3",
+        "--set-ctrl=white_balance_automatic=1",
+        "--set-ctrl=backlight_compensation=0",
+        "--set-ctrl=exposure_dynamic_framerate=0",
+    ]
+    assert all(command[2] == "/dev/video0" for command, _kwargs in commands)
+    assert all(kwargs["timeout"] == 3 for _command, kwargs in commands)
 
 
 def test_camera_moves_from_external_owner_to_preview_without_device_probe():
