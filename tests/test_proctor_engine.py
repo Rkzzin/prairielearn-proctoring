@@ -492,3 +492,19 @@ class TestEngineLifecycle:
         timeout_event = next(event for event in events if event.type == EventType.BLOCK_TIMEOUT_CANCELLED.value)
         assert timeout_event.severity == Severity.CRITICAL.value
         assert timeout_event.details == {"reason": "ABSENCE", "timeout_sec": 20.0}
+
+    def test_electronic_device_event_does_not_block(self, tmp_path: Path):
+        engine = _make_engine(tmp_path)
+
+        engine.report_electronic_device(
+            active=True,
+            details={"camera": "principal", "detections": [{"label": "celular"}]},
+        )
+        engine._logger.close()
+
+        events = EventLogger.read_session(
+            tmp_path / "sessions" / "TEST-001" / "events.jsonl"
+        )
+        assert engine.state == ProctorState.NORMAL
+        assert events[-1].type == EventType.ELECTRONIC_DEVICE_DETECTED.value
+        assert events[-1].severity == Severity.WARNING.value

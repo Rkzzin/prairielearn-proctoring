@@ -219,6 +219,19 @@ class ProctorEngine:
             },
         )
 
+    def report_electronic_device(self, *, active: bool, details: dict | None = None) -> None:
+        """Registra eletrônicos sem alterar a FSM ou bloquear a avaliação."""
+        self._logger.log_event(
+            frame=self._frame_count,
+            event_type=(
+                EventType.ELECTRONIC_DEVICE_DETECTED
+                if active
+                else EventType.ELECTRONIC_DEVICE_CLEARED
+            ),
+            severity=Severity.WARNING if active else Severity.INFO,
+            details=details,
+        )
+
     # ──────────────────────────────────────────────
     #  FSM
     # ──────────────────────────────────────────────

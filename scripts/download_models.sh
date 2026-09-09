@@ -51,5 +51,19 @@ else
     echo "  ✓ $LIVENESS_MODEL"
 fi
 
+DEVICE_MODEL="object_detection_yolox.onnx"
+DEVICE_MODEL_URL="https://github.com/opencv/opencv_zoo/raw/47534e27c9851bb1128ccc0102f1145e27f23f98/models/object_detection_yolox/object_detection_yolox_2022nov.onnx"
+DEVICE_MODEL_SHA256="c5c2d13e59ae883e6af3b45daea64af4833a4951c92d116ec270d9ddbe998063"
+
+if [ -f "$TARGET/$DEVICE_MODEL" ] && printf '%s  %s\n' "$DEVICE_MODEL_SHA256" "$TARGET/$DEVICE_MODEL" | sha256sum --check --status; then
+    echo "  ✓ $DEVICE_MODEL (already exists)"
+else
+    echo "  ↓ $DEVICE_MODEL ..."
+    curl -fSL "$DEVICE_MODEL_URL" -o "$TARGET/$DEVICE_MODEL.tmp"
+    printf '%s  %s\n' "$DEVICE_MODEL_SHA256" "$TARGET/$DEVICE_MODEL.tmp" | sha256sum --check --status
+    mv "$TARGET/$DEVICE_MODEL.tmp" "$TARGET/$DEVICE_MODEL"
+    echo "  ✓ $DEVICE_MODEL"
+fi
+
 echo ""
 echo "All models ready in $TARGET/"

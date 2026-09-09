@@ -1105,9 +1105,92 @@ def _guard_mode(height: int) -> int:
     return 0
 
 
+def _electronic_warning_mode() -> int:
+    """Exibe borda e aviso sem cobrir ou pausar a avaliação."""
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.title("Equipamento eletrônico detectado")
+    root.overrideredirect(True)
+    root.attributes("-topmost", True)
+    root.configure(bg=DANGER)
+
+    panel = tk.Frame(root, bg=DANGER, padx=20, pady=14)
+    panel.pack()
+    icon = tk.Canvas(panel, width=52, height=52, bg=DANGER, highlightthickness=0)
+    icon.pack(side="left", padx=(0, 14))
+    icon.create_rectangle(14, 5, 38, 47, outline="#FFFFFF", width=4)
+    icon.create_line(7, 45, 45, 7, fill="#FFFFFF", width=6)
+    icon.create_oval(4, 4, 48, 48, outline="#FFFFFF", width=4)
+
+    copy = tk.Frame(panel, bg=DANGER)
+    copy.pack(side="left")
+    tk.Label(
+        copy,
+        text="EQUIPAMENTO ELETRÔNICO PROIBIDO",
+        fg="#FFFFFF",
+        bg=DANGER,
+        font=(FONT, 15, "bold"),
+    ).pack(anchor="w")
+    tk.Label(
+        copy,
+        text="Guarde o celular ou notebook para continuar a avaliação.",
+        fg="#FFFFFF",
+        bg=DANGER,
+        font=(FONT, 11),
+    ).pack(anchor="w", pady=(3, 0))
+
+    root.update_idletasks()
+    width = root.winfo_reqwidth()
+    height = root.winfo_reqheight()
+    screen_width = root.winfo_screenwidth()
+    screen_height = root.winfo_screenheight()
+    root.geometry(f"{width}x{height}+{max(0, (screen_width - width) // 2)}+16")
+
+    border_size = 8
+    borders = []
+    for geometry in (
+        f"{screen_width}x{border_size}+0+0",
+        f"{screen_width}x{border_size}+0+{screen_height - border_size}",
+        f"{border_size}x{screen_height}+0+0",
+        f"{border_size}x{screen_height}+{screen_width - border_size}+0",
+    ):
+        border = tk.Toplevel(root)
+        border.overrideredirect(True)
+        border.attributes("-topmost", True)
+        border.configure(bg=DANGER)
+        border.geometry(geometry)
+        borders.append(border)
+
+    def keep_above() -> None:
+        if not root.winfo_exists():
+            return
+        root.attributes("-topmost", True)
+        root.lift()
+        for border in borders:
+            border.attributes("-topmost", True)
+            border.lift()
+        root.after(250, keep_above)
+
+    root.after(0, keep_above)
+    root.mainloop()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Overlay da estação de prova")
-    parser.add_argument("--mode", choices=["controls", "blocked", "waiting", "confirmation", "guard"], required=True)
+    parser.add_argument(
+        "--mode",
+        choices=[
+            "controls",
+            "blocked",
+            "waiting",
+            "confirmation",
+            "guard",
+            "electronic-warning",
+        ],
+        required=True,
+    )
     parser.add_argument("--stop-url", default="http://127.0.0.1:8000/session/stop")
     parser.add_argument("--reason", default="")
     parser.add_argument("--message", default="Vamos preparar sua avaliação")
@@ -1140,6 +1223,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.mode == "guard":
         return _guard_mode(args.guard_height)
+    if args.mode == "electronic-warning":
+        return _electronic_warning_mode()
     return _blocked_mode(
         args.reason,
         args.preview_url,

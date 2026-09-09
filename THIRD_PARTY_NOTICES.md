@@ -10,3 +10,11 @@ is licensed under the Apache License 2.0.
 
 Conversion source:
 [`garciafido/minifasnet-v2-anti-spoofing-onnx`](https://huggingface.co/garciafido/minifasnet-v2-anti-spoofing-onnx).
+
+## YOLOX-S
+
+The optional `models/object_detection_yolox.onnx` file is the YOLOX-S COCO
+object detector distributed by the
+[OpenCV Model Zoo](https://github.com/opencv/opencv_zoo/tree/main/models/object_detection_yolox).
+YOLOX is Copyright 2021-2022 Megvii Inc. and is licensed under the Apache
+License 2.0.

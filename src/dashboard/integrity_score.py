@@ -33,6 +33,7 @@ EVENT_WEIGHTS: dict[str, float] = {
     "ABSENCE_BLOCKED": 8.0,
     "MULTI_FACE_BLOCKED": 12.0,
     "DIFFERENT_USER_BLOCKED": 25.0,
+    "ELECTRONIC_DEVICE_DETECTED": 8.0,
 }
 
 #: event_types que representam início de um bloqueio (abrem um intervalo de

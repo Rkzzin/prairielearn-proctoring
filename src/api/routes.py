@@ -26,6 +26,8 @@ class ConfigUpdateRequest(BaseModel):
     liveness_enabled: bool | None = None
     liveness_average_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
     liveness_shadow_mode: bool | None = None
+    electronic_device_primary_enabled: bool | None = None
+    electronic_device_secondary_enabled: bool | None = None
     primary_camera_index: int | None = Field(default=None, ge=0)
     secondary_camera_index: int | None = Field(default=None, ge=0)
 

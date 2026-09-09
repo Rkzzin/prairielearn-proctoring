@@ -314,7 +314,7 @@ def test_capture_webcam_ffmpeg_command_can_disable_audio(tmp_path: Path, monkeyp
     assert "-af" not in cmd
 
 
-def test_environment_camera_records_without_preview_or_audio(tmp_path: Path, monkeypatch):
+def test_environment_camera_records_with_detection_preview_and_without_audio(tmp_path: Path, monkeypatch):
     commands: list[list[str]] = []
 
     class FakeProc(DummyProc):
@@ -329,8 +329,9 @@ def test_environment_camera_records_without_preview_or_audio(tmp_path: Path, mon
         s3_config=S3Config(segment_duration_sec=300),
         face_config=FaceConfig(camera_index=2),
         app_config=AppConfig(data_dir=tmp_path),
-        recorder_config=RecorderConfig(preview_port=19191),
+        recorder_config=RecorderConfig(preview_port=19191, environment_preview_port=19192),
         secondary_camera_index=4,
+        environment_preview_enabled=True,
     )
     monkeypatch.setattr(capture, "_start_monitor_threads", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(capture, "_ensure_process_started", lambda *_args, **_kwargs: None)
@@ -343,8 +344,36 @@ def test_environment_camera_records_without_preview_or_audio(tmp_path: Path, mon
     assert "-an" in cmd
     start_number = cmd.index("-segment_start_number")
     assert cmd[start_number + 1] == "0"
-    assert "udp://127.0.0.1:19191?pkt_size=1316" not in cmd
-    assert "-filter_complex" not in cmd
+    assert "udp://127.0.0.1:19192?pkt_size=1316" in cmd
+    assert "-filter_complex" in cmd
+    assert capture.environment_preview_url.startswith("udp://127.0.0.1:19192")
+
+
+def test_environment_camera_omits_preview_when_detection_is_disabled(tmp_path: Path, monkeypatch):
+    commands = []
+
+    class FakeProc(DummyProc):
+        def __init__(self, cmd):
+            super().__init__()
+            self.stderr = []
+            commands.append(cmd)
+
+    monkeypatch.setattr(
+        "src.recorder.capture.subprocess.Popen",
+        lambda cmd, **_kwargs: FakeProc(cmd),
+    )
+    capture = Capture(
+        session_id="sess-environment-no-preview",
+        app_config=AppConfig(data_dir=tmp_path),
+        secondary_camera_index=4,
+    )
+    monkeypatch.setattr(capture, "_start_monitor_threads", lambda *_args: None)
+    monkeypatch.setattr(capture, "_ensure_process_started", lambda *_args, **_kwargs: None)
+
+    capture._start_environment_stream()
+
+    assert "-filter_complex" not in commands[0]
+    assert not any(value.startswith("udp://") for value in commands[0])
 
 
 def test_capture_start_cleans_up_primary_if_environment_camera_fails(tmp_path: Path, monkeypatch):

@@ -313,6 +313,8 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
             "liveness_enabled": True,
             "liveness_average_threshold": 0.82,
             "liveness_shadow_mode": True,
+            "electronic_device_primary_enabled": True,
+            "electronic_device_secondary_enabled": True,
             "s3_prefix": "ES2025-T1/2026-04-16/Quiz-03",
             "primary_camera_index": 0,
             "secondary_camera_index": 2,
@@ -348,6 +350,8 @@ async def test_heartbeat_returns_pending_config_command(tmp_path, dashboard_data
     assert payload["commands"][0]["payload"]["secondary_camera_index"] == 2
     assert payload["commands"][0]["payload"]["liveness_average_threshold"] == 0.82
     assert payload["commands"][0]["payload"]["liveness_shadow_mode"] is True
+    assert payload["commands"][0]["payload"]["electronic_device_primary_enabled"] is True
+    assert payload["commands"][0]["payload"]["electronic_device_secondary_enabled"] is True
     assert payload["station"]["available_cameras"][1]["name"] == "Logitech BRIO"
 
 

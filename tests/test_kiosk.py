@@ -821,6 +821,26 @@ def test_session_overlay_starts_controls_and_blocked_overlay(monkeypatch):
     assert procs[3].terminated is True
 
 
+def test_session_overlay_shows_nonblocking_electronic_warning(monkeypatch):
+    calls = []
+    proc = DummyProc(pid=20)
+
+    def fake_popen(cmd, env, stdout, stderr):
+        calls.append((cmd, env))
+        return proc
+
+    monkeypatch.setattr("src.kiosk.overlay.subprocess.Popen", fake_popen)
+    overlay = SessionOverlay(display=":5")
+
+    overlay.show_electronic_device_warning()
+    overlay.show_electronic_device_warning()
+
+    assert len(calls) == 1
+    assert calls[0][0][-2:] == ["--mode", "electronic-warning"]
+    overlay.hide_electronic_device_warning()
+    assert proc.terminated is True
+
+
 def test_session_overlay_starts_identity_confirmation(monkeypatch):
     calls = []
 

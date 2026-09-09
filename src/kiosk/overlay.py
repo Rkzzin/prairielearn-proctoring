@@ -17,6 +17,7 @@ class SessionOverlay:
         self._waiting_proc: subprocess.Popen | None = None
         self._confirmation_proc: subprocess.Popen | None = None
         self._guard_proc: subprocess.Popen | None = None
+        self._electronic_warning_proc: subprocess.Popen | None = None
 
     def show_waiting(self, message: str | None = None) -> None:
         if self._waiting_proc and self._waiting_proc.poll() is None:
@@ -113,6 +114,23 @@ class SessionOverlay:
         self._terminate(self._guard_proc)
         self._guard_proc = None
 
+    def show_electronic_device_warning(self) -> None:
+        if self._electronic_warning_proc and self._electronic_warning_proc.poll() is None:
+            return
+        self._electronic_warning_proc = self._spawn(
+            [
+                sys.executable,
+                "-m",
+                "src.kiosk.overlay_app",
+                "--mode",
+                "electronic-warning",
+            ]
+        )
+
+    def hide_electronic_device_warning(self) -> None:
+        self._terminate(self._electronic_warning_proc)
+        self._electronic_warning_proc = None
+
     def show_blocked(
         self,
         reason: str | None = None,
@@ -153,6 +171,7 @@ class SessionOverlay:
         self.hide_identity_confirmation()
         self.hide_blocked()
         self.hide_guard()
+        self.hide_electronic_device_warning()
         self._terminate(self._controls_proc)
         self._controls_proc = None
 

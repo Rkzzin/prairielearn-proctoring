@@ -146,6 +146,9 @@ us.prairietest.com</textarea></label>
       <label>Câmera ambiente
         <select name="secondary_camera_index" id="secondary-camera-select"></select>
       </label>
+      <label class="checkbox"><input type="checkbox" name="electronic_device_primary_enabled"> Detectar celular e notebook na câmera principal</label>
+      <label class="checkbox"><input type="checkbox" name="electronic_device_secondary_enabled"> Detectar celular e notebook na câmera ambiente</label>
+      <p>A detecção ocorre somente durante a prova e gera um aviso visual sem bloquear a avaliação.</p>
       <p class="form-error" id="camera-config-error" hidden></p>
     </fieldset>
     <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
@@ -494,6 +497,8 @@ function applyConfigValues(config) {
   form.elements.allow_repeat_attempts.checked = config.allow_repeat_attempts;
   form.elements.primary_camera_index.value = config.primary_camera_index ?? '';
   form.elements.secondary_camera_index.value = config.secondary_camera_index ?? '';
+  form.elements.electronic_device_primary_enabled.checked = config.electronic_device_primary_enabled === true;
+  form.elements.electronic_device_secondary_enabled.checked = config.electronic_device_secondary_enabled === true;
   syncLocalTimerControl();
 }
 
@@ -533,6 +538,11 @@ async function submitNewConfig() {
     cameraError.hidden = false;
     return;
   }
+  if (data.get('electronic_device_secondary_enabled') === 'on' && secondaryCamera === '') {
+    cameraError.textContent = 'Selecione a câmera ambiente para ativar a detecção de eletrônicos nela.';
+    cameraError.hidden = false;
+    return;
+  }
   if (primaryCamera !== '' && primaryCamera === secondaryCamera) {
     cameraError.textContent = 'Escolha câmeras diferentes para principal e ambiente.';
     cameraError.hidden = false;
@@ -558,6 +568,8 @@ async function submitNewConfig() {
     liveness_enabled: data.get('liveness_enabled') === 'on',
     liveness_average_threshold: Number(data.get('liveness_average_threshold')),
     liveness_shadow_mode: data.get('liveness_shadow_mode') === 'on',
+    electronic_device_primary_enabled: data.get('electronic_device_primary_enabled') === 'on',
+    electronic_device_secondary_enabled: data.get('electronic_device_secondary_enabled') === 'on',
     primary_camera_index: primaryCamera === '' ? null : Number(primaryCamera),
     secondary_camera_index: secondaryCamera === '' ? null : Number(secondaryCamera),
     s3_prefix: ''

@@ -3,7 +3,7 @@
 Arquitetura:
   - Stream webcam: FFmpeg captura /dev/videoN diretamente e publica
     um preview local para o proctoring.
-  - Stream ambiente: segunda câmera opcional, somente para gravação.
+  - Stream ambiente: segunda câmera opcional, com preview local de baixa taxa.
   - Stream tela:     x11grab independente.
 
 O proctoring consome o preview local, então a câmera física fica
@@ -81,6 +81,7 @@ class Capture:
         display: str | None = None,
         screen_size: str | None = None,
         secondary_camera_index: int | None = None,
+        environment_preview_enabled: bool = False,
     ):
         self.session_id = session_id
         self._s3_cfg = s3_config or S3Config()
@@ -91,6 +92,7 @@ class Capture:
         self._display = display or self._rec_cfg.display
         self._screen_size = screen_size or self._rec_cfg.screen_size
         self._secondary_camera_index = secondary_camera_index
+        self._environment_preview_enabled = environment_preview_enabled
 
         self._rec_dir = (
             Path(self._app_cfg.data_dir)
@@ -108,6 +110,10 @@ class Capture:
         self._notified_segments: set[Path] = set()
         self._preview_url = (
             f"udp://{self._rec_cfg.preview_host}:{self._rec_cfg.preview_port}"
+            "?overrun_nonfatal=1&fifo_size=5000000"
+        )
+        self._environment_preview_url = (
+            f"udp://{self._rec_cfg.preview_host}:{self._rec_cfg.environment_preview_port}"
             "?overrun_nonfatal=1&fifo_size=5000000"
         )
         self._stream_cpu_sets = split_ffmpeg_stream_cpu_sets(
@@ -184,6 +190,10 @@ class Capture:
     @property
     def preview_url(self) -> str:
         return self._preview_url
+
+    @property
+    def environment_preview_url(self) -> str:
+        return self._environment_preview_url
 
     def ensure_webcam_running(self) -> bool:
         """Reinicia o stream de webcam sem derrubar a captura de tela/sessão."""
@@ -406,7 +416,7 @@ class Capture:
         logger.info("Stream tela iniciado (x11grab → %s)", pattern)
 
     def _start_environment_stream(self) -> None:
-        """Grava a câmera ambiente sem preview, áudio ou processamento de detecção."""
+        """Grava a câmera ambiente e publica preview local para detecção."""
         index = self._secondary_camera_index
         if index is None:
             return
@@ -417,6 +427,13 @@ class Capture:
         start_number = self._next_segment_number("environment")
         video_device = f"/dev/video{index}"
         input_format = self._rec_cfg.webcam_input_format.strip()
+        preview_fps = self._rec_cfg.environment_preview_fps
+        preview_width = max(160, self._rec_cfg.preview_width)
+        preview_height = max(120, self._rec_cfg.preview_height)
+        preview_sink = (
+            f"udp://{self._rec_cfg.preview_host}:{self._rec_cfg.environment_preview_port}"
+            "?pkt_size=1316"
+        )
         cmd = ["ffmpeg", "-f", "v4l2", "-thread_queue_size", "512"]
         if input_format:
             cmd.extend(["-input_format", input_format])
@@ -426,6 +443,17 @@ class Capture:
             "-video_size", f"{w}x{h}",
             "-i", video_device,
             "-an",
+        ])
+        if self._environment_preview_enabled:
+            cmd.extend([
+                "-filter_complex",
+                (
+                    "[0:v]split=2[record][preview];"
+                    f"[preview]fps={preview_fps},scale={preview_width}:{preview_height}[preview_out]"
+                ),
+                "-map", "[record]",
+            ])
+        cmd.extend([
             "-c:v", "libx264",
             "-preset", "veryfast",
             "-crf", "26",
@@ -442,6 +470,22 @@ class Capture:
             "-y",
             pattern,
         ])
+        if self._environment_preview_enabled:
+            cmd.extend([
+                "-map", "[preview_out]",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-crf", "35",
+                "-pix_fmt", "yuv420p",
+                "-g", str(preview_fps),
+                "-keyint_min", str(preview_fps),
+                "-sc_threshold", "0",
+                "-x264-params", "repeat-headers=1:aud=1",
+                "-threads", "1",
+                "-f", "mpegts",
+                preview_sink,
+            ])
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,

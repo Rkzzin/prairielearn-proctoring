@@ -34,6 +34,8 @@
         <div><dt>Prova de vida</dt><dd>{{ 'Ativa' if config.liveness_enabled else 'Desativada' }}</dd></div>
         <div><dt>Score médio mínimo</dt><dd>{{ '%.2f'|format(config.liveness_average_threshold) }}</dd></div>
         <div><dt>Modo de prova de vida</dt><dd>{{ 'Somente monitorar' if config.liveness_shadow_mode else 'Bloquear reprovação' }}</dd></div>
+        <div><dt>Eletrônicos na principal</dt><dd>{{ 'Detectar' if config.electronic_device_primary_enabled else 'Desativado' }}</dd></div>
+        <div><dt>Eletrônicos no ambiente</dt><dd>{{ 'Detectar' if config.electronic_device_secondary_enabled else 'Desativado' }}</dd></div>
       </dl>
       <div class="config-rule-row">
         <span class="config-rule {{ 'is-active' if config.multi_face_block else '' }}">{{ 'Bloqueia múltiplas faces' if config.multi_face_block else 'Múltiplas faces permitidas' }}</span>

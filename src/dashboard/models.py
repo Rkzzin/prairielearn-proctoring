@@ -119,6 +119,8 @@ class ExamConfigPayload(BaseModel):
     liveness_enabled: bool = False
     liveness_average_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     liveness_shadow_mode: bool = True
+    electronic_device_primary_enabled: bool = False
+    electronic_device_secondary_enabled: bool = False
     s3_prefix: str = ""
     primary_camera_index: int | None = Field(default=None, ge=0)
     secondary_camera_index: int | None = Field(default=None, ge=0)
@@ -132,6 +134,10 @@ class ExamConfigPayload(BaseModel):
             and self.primary_camera_index == self.secondary_camera_index
         ):
             raise ValueError("As câmeras principal e secundária devem ser diferentes")
+        if self.electronic_device_secondary_enabled and self.secondary_camera_index is None:
+            raise ValueError(
+                "Selecione a câmera ambiente para ativar a detecção de eletrônicos nela"
+            )
         return self
 
 

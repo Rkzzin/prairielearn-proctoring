@@ -83,6 +83,7 @@ class FaceConfig(BaseSettings):
         description="Compensação de contraluz; zero evita realces estourados na câmera integrada.",
     )
     liveness_model_filename: str = "minifasnet_v2.onnx"
+    electronic_device_model_filename: str = "object_detection_yolox.onnx"
 
     # Performance
     detection_scale: float = Field(
@@ -109,6 +110,10 @@ class FaceConfig(BaseSettings):
     @property
     def liveness_model_path(self) -> Path:
         return self.models_dir / self.liveness_model_filename
+
+    @property
+    def electronic_device_model_path(self) -> Path:
+        return self.models_dir / self.electronic_device_model_filename
 
     def validate_models(self) -> list[str]:
         """Retorna lista de modelos dlib faltantes."""
@@ -230,6 +235,15 @@ class RecorderConfig(BaseSettings):
     preview_fps: int = Field(
         default=10,
         description="FPS do preview local consumido pelo proctoring.",
+    )
+    environment_preview_port: int = Field(
+        default=18182,
+        description="Porta UDP do preview de baixa frequência da câmera ambiente.",
+    )
+    environment_preview_fps: int = Field(
+        default=2,
+        ge=1,
+        description="FPS do preview ambiente usado para detecção periódica.",
     )
     ffmpeg_cpu_cores: str | None = Field(
         default=None,

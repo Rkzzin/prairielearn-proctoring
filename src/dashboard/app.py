@@ -67,6 +67,8 @@ _EVENT_REASON_LABELS = {
     "ABSENCE_BLOCKED": "Avaliação pausada por ausência",
     "MULTI_FACE_BLOCKED": "Avaliação pausada: mais de uma pessoa detectada",
     "DIFFERENT_USER_BLOCKED": "Avaliação pausada: usuário diferente detectado",
+    "ELECTRONIC_DEVICE_DETECTED": "Celular ou notebook detectado",
+    "ELECTRONIC_DEVICE_CLEARED": "Equipamento eletrônico removido",
     "BLOCK_TIMEOUT_CANCELLED": "Avaliação cancelada: bloqueio não resolvido no prazo",
     "BROWSER_EXIT": "Avaliação pausada: navegador protegido encerrado",
 }

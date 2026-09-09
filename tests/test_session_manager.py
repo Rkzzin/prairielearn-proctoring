@@ -33,6 +33,10 @@ from src.core.states import derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.dashboard.models import ExamConfigPayload
 from src.proctor.engine import BlockReason, ProctorState
+from src.proctor.electronic_devices import (
+    ElectronicDeviceDetection,
+    ElectronicDeviceTransition,
+)
 
 
 def _session_config_field_names() -> set[str]:
@@ -94,6 +98,7 @@ class FakeEngine:
         self.unblocked = False
         self.external_blocks = []
         self.cancelled_timeouts: list[float] = []
+        self.electronic_device_events = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -113,6 +118,9 @@ class FakeEngine:
     def block(self, reason, *, details=None):
         self.block_reason = reason
         self.external_blocks.append((reason, details))
+
+    def report_electronic_device(self, *, active, details=None):
+        self.electronic_device_events.append((active, details))
 
     def cancel_after_block_timeout(self, timeout_sec):
         self.cancelled_timeouts.append(timeout_sec)
@@ -211,6 +219,8 @@ class FakeOverlay:
         self.confirmations: list[dict[str, object]] = []
         self.confirmations_hidden = 0
         self.hide_calls = 0
+        self.electronic_warning_shown = 0
+        self.electronic_warning_hidden = 0
         self.stopped = False
 
     def start_controls(self):
@@ -236,6 +246,12 @@ class FakeOverlay:
     def hide_blocked(self):
         self.hide_calls += 1
 
+    def show_electronic_device_warning(self):
+        self.electronic_warning_shown += 1
+
+    def hide_electronic_device_warning(self):
+        self.electronic_warning_hidden += 1
+
     def stop(self):
         self.stopped = True
 
@@ -259,6 +275,7 @@ def _make_manager(
     reidentify_fn=None,
     video_capture_factory=None,
     liveness_factory=None,
+    electronic_device_monitor_factory=None,
     confirmation_fn=lambda _student_id, _student_name, _timeout_sec: True,
 ):
     fake_recognizer = FakeRecognizer(identify_results)
@@ -293,6 +310,7 @@ def _make_manager(
         lockdown_factory=lambda: fake_lockdown,
         video_capture_factory=video_capture_factory or (lambda _index: fake_camera),
         liveness_factory=liveness_factory,
+        electronic_device_monitor_factory=electronic_device_monitor_factory,
         reidentify_fn=reidentify_fn or (lambda **_kwargs: True),
         confirmation_fn=confirmation_fn,
         s3_probe=lambda: True,
@@ -384,6 +402,62 @@ def test_initial_identification_uses_average_liveness_score(scores, shadow_mode,
     assert liveness["passed"] is (not shadow_mode)
     assert liveness["shadow_mode"] is shadow_mode
     manager.stop_session(reason="test")
+
+
+def test_electronic_device_transition_warns_without_blocking_session():
+    manager, _recognizer, engine, *_rest = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    overlay = manager._overlay_factory()
+    manager._overlay = overlay
+    manager._engine = engine
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="T1",
+        assessment="Quiz",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test",
+    )
+    transition = ElectronicDeviceTransition(
+        camera="principal",
+        active=True,
+        detections=(ElectronicDeviceDetection("celular", 0.91, (1, 2, 3, 4)),),
+    )
+    manager._device_monitor = SimpleNamespace(
+        drain_transitions=lambda: [transition]
+    )
+
+    manager._handle_electronic_device_transitions()
+
+    assert engine.electronic_device_events == [(True, transition.details())]
+    assert engine.external_blocks == []
+    assert overlay.electronic_warning_shown == 1
+    assert manager._runtime.notes["electronic_device_active_cameras"] == ["principal"]
+
+
+def test_electronic_device_monitor_is_not_started_during_authentication():
+    monitor_factory_calls = []
+    manager, *_ = _make_manager(
+        identify_results=[IdentifyResult(status=IdentifyStatus.NO_MATCH)] * 3,
+        engine_states=[],
+        frames=["frame-1", "frame-2", "frame-3"],
+        electronic_device_monitor_factory=lambda **kwargs: monitor_factory_calls.append(kwargs),
+    )
+    manager.update_config(
+        turma_id="ES2025-T1",
+        electronic_device_primary_enabled=True,
+    )
+
+    with pytest.raises(SessionError, match="não identificado"):
+        manager.start_session()
+
+    assert monitor_factory_calls == []
 
 
 def test_session_manager_switches_from_device_camera_to_capture_preview():
@@ -1520,6 +1594,8 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
             "liveness_enabled": True,
             "liveness_average_threshold": 0.82,
             "liveness_shadow_mode": True,
+            "electronic_device_primary_enabled": True,
+            "electronic_device_secondary_enabled": True,
             "primary_camera_index": 2,
             "secondary_camera_index": 4,
         }
@@ -1538,6 +1614,8 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert config.liveness_enabled is True
     assert config.liveness_average_threshold == 0.82
     assert config.liveness_shadow_mode is True
+    assert config.electronic_device_primary_enabled is True
+    assert config.electronic_device_secondary_enabled is True
 
     assert manager._proctor_cfg.gaze_h_threshold == 0.4
     assert manager._proctor_cfg.gaze_v_threshold == 0.45
@@ -1569,6 +1647,16 @@ def test_exam_config_requires_explicit_primary_for_environment_camera():
             assessment="Quiz-03",
             prairielearn_url="https://pl.test/exam",
             secondary_camera_index=4,
+        )
+
+
+def test_exam_config_requires_environment_camera_for_secondary_device_detection():
+    with pytest.raises(ValueError, match="detecção de eletrônicos"):
+        ExamConfigPayload(
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            prairielearn_url="https://pl.test/exam",
+            electronic_device_secondary_enabled=True,
         )
 
 

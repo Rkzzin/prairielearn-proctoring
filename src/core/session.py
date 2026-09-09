@@ -51,6 +51,10 @@ from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.reidentify import run_reidentify
 from src.proctor.engine import BlockReason, ProctorEngine, ProctorState
+from src.proctor.electronic_devices import (
+    ElectronicDeviceMonitor,
+    YoloXElectronicDeviceDetector,
+)
 from src.recorder.capture import Capture
 from src.recorder.uploader import Uploader
 
@@ -93,6 +97,8 @@ DASHBOARD_CONFIG_FIELD_MAP = {
     "liveness_enabled": "liveness_enabled",
     "liveness_average_threshold": "liveness_average_threshold",
     "liveness_shadow_mode": "liveness_shadow_mode",
+    "electronic_device_primary_enabled": "electronic_device_primary_enabled",
+    "electronic_device_secondary_enabled": "electronic_device_secondary_enabled",
 }
 
 #: Campos do payload que ajustam thresholds do proctoring em memória, não o
@@ -133,6 +139,8 @@ class SessionConfig:
     liveness_enabled: bool = False
     liveness_average_threshold: float = 0.80
     liveness_shadow_mode: bool = True
+    electronic_device_primary_enabled: bool = False
+    electronic_device_secondary_enabled: bool = False
     primary_camera_index: int | None = None
     secondary_camera_index: int | None = None
 
@@ -179,7 +187,14 @@ class SessionManager:
     #:
     #: Lockdown, overlay de espera e câmera **não** entram aqui: são escopo de
     #: estação e podem sobreviver entre sessões. Ver ``_shutdown_components``.
-    _SESSION_SCOPED_COMPONENTS = ("_kiosk", "_overlay", "_capture", "_engine", "_uploader")
+    _SESSION_SCOPED_COMPONENTS = (
+        "_device_monitor",
+        "_kiosk",
+        "_overlay",
+        "_capture",
+        "_engine",
+        "_uploader",
+    )
 
     def __init__(
         self,
@@ -191,6 +206,7 @@ class SessionManager:
         s3_config: S3Config | None = None,
         recognizer_factory: Callable[..., Any] | None = None,
         liveness_factory: Callable[..., Any] | None = None,
+        electronic_device_monitor_factory: Callable[..., Any] | None = None,
         engine_factory: Callable[..., Any] | None = None,
         capture_factory: Callable[..., Any] | None = None,
         uploader_factory: Callable[..., Any] | None = None,
@@ -213,6 +229,10 @@ class SessionManager:
         self._recognizer_factory = recognizer_factory or (lambda: FaceRecognizer(self._face_cfg))
         self._liveness_factory = liveness_factory or (
             lambda: PassiveLivenessDetector(self._face_cfg.liveness_model_path)
+        )
+        self._electronic_device_monitor_factory = (
+            electronic_device_monitor_factory
+            or self._default_electronic_device_monitor_factory
         )
         self._engine_factory = engine_factory or self._default_engine_factory
         self._capture_factory = capture_factory or self._default_capture_factory
@@ -267,6 +287,8 @@ class SessionManager:
         self._recognizer = None
         self._liveness = None
         self._last_liveness_result: dict[str, Any] | None = None
+        self._device_monitor = None
+        self._electronic_device_active_cameras: set[str] = set()
         self._engine = None
         self._capture = None
         self._uploader = None
@@ -295,6 +317,7 @@ class SessionManager:
         self._runtime_ffmpeg_cpu_cores: str | None = None
         self._runtime_proctor_cpu_set: set[int] | None = None
         self._session_secondary_camera_index: int | None = None
+        self._session_environment_preview_enabled = False
 
     @property
     def state(self) -> SessionState:
@@ -804,6 +827,27 @@ class SessionManager:
 
                 self._engine.start()
 
+                if (
+                    cfg.electronic_device_primary_enabled
+                    or cfg.electronic_device_secondary_enabled
+                ):
+                    if cfg.electronic_device_secondary_enabled and self._capture is None:
+                        raise SessionError(
+                            "Detecção na câmera ambiente requer gravação ativa"
+                        )
+                    self._device_monitor = self._electronic_device_monitor_factory(
+                        primary_enabled=cfg.electronic_device_primary_enabled,
+                        secondary_enabled=cfg.electronic_device_secondary_enabled,
+                        secondary_preview_url=(
+                            self._capture.environment_preview_url
+                            if cfg.electronic_device_secondary_enabled
+                            and self._capture is not None
+                            else None
+                        ),
+                    )
+                    self._electronic_device_active_cameras.clear()
+                    self._device_monitor.start()
+
                 self._stop_event.clear()
                 self._last_identity_check_at = time.monotonic()
                 self._block_handled = False
@@ -899,6 +943,8 @@ class SessionManager:
                 self._kiosk.unblock()
             if self._overlay is not None:
                 self._overlay.hide_blocked()
+                if self._electronic_device_active_cameras:
+                    self._overlay.show_electronic_device_warning()
             if self._runtime is not None:
                 self._runtime.block_reason = None
             self._block_handled = False
@@ -914,6 +960,11 @@ class SessionManager:
             except Exception as exc:  # pragma: no cover - hardware/driver path
                 logger.error("Falha ao ler câmera: %s", exc)
                 break
+
+            if self._device_monitor is not None:
+                if ret and frame is not None:
+                    self._device_monitor.submit_primary(frame)
+                self._handle_electronic_device_transitions()
 
             if not ret or frame is None:
                 if self._camera_recovering.is_set():
@@ -936,6 +987,30 @@ class SessionManager:
                         self._block_handled = False
 
         logger.info("Loop da sessão encerrado")
+
+    def _handle_electronic_device_transitions(self) -> None:
+        if self._device_monitor is None or self._engine is None:
+            return
+        for transition in self._device_monitor.drain_transitions():
+            details = transition.details()
+            self._engine.report_electronic_device(
+                active=transition.active,
+                details=details,
+            )
+            if transition.active:
+                self._electronic_device_active_cameras.add(transition.camera)
+            else:
+                self._electronic_device_active_cameras.discard(transition.camera)
+            if self._runtime is not None:
+                self._runtime.notes["electronic_device_active_cameras"] = sorted(
+                    self._electronic_device_active_cameras
+                )
+            if self._overlay is None:
+                continue
+            if self._electronic_device_active_cameras:
+                self._overlay.show_electronic_device_warning()
+            else:
+                self._overlay.hide_electronic_device_warning()
 
     def _verify_session_identity(self, frame: Any) -> None:
         """Compara periodicamente o rosto presente com o aluno autenticado."""
@@ -987,6 +1062,7 @@ class SessionManager:
             if self._kiosk is not None:
                 self._kiosk.block()
             if self._overlay is not None:
+                self._overlay.hide_electronic_device_warning()
                 self._overlay.show_blocked(
                     reason,
                     student_id=self._runtime.student_id if self._runtime is not None else None,
@@ -1010,6 +1086,8 @@ class SessionManager:
                     self._kiosk.unblock()
                 if self._overlay is not None:
                     self._overlay.hide_blocked()
+                    if self._electronic_device_active_cameras:
+                        self._overlay.show_electronic_device_warning()
                 if self._runtime is not None:
                     self._runtime.block_reason = None
                 self._block_handled = False
@@ -1284,6 +1362,7 @@ class SessionManager:
             display=self._rec_cfg.display,
             screen_size=self._rec_cfg.screen_size,
             secondary_camera_index=self._session_secondary_camera_index,
+            environment_preview_enabled=self._session_environment_preview_enabled,
         )
 
     def _apply_camera_selection(self, config: SessionConfig) -> None:
@@ -1292,6 +1371,9 @@ class SessionManager:
             self._camera.release()
             self._face_cfg.camera_index = primary_index
         self._session_secondary_camera_index = config.secondary_camera_index
+        self._session_environment_preview_enabled = (
+            config.electronic_device_secondary_enabled
+        )
 
     def _validate_camera_config(self, config: SessionConfig) -> int:
         primary_index = (
@@ -1305,6 +1387,13 @@ class SessionManager:
             raise SessionError("O índice da câmera não pode ser negativo")
         if config.secondary_camera_index == primary_index:
             raise SessionError("As câmeras principal e secundária devem ser diferentes")
+        if (
+            config.electronic_device_secondary_enabled
+            and config.secondary_camera_index is None
+        ):
+            raise SessionError(
+                "A detecção de eletrônicos na câmera ambiente requer uma câmera secundária"
+            )
         return primary_index
 
     @staticmethod
@@ -1319,6 +1408,12 @@ class SessionManager:
             app_config=self._app_cfg,
             delete_after_upload=self._rec_cfg.delete_after_upload,
         )
+
+    def _default_electronic_device_monitor_factory(self, **kwargs: Any):
+        detector = YoloXElectronicDeviceDetector(
+            self._face_cfg.electronic_device_model_path,
+        )
+        return ElectronicDeviceMonitor(detector=detector, **kwargs)
 
     def _merged_config(
         self,
@@ -1553,6 +1648,7 @@ class SessionManager:
                     }
                 )
             if self._overlay is not None:
+                self._overlay.hide_electronic_device_warning()
                 self._overlay.show_blocked(
                     "BROWSER_EXIT",
                     student_id=self._runtime.student_id if self._runtime is not None else None,
