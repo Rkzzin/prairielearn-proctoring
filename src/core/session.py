@@ -117,6 +117,7 @@ DASHBOARD_PROCTOR_FIELD_CASTS = {
     "gaze_duration_sec": float,
     "absence_timeout_sec": float,
     "multi_face_block": bool,
+    "flexible_mode": bool,
 }
 
 #: Campos que são roteamento interno do dashboard e nunca chegam à estação.
@@ -1927,6 +1928,7 @@ class SessionManager:
         if callable(relaunch):
             try:
                 if relaunch():
+                    self._browser_ready = True
                     if self._runtime is not None:
                         self._runtime.notes.setdefault("operational_events", []).append(
                             {
@@ -1937,6 +1939,25 @@ class SessionManager:
                     return True
             except Exception as exc:
                 logger.warning("Falha ao relançar Chromium: %s", exc)
+
+        if self._proctor_cfg.flexible_mode:
+            with self._lock:
+                first_failure = self._browser_ready
+                self._browser_ready = False
+                if first_failure and self._runtime is not None:
+                    self._runtime.notes.setdefault("operational_events", []).append(
+                        {
+                            "type": "browser_exit",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "flexible_mode": True,
+                        }
+                    )
+                    if self._engine is not None:
+                        self._engine.report_critical_alert(
+                            EventType.BROWSER_EXIT_ALERT,
+                            details={"flexible_mode": True},
+                        )
+            return True
 
         with self._lock:
             self._browser_ready = False

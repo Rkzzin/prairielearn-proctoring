@@ -116,6 +116,7 @@ class ExamConfigPayload(BaseModel):
     gaze_duration_sec: float = 10.0
     absence_timeout_sec: float = 10.0
     multi_face_block: bool = True
+    flexible_mode: bool = True
     liveness_enabled: bool = True
     liveness_average_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     liveness_shadow_mode: bool = False

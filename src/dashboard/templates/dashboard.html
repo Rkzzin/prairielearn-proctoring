@@ -156,7 +156,8 @@ us.prairietest.com</textarea></label>
     <label>Gaze vertical (olhar para baixo)<input type="number" step="0.01" name="gaze_v_threshold" value="0.60"></label>
     <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="10.0"></label>
     <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="10.0"></label>
-    <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
+    <label class="checkbox"><input type="checkbox" name="flexible_mode" checked> Modo flexível: gerar alertas sem bloquear a prova</label>
+    <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Detectar múltiplas faces</label>
     <fieldset class="station-selector">
       <legend>Prova de vida</legend>
       <label class="checkbox"><input type="checkbox" name="liveness_enabled" checked> Verificar apresentação de foto ou tela</label>
@@ -517,6 +518,7 @@ function applyConfigValues(config) {
   if (config.gaze_v_threshold !== undefined) form.elements.gaze_v_threshold.value = config.gaze_v_threshold;
   form.elements.gaze_duration_sec.value = config.gaze_duration_sec;
   form.elements.absence_timeout_sec.value = config.absence_timeout_sec;
+  form.elements.flexible_mode.checked = config.flexible_mode === true;
   form.elements.multi_face_block.checked = config.multi_face_block;
   form.elements.liveness_enabled.checked = config.liveness_enabled !== false;
   form.elements.liveness_average_threshold.value = config.liveness_average_threshold ?? 0.80;
@@ -591,6 +593,7 @@ async function submitNewConfig() {
     gaze_v_threshold: Number(data.get('gaze_v_threshold')),
     gaze_duration_sec: Number(data.get('gaze_duration_sec')),
     absence_timeout_sec: Number(data.get('absence_timeout_sec')),
+    flexible_mode: data.get('flexible_mode') === 'on',
     multi_face_block: data.get('multi_face_block') === 'on',
     liveness_enabled: data.get('liveness_enabled') === 'on',
     liveness_average_threshold: Number(data.get('liveness_average_threshold')),

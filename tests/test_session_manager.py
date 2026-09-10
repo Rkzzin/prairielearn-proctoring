@@ -38,6 +38,7 @@ from src.proctor.electronic_devices import (
     ElectronicDeviceDetection,
     ElectronicDeviceTransition,
 )
+from src.proctor.events import EventType
 
 
 def _session_config_field_names() -> set[str]:
@@ -100,6 +101,7 @@ class FakeEngine:
         self.external_blocks = []
         self.cancelled_timeouts: list[float] = []
         self.electronic_device_events = []
+        self.critical_alerts = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -122,6 +124,9 @@ class FakeEngine:
 
     def report_electronic_device(self, *, active, details=None):
         self.electronic_device_events.append((active, details))
+
+    def report_critical_alert(self, event_type, *, details=None):
+        self.critical_alerts.append((event_type, details))
 
     def cancel_after_block_timeout(self, timeout_sec):
         self.cancelled_timeouts.append(timeout_sec)
@@ -1371,6 +1376,44 @@ def test_browser_guard_blocks_screen_when_browser_is_not_running():
     assert overlay.blocked_shown == ["BROWSER_EXIT"]
 
 
+def test_flexible_mode_retries_closed_browser_without_blocking_session():
+    class StoppedKiosk:
+        is_running = False
+
+        def relaunch(self):
+            return False
+
+    manager, _recognizer, engine, _capture, _uploader, _kiosk, overlay, _lockdown, _camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._kiosk = StoppedKiosk()
+    manager._overlay = overlay
+    manager._engine = engine
+    manager._state = SessionState.SESSION
+    manager._browser_ready = True
+    manager._proctor_cfg.flexible_mode = True
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="T1",
+        assessment="Quiz",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test",
+    )
+
+    assert manager._ensure_browser_running() is True
+    assert manager.state == SessionState.SESSION
+    assert overlay.blocked_shown == []
+    assert engine.critical_alerts == [
+        (EventType.BROWSER_EXIT_ALERT, {"flexible_mode": True})
+    ]
+
+
 def test_prepare_exam_mode_does_not_show_waiting_overlay_until_enter():
     manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, lockdown, camera = _make_manager(
         identify_results=[],
@@ -1658,6 +1701,7 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
             "gaze_duration_sec": 4.0,
             "absence_timeout_sec": 6.0,
             "multi_face_block": False,
+            "flexible_mode": True,
             "liveness_enabled": True,
             "liveness_average_threshold": 0.82,
             "liveness_shadow_mode": True,
@@ -1689,6 +1733,7 @@ def test_apply_dashboard_config_maps_renamed_and_threshold_fields():
     assert manager._proctor_cfg.gaze_duration_sec == 4.0
     assert manager._proctor_cfg.absence_timeout_sec == 6.0
     assert manager._proctor_cfg.multi_face_block is False
+    assert manager._proctor_cfg.flexible_mode is True
 
 
 def test_dashboard_config_can_disable_secondary_camera():

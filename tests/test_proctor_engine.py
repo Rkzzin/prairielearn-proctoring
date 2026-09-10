@@ -42,6 +42,7 @@ def _make_config(
     absence_timeout: float = 5.0,
     multi_face_block: bool = True,
     gaze_debounce_frames: int = 1,
+    flexible_mode: bool = False,
 ) -> ProctorConfig:
     return ProctorConfig(
         gaze_h_threshold=gaze_h,
@@ -50,6 +51,7 @@ def _make_config(
         absence_timeout_sec=absence_timeout,
         multi_face_block=multi_face_block,
         gaze_debounce_frames=gaze_debounce_frames,
+        flexible_mode=flexible_mode,
     )
 
 
@@ -444,6 +446,34 @@ class TestEventLogger:
 
 
 class TestEngineLifecycle:
+    def test_flexible_mode_logs_critical_alerts_without_blocking(self, tmp_path: Path):
+        engine = _make_engine(tmp_path, _make_config(flexible_mode=True))
+
+        expected_events = {
+            BlockReason.GAZE: EventType.GAZE_ALERT,
+            BlockReason.ABSENCE: EventType.ABSENCE_ALERT,
+            BlockReason.MULTI_FACE: EventType.MULTI_FACE_ALERT,
+            BlockReason.DIFFERENT_USER: EventType.DIFFERENT_USER_ALERT,
+        }
+        for reason in expected_events:
+            engine.block(reason, details={"source": "test"})
+            assert engine.state == ProctorState.NORMAL
+            assert engine.block_reason is None
+        engine.report_critical_alert(
+            EventType.BROWSER_EXIT_ALERT,
+            details={"flexible_mode": True},
+        )
+        engine._logger.close()
+
+        events = EventLogger.read_session(
+            tmp_path / "sessions" / "TEST-001" / "events.jsonl"
+        )
+        assert [event.type for event in events] == [
+            event_type.value for event_type in expected_events.values()
+        ] + [EventType.BROWSER_EXIT_ALERT.value]
+        assert all(event.severity == Severity.CRITICAL.value for event in events)
+        assert all(event.details["flexible_mode"] is True for event in events)
+
     def test_start_logs_session_started(self, tmp_path: Path):
         engine = _make_engine(tmp_path)
         engine.start()

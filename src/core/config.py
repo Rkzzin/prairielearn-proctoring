@@ -142,6 +142,7 @@ class ProctorConfig(BaseSettings):
     gaze_duration_sec: float = 5.0   # segundos em GAZE_WARN antes de BLOCKED
     absence_timeout_sec: float = 5.0
     multi_face_block: bool = True
+    flexible_mode: bool = False
     gaze_debounce_frames: int = Field(
         default=3,
         ge=1,

@@ -132,6 +132,7 @@ class ProctorEngine:
         self._absence_start: float = 0.0  # quando o rosto sumiu
 
         self._frame_count: int = 0
+        self._last_flexible_alert_at: dict[BlockReason, float] = {}
 
     # ──────────────────────────────────────────────
     #  Ciclo de vida
@@ -229,6 +230,20 @@ class ProctorEngine:
                 else EventType.ELECTRONIC_DEVICE_CLEARED
             ),
             severity=Severity.CRITICAL if active else Severity.INFO,
+            details=details,
+        )
+
+    def report_critical_alert(
+        self,
+        event_type: EventType,
+        *,
+        details: dict | None = None,
+    ) -> None:
+        """Registra uma ocorrência crítica externa sem alterar a FSM."""
+        self._logger.log_event(
+            frame=self._frame_count,
+            event_type=event_type,
+            severity=Severity.CRITICAL,
             details=details,
         )
 
@@ -369,25 +384,55 @@ class ProctorEngine:
 
     def _block(self, reason: BlockReason, *, details: dict | None = None) -> None:
         """Transita para BLOCKED e registra o evento."""
-        self.state = ProctorState.BLOCKED
-        self.block_reason = reason
-
-        event_type_map = {
-            BlockReason.GAZE:       EventType.GAZE_BLOCKED,
-            BlockReason.ABSENCE:    EventType.ABSENCE_BLOCKED,
+        flexible_event_type_map = {
+            BlockReason.GAZE: EventType.GAZE_ALERT,
+            BlockReason.ABSENCE: EventType.ABSENCE_ALERT,
+            BlockReason.MULTI_FACE: EventType.MULTI_FACE_ALERT,
+            BlockReason.DIFFERENT_USER: EventType.DIFFERENT_USER_ALERT,
+        }
+        blocked_event_type_map = {
+            BlockReason.GAZE: EventType.GAZE_BLOCKED,
+            BlockReason.ABSENCE: EventType.ABSENCE_BLOCKED,
             BlockReason.MULTI_FACE: EventType.MULTI_FACE_BLOCKED,
             BlockReason.DIFFERENT_USER: EventType.DIFFERENT_USER_BLOCKED,
         }
 
+        if self._cfg.flexible_mode:
+            now = time.time()
+            last_alert_at = self._last_flexible_alert_at.get(reason)
+            self.state = ProctorState.NORMAL
+            self.block_reason = None
+            self._warn_start = 0.0
+            self._absence_start = 0.0
+            self._deviation_streak = 0
+            if last_alert_at is not None and now - last_alert_at < 10.0:
+                return
+            self._last_flexible_alert_at[reason] = now
+            event_type = flexible_event_type_map[reason]
+            event_details = {"reason": reason.value, "flexible_mode": True, **(details or {})}
+        else:
+            self.state = ProctorState.BLOCKED
+            self.block_reason = reason
+            event_type = blocked_event_type_map[reason]
+            event_details = {"reason": reason.value, **(details or {})}
+
         self._logger.log_event(
             frame=self._frame_count,
-            event_type=event_type_map[reason],
+            event_type=event_type,
             severity=Severity.CRITICAL,
-            details={"reason": reason.value, **(details or {})},
+            details=event_details,
         )
-        logger.warning(
-            "Sessão '%s' BLOQUEADA — motivo: %s (frame %d)",
-            self.session_id,
-            reason.value,
-            self._frame_count,
-        )
+        if self._cfg.flexible_mode:
+            logger.warning(
+                "Sessão '%s' registrou alerta flexível: %s (frame %d)",
+                self.session_id,
+                reason.value,
+                self._frame_count,
+            )
+        else:
+            logger.warning(
+                "Sessão '%s' BLOQUEADA — motivo: %s (frame %d)",
+                self.session_id,
+                reason.value,
+                self._frame_count,
+            )

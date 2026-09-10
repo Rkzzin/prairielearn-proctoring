@@ -56,6 +56,7 @@ def test_dashboard_exam_config_defaults_are_tolerant_but_keep_liveness_blocking(
     assert config.gaze_duration_sec == 10.0
     assert config.absence_timeout_sec == 10.0
     assert config.multi_face_block is True
+    assert config.flexible_mode is True
     assert config.liveness_enabled is True
     assert config.liveness_average_threshold == 0.80
     assert config.liveness_shadow_mode is False
