@@ -503,8 +503,7 @@ def test_electronic_device_calibration_persists_normalized_regions(tmp_path, mon
     ok, jpeg = cv2.imencode(".jpg", np.zeros((100, 200, 3), dtype=np.uint8))
     assert ok
 
-    count = manager.calibrate_electronic_devices(
-        [
+    snapshots = [
             {
                 "index": 2,
                 "name": "C922",
@@ -513,11 +512,14 @@ def test_electronic_device_calibration_persists_normalized_regions(tmp_path, mon
             }
             for _sample in range(3)
         ]
-    )
+    original_jpeg = snapshots[-1]["jpeg"]
+
+    count = manager.calibrate_electronic_devices(snapshots)
 
     baseline = manager._load_electronic_device_baseline()
     assert count == 1
     assert detector_options == {"confidence_threshold": 0.30}
+    assert snapshots[-1]["jpeg"] != original_jpeg
     assert baseline["cameras"]["2"] == {
         "name": "C922",
         "hardware_id": "/sys/devices/c922",

@@ -722,6 +722,7 @@ class SessionManager:
             )
             cameras: dict[str, dict[str, Any]] = {}
             candidates: dict[str, list[dict[str, Any]]] = {}
+            analyzed_snapshots: list[tuple[dict[str, Any], Any, list[Any]]] = []
             total = 0
             for snapshot in snapshots:
                 frame = cv2.imdecode(
@@ -734,7 +735,9 @@ class SessionManager:
                 camera_key = str(snapshot["index"])
                 camera_candidates = candidates.setdefault(camera_key, [])
                 matched_candidates: set[int] = set()
-                for detection in detector.detect(frame):
+                detections = detector.detect(frame)
+                analyzed_snapshots.append((snapshot, frame, detections))
+                for detection in detections:
                     # Celulares nunca podem ser autorizados por calibração.
                     if detection.label != "notebook":
                         continue
@@ -761,7 +764,13 @@ class SessionManager:
                         None,
                     )
                     if match is None:
-                        camera_candidates.append({"box": normalized_box, "samples": 1})
+                        camera_candidates.append(
+                            {
+                                "box": normalized_box,
+                                "samples": 1,
+                                "confidence_total": detection.confidence,
+                            }
+                        )
                         matched_candidates.add(len(camera_candidates) - 1)
                     else:
                         candidate = camera_candidates[match]
@@ -771,6 +780,7 @@ class SessionManager:
                             for old, new in zip(candidate["box"], normalized_box, strict=True)
                         )
                         candidate["samples"] = samples + 1
+                        candidate["confidence_total"] += detection.confidence
                         matched_candidates.add(match)
                 cameras[camera_key] = {
                     "name": snapshot.get("name", ""),
@@ -790,6 +800,52 @@ class SessionManager:
                 cameras[camera_key]["regions"] = regions
                 total += len(regions)
 
+            for snapshot, frame, detections in analyzed_snapshots:
+                height, width = frame.shape[:2]
+                camera_candidates = candidates.get(str(snapshot["index"]), [])
+
+                accepted_candidates = [
+                    candidate for candidate in camera_candidates if candidate["samples"] >= 2
+                ]
+                for candidate in accepted_candidates:
+                    confidence = candidate["confidence_total"] / candidate["samples"]
+                    self._annotate_electronic_detection(
+                        frame,
+                        candidate["box"],
+                        f"NOTEBOOK AUTORIZADO {confidence:.0%}",
+                        (40, 150, 40),
+                    )
+                for detection in detections:
+                    x, y, box_width, box_height = detection.box
+                    normalized_box = (
+                        x / width,
+                        y / height,
+                        box_width / width,
+                        box_height / height,
+                    )
+                    if detection.label == "celular":
+                        self._annotate_electronic_detection(
+                            frame,
+                            normalized_box,
+                            f"CELULAR PROIBIDO {detection.confidence:.0%}",
+                            (30, 30, 190),
+                        )
+                    elif not any(
+                        _box_iou(normalized_box, candidate["box"]) >= 0.35
+                        for candidate in accepted_candidates
+                    ):
+                        self._annotate_electronic_detection(
+                            frame,
+                            normalized_box,
+                            f"NOTEBOOK NAO CONFIRMADO {detection.confidence:.0%}",
+                            (0, 145, 220),
+                        )
+                encoded_ok, encoded = cv2.imencode(
+                    ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+                )
+                if encoded_ok:
+                    snapshot["jpeg"] = encoded.tobytes()
+
             payload = {
                 "version": 1,
                 "calibrated_at": datetime.now(timezone.utc).isoformat(),
@@ -808,6 +864,42 @@ class SessionManager:
                 len(cameras),
             )
             return total
+
+    @staticmethod
+    def _annotate_electronic_detection(
+        frame: Any,
+        box: tuple[float, ...],
+        label: str,
+        color: tuple[int, int, int],
+    ) -> None:
+        height, width = frame.shape[:2]
+        x, y, box_width, box_height = box
+        left = max(0, min(width - 1, round(x * width)))
+        top = max(0, min(height - 1, round(y * height)))
+        right = max(left + 1, min(width, round((x + box_width) * width)))
+        bottom = max(top + 1, min(height, round((y + box_height) * height)))
+        cv2.rectangle(frame, (left, top), (right, bottom), color, 3)
+        text_y = max(22, top)
+        (text_width, text_height), _baseline = cv2.getTextSize(
+            label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+        )
+        cv2.rectangle(
+            frame,
+            (left, text_y - text_height - 8),
+            (min(width, left + text_width + 8), text_y + 4),
+            color,
+            -1,
+        )
+        cv2.putText(
+            frame,
+            label,
+            (left + 4, text_y - 3),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
     def start_session(
         self,
