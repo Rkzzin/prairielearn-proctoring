@@ -57,7 +57,7 @@
     </dl>
     {% if station.last_event %}
     <p class="event-line{% if station.last_event.severity.value == 'CRITICAL' %} event-line-critical{% endif %}">
-      Último evento: <strong>{{ station.last_event.event_type }}</strong>
+      Último evento: <strong>{{ "Tentativa reprovada na prova de vida" if station.last_event.event_type == "LIVENESS_FAILED" else station.last_event.event_type }}</strong>
       <span>{{ "CRÍTICO" if station.last_event.severity.value == "CRITICAL" else station.last_event.severity.value }}</span>
     </p>
     {% endif %}

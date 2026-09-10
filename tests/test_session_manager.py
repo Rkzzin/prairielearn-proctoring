@@ -394,6 +394,16 @@ def test_initial_identification_uses_average_liveness_score(scores, shadow_mode,
     if not starts:
         with pytest.raises(SessionError, match="score médio 0.20"):
             manager.start_session()
+        event = manager.dashboard_snapshot()["last_event"]
+        assert event["event_type"] == "LIVENESS_FAILED"
+        assert event["severity"] == "CRITICAL"
+        assert event["details"] == {
+            "student_id": "123",
+            "student_name": "Alice",
+            "average_score": 0.2,
+            "threshold": 0.8,
+            "samples": 3,
+        }
         return
 
     manager.start_session()

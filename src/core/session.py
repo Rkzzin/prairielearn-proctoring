@@ -62,6 +62,7 @@ from src.proctor.electronic_devices import (
     _box_iou,
 )
 from src.proctor.engine import BlockReason, ProctorEngine, ProctorState
+from src.proctor.events import EventType, Severity
 from src.recorder.capture import Capture
 from src.recorder.uploader import Uploader
 
@@ -297,6 +298,7 @@ class SessionManager:
         self._recognizer = None
         self._liveness = None
         self._last_liveness_result: dict[str, Any] | None = None
+        self._station_events: list[dict[str, Any]] = []
         self._device_monitor = None
         self._electronic_device_active_cameras: set[str] = set()
         self._engine = None
@@ -546,12 +548,16 @@ class SessionManager:
         return Path(self._app_cfg.data_dir)
 
     def dashboard_snapshot(self) -> dict[str, Any]:
-        return build_station_snapshot(
+        snapshot = build_station_snapshot(
             status=self.get_status(),
             config=self._next_config,
             runtime=self._runtime,
             available_cameras=discover_video_devices(),
         )
+        if self._runtime is None and self._station_events:
+            snapshot["recent_events"] = list(self._station_events)
+            snapshot["last_event"] = self._station_events[-1]
+        return snapshot
 
     def prepare_exam_mode(self) -> dict[str, Any]:
         with self._lock:
@@ -900,6 +906,7 @@ class SessionManager:
                         "liveness": self._last_liveness_result,
                     },
                 )
+                self._station_events.clear()
 
                 self._uploader = None if cfg.no_record else self._uploader_factory(runtime_session_id)
                 self._prepare_runtime_cpu_affinity()
@@ -1252,6 +1259,22 @@ class SessionManager:
             )
             if passed or liveness_shadow_mode:
                 return matched_result.student_id, matched_result.student_name
+            self._station_events.append(
+                {
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "frame_number": 0,
+                    "event_type": EventType.LIVENESS_FAILED.value,
+                    "severity": Severity.CRITICAL.value,
+                    "details": {
+                        "student_id": matched_result.student_id,
+                        "student_name": matched_result.student_name,
+                        "average_score": round(average, 4),
+                        "threshold": liveness_threshold,
+                        "samples": len(liveness_scores),
+                    },
+                }
+            )
+            self._station_events = self._station_events[-10:]
             raise SessionError(
                 f"Prova de vida não confirmada (score médio {average:.2f}, "
                 f"mínimo {liveness_threshold:.2f})"

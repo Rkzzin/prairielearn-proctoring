@@ -69,6 +69,7 @@ _EVENT_REASON_LABELS = {
     "DIFFERENT_USER_BLOCKED": "Avaliação pausada: usuário diferente detectado",
     "ELECTRONIC_DEVICE_DETECTED": "Celular ou notebook detectado",
     "ELECTRONIC_DEVICE_CLEARED": "Equipamento eletrônico removido",
+    "LIVENESS_FAILED": "Tentativa reprovada na prova de vida",
     "BLOCK_TIMEOUT_CANCELLED": "Avaliação cancelada: bloqueio não resolvido no prazo",
     "BROWSER_EXIT": "Avaliação pausada: navegador protegido encerrado",
 }

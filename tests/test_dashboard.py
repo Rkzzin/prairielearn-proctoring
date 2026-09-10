@@ -290,7 +290,7 @@ async def test_station_partial_offers_exit_when_station_reports_waiting_student(
 
 
 @pytest.mark.asyncio
-async def test_station_partial_highlights_critical_electronic_device_event(
+async def test_station_partial_highlights_critical_liveness_event(
     tmp_path, dashboard_database_url
 ):
     app = _make_app(tmp_path, dashboard_database_url)
@@ -301,7 +301,7 @@ async def test_station_partial_highlights_critical_electronic_device_event(
             status=StationStatus.SESSION,
             last_event=SessionEventPayload(
                 timestamp=datetime.now(timezone.utc),
-                event_type="ELECTRONIC_DEVICE_DETECTED",
+                event_type="LIVENESS_FAILED",
                 severity=EventSeverity.CRITICAL,
             ),
         )
@@ -312,7 +312,7 @@ async def test_station_partial_highlights_critical_electronic_device_event(
 
     assert response.status_code == 200
     assert "event-line-critical" in response.text
-    assert "ELECTRONIC_DEVICE_DETECTED" in response.text
+    assert "Tentativa reprovada na prova de vida" in response.text
     assert "CRÍTICO" in response.text
 
 
