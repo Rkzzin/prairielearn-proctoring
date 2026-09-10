@@ -44,6 +44,23 @@ def _make_app(tmp_path, database_url, *, admin_auth: bool = False):
     return create_app(config=config)
 
 
+def test_dashboard_exam_config_defaults_are_tolerant_but_keep_liveness_blocking():
+    config = ExamConfigPayload(
+        turma="T2026-T2",
+        assessment="Quiz-01",
+        prairielearn_url="https://us.prairietest.com",
+    )
+
+    assert config.gaze_h_threshold == 0.60
+    assert config.gaze_v_threshold == 0.60
+    assert config.gaze_duration_sec == 10.0
+    assert config.absence_timeout_sec == 10.0
+    assert config.multi_face_block is True
+    assert config.liveness_enabled is True
+    assert config.liveness_average_threshold == 0.80
+    assert config.liveness_shadow_mode is False
+
+
 def _station_headers(app, station_id: str, token: str = "test-token") -> dict[str, str]:
     """Emite (sobrescrevendo se já existir) um token pra `station_id` e retorna os headers de auth."""
     app.state.store.set_station_token_hash(station_id, hash_password(token))

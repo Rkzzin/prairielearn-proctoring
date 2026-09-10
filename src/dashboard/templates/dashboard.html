@@ -140,7 +140,7 @@ login.microsoftonline.com
 us.prairietest.com</textarea></label>
     <fieldset class="station-selector">
       <legend>Câmeras</legend>
-      <p>Somente a câmera principal é usada para identificação e detecções. A câmera ambiente é apenas gravada.</p>
+      <p>A câmera principal identifica o aluno. A detecção de eletrônicos pode usar as câmeras habilitadas abaixo.</p>
       <label>Câmera principal
         <select name="primary_camera_index" id="primary-camera-select"></select>
       </label>
@@ -149,13 +149,13 @@ us.prairietest.com</textarea></label>
       </label>
       <label class="checkbox"><input type="checkbox" name="electronic_device_primary_enabled"> Detectar celular e notebook na câmera principal</label>
       <label class="checkbox"><input type="checkbox" name="electronic_device_secondary_enabled"> Detectar celular e notebook na câmera ambiente</label>
-      <p>A detecção ocorre somente durante a prova e gera um aviso visual sem bloquear a avaliação.</p>
+      <p>A detecção ocorre somente durante a prova, registra alerta crítico no dashboard e não bloqueia a avaliação.</p>
       <p class="form-error" id="camera-config-error" hidden></p>
     </fieldset>
-    <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.35"></label>
+    <label>Gaze horizontal<input type="number" step="0.01" name="gaze_h_threshold" value="0.60"></label>
     <label>Gaze vertical (olhar para baixo)<input type="number" step="0.01" name="gaze_v_threshold" value="0.60"></label>
-    <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="3.0"></label>
-    <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="5.0"></label>
+    <label>Duração do gaze<input type="number" step="0.1" name="gaze_duration_sec" value="10.0"></label>
+    <label>Timeout de ausência<input type="number" step="0.1" name="absence_timeout_sec" value="10.0"></label>
     <label class="checkbox"><input type="checkbox" name="multi_face_block" checked> Bloquear múltiplas faces</label>
     <fieldset class="station-selector">
       <legend>Prova de vida</legend>
@@ -163,8 +163,8 @@ us.prairietest.com</textarea></label>
       <label>Score médio mínimo
         <input type="number" name="liveness_average_threshold" value="0.80" min="0" max="1" step="0.01">
       </label>
-      <label class="checkbox"><input type="checkbox" name="liveness_shadow_mode" checked> Somente monitorar (não bloquear)</label>
-      <p>O score é calculado sobre três frames. Use o modo de monitoramento durante a calibração.</p>
+      <label class="checkbox"><input type="checkbox" name="liveness_shadow_mode"> Somente monitorar (não bloquear)</label>
+      <p>O score é calculado sobre três frames. Por padrão, fotos e telas são recusadas.</p>
     </fieldset>
     <label class="checkbox"><input type="checkbox" name="allow_repeat_attempts" checked> Permitir mais de uma tentativa por aluno</label>
     <div class="modal-actions">
