@@ -479,6 +479,51 @@ def test_electronic_device_monitor_is_not_started_during_authentication():
     assert monitor_factory_calls == []
 
 
+def test_electronic_device_monitor_uses_shared_gaze_confirmation_time():
+    factory_calls = []
+
+    class Monitor:
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def submit_primary(self, _frame):
+            pass
+
+        def drain_transitions(self):
+            return []
+
+    def monitor_factory(**kwargs):
+        factory_calls.append(kwargs)
+        return Monitor()
+
+    manager, *_ = _make_manager(
+        identify_results=[
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="123",
+                student_name="Alice",
+                confidence=0.9,
+            )
+        ],
+        engine_states=[ProctorState.NORMAL],
+        frames=["identify-frame", "session-frame"],
+        electronic_device_monitor_factory=monitor_factory,
+    )
+    manager.update_config(
+        turma_id="ES2025-T1",
+        electronic_device_primary_enabled=True,
+    )
+    manager._proctor_cfg.gaze_duration_sec = 10.0
+
+    manager.start_session()
+
+    assert factory_calls[0]["confirmation_sec"] == 10.0
+    manager.stop_session(reason="test")
+
+
 def test_electronic_device_calibration_persists_normalized_regions(tmp_path, monkeypatch):
     class Detector:
         calls = 0

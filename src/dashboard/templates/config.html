@@ -27,7 +27,7 @@
         <div><dt>Tentativas</dt><dd>{{ 'Permitidas' if config.allow_repeat_attempts else 'Uma por aluno' }}</dd></div>
         <div><dt>Olhar horizontal</dt><dd>{{ config.gaze_h_threshold }}</dd></div>
         <div><dt>Olhar para baixo</dt><dd>{{ config.gaze_v_threshold }}</dd></div>
-        <div><dt>Duração do olhar</dt><dd>{{ config.gaze_duration_sec }} s</dd></div>
+        <div><dt>Confirmação de gaze, eletrônicos e múltiplas faces</dt><dd>{{ config.gaze_duration_sec }} s</dd></div>
         <div><dt>Ausência</dt><dd>{{ config.absence_timeout_sec }} s</dd></div>
         <div><dt>Comportamento</dt><dd>{{ 'Flexível: apenas alertar' if config.flexible_mode else 'Rígido: bloquear violações' }}</dd></div>
         <div><dt>Câmera principal</dt><dd>{{ '/dev/video' ~ config.primary_camera_index if config.primary_camera_index is not none else 'Padrão da estação' }}</dd></div>

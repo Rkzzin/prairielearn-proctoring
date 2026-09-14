@@ -317,10 +317,35 @@ class TestAbsenceFSM:
 
 
 class TestMultiFaceFSM:
-    def test_multi_face_blocks_immediately(self, engine: ProctorEngine):
-        state = _feed(engine, _gaze(face_count=2))
+    def test_multi_face_uses_shared_gaze_duration(self, tmp_path: Path):
+        engine = _make_engine(tmp_path, _make_config(gaze_dur=10.0))
+        now = [100.0]
+
+        with patch("src.proctor.engine.time.time", side_effect=lambda: now[0]):
+            state = _feed(engine, _gaze(face_count=2))
+            assert state == ProctorState.NORMAL
+            now[0] = 109.9
+            state = _feed(engine, _gaze(face_count=2))
+            assert state == ProctorState.NORMAL
+            now[0] = 110.0
+            state = _feed(engine, _gaze(face_count=2))
+
         assert state == ProctorState.BLOCKED
         assert engine.block_reason == BlockReason.MULTI_FACE
+
+    def test_transient_multi_face_resets_shared_confirmation(self, tmp_path: Path):
+        engine = _make_engine(tmp_path, _make_config(gaze_dur=10.0))
+        now = [100.0]
+
+        with patch("src.proctor.engine.time.time", side_effect=lambda: now[0]):
+            _feed(engine, _gaze(face_count=2))
+            _feed(engine, _gaze(face_count=1))
+            now[0] = 200.0
+            _feed(engine, _gaze(face_count=2))
+            now[0] = 209.9
+            state = _feed(engine, _gaze(face_count=2))
+
+        assert state == ProctorState.NORMAL
 
     def test_multi_face_no_block_when_disabled(self, tmp_path: Path):
         cfg = _make_config(multi_face_block=False)

@@ -44,6 +44,27 @@ O repositório serve **dois deploys independentes, em máquinas diferentes**:
 
 O mesmo `.env.example` serve os dois papéis (`AppConfig`/`DashboardConfig` compartilhados), mas `PROCTOR_DASHBOARD_ADMIN_USER`/`PASSWORD` (login do professor) e `PROCTOR_DASHBOARD_STATION_TOKEN` (autentica só o heartbeat de uma estação, emitido via `scripts/issue_station_token.py`) **não são a mesma credencial**. Campos de estação (`PROCTOR_FACE_*`, `PROCTOR_GAZE_*`, `PROCTOR_REC_*`, `STATION_ID`/`TOKEN`...) não têm efeito no dashboard e vice-versa — ver `.env.example` para a lista completa comentada.
 
+### Confirmação dos alertas
+
+No setup da estação pelo dashboard, o campo **Tempo de confirmação dos alertas**
+é compartilhado por três verificações:
+
+- olhar desviado;
+- celular ou notebook não autorizado;
+- múltiplas faces.
+
+A estação inicia a contagem quando detecta uma dessas condições e só registra o
+evento se ela continuar presente durante todo o período configurado. Se a
+condição desaparecer antes do prazo, a contagem é cancelada e nenhum alerta é
+gerado. O padrão é `10` segundos. A detecção de eletrônicos mantém ainda o
+pré-filtro de duas detecções em três verificações antes de iniciar essa contagem.
+
+Esse campo não controla ausência, que usa **Timeout de ausência**, nem prova de
+vida, que acontece antes do início da avaliação. No modo flexível, os eventos
+confirmados são enviados ao dashboard sem bloquear a prova; no modo rígido, gaze
+e múltiplas faces podem bloquear após a confirmação. Eletrônicos permanecem
+sempre não bloqueantes.
+
 ## Configurar uma máquina do zero
 
 - Estação (NUC): [`docs/setup_nuc.md`](docs/setup_nuc.md)

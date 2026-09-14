@@ -55,6 +55,7 @@ def test_monitor_requires_two_of_three_detections_and_emits_clear():
         secondary_enabled=False,
         secondary_preview_url=None,
         interval_sec=0.01,
+        confirmation_sec=0.0,
     )
     monitor.submit_primary(np.zeros((10, 10, 3), dtype=np.uint8))
     monitor.start()
@@ -84,6 +85,7 @@ def test_monitor_ignores_calibrated_device_region():
         secondary_enabled=False,
         secondary_preview_url=None,
         interval_sec=0.01,
+        confirmation_sec=0.0,
         ignored_regions={
             "principal": [
                 {"label": "notebook", "box": [0.15, 0.12, 0.33, 0.30]}
@@ -97,3 +99,58 @@ def test_monitor_ignores_calibrated_device_region():
     monitor.stop()
 
     assert transitions == []
+
+
+def test_monitor_waits_shared_confirmation_time_before_emitting_detection():
+    detection = ElectronicDeviceDetection("celular", 0.9, (1, 2, 3, 4))
+    now = [0.0]
+    monitor = ElectronicDeviceMonitor(
+        detector=None,
+        primary_enabled=True,
+        secondary_enabled=False,
+        secondary_preview_url=None,
+        confirmation_sec=10.0,
+        clock_fn=lambda: now[0],
+    )
+
+    monitor._histories["principal"].append(True)
+    monitor._update_detection_state("principal", [detection])
+    now[0] = 1.0
+    monitor._histories["principal"].append(True)
+    monitor._update_detection_state("principal", [detection])
+    now[0] = 10.9
+    monitor._histories["principal"].append(True)
+    monitor._update_detection_state("principal", [detection])
+    assert monitor.drain_transitions() == []
+
+    now[0] = 11.0
+    monitor._histories["principal"].append(True)
+    monitor._update_detection_state("principal", [detection])
+
+    transitions = monitor.drain_transitions()
+    assert [(item.camera, item.active) for item in transitions] == [("principal", True)]
+
+
+def test_monitor_cancels_confirmation_when_detection_does_not_persist():
+    detection = ElectronicDeviceDetection("celular", 0.9, (1, 2, 3, 4))
+    now = [0.0]
+    monitor = ElectronicDeviceMonitor(
+        detector=None,
+        primary_enabled=True,
+        secondary_enabled=False,
+        secondary_preview_url=None,
+        confirmation_sec=10.0,
+        clock_fn=lambda: now[0],
+    )
+
+    for detected in (True, True, False, False):
+        monitor._histories["principal"].append(detected)
+        monitor._update_detection_state(
+            "principal", [detection] if detected else []
+        )
+        now[0] += 1.0
+    now[0] = 20.0
+    monitor._histories["principal"].append(True)
+    monitor._update_detection_state("principal", [detection])
+
+    assert monitor.drain_transitions() == []

@@ -1053,6 +1053,7 @@ class SessionManager:
                             and self._capture is not None
                             else None
                         ),
+                        confirmation_sec=self._proctor_cfg.gaze_duration_sec,
                     )
                     self._electronic_device_active_cameras.clear()
                     self._device_monitor.start()

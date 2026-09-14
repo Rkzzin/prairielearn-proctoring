@@ -130,6 +130,7 @@ class ProctorEngine:
         # Timers
         self._warn_start: float = 0.0    # quando entrou em GAZE_WARN
         self._absence_start: float = 0.0  # quando o rosto sumiu
+        self._multi_face_start: float = 0.0
 
         self._frame_count: int = 0
         self._last_flexible_alert_at: dict[BlockReason, float] = {}
@@ -260,6 +261,7 @@ class ProctorEngine:
 
         # ── Sem rosto ───────────────────────────────
         if gaze_data is None:
+            self._multi_face_start = 0.0
             self._handle_no_face()
             return
 
@@ -268,8 +270,13 @@ class ProctorEngine:
 
         # ── Múltiplos rostos (bloqueio imediato) ────
         if gaze_data.face_count > 1 and self._cfg.multi_face_block:
-            self._block(BlockReason.MULTI_FACE)
+            now = time.time()
+            if self._multi_face_start == 0.0:
+                self._multi_face_start = now
+            elif now - self._multi_face_start >= self._cfg.gaze_duration_sec:
+                self._block(BlockReason.MULTI_FACE)
             return
+        self._multi_face_start = 0.0
 
         # ── Análise de gaze ─────────────────────────
         if self.state == ProctorState.ABSENCE:
@@ -407,6 +414,7 @@ class ProctorEngine:
             self._warn_start = 0.0
             self._absence_start = 0.0
             self._deviation_streak = 0
+            self._multi_face_start = 0.0
             cooldown_seconds = 300.0 if reason == BlockReason.ABSENCE else 60.0
             if last_alert_at is not None and now - last_alert_at < cooldown_seconds:
                 return

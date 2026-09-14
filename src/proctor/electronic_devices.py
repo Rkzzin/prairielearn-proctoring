@@ -215,12 +215,16 @@ class ElectronicDeviceMonitor:
         secondary_enabled: bool,
         secondary_preview_url: str | None,
         interval_sec: float = 1.0,
+        confirmation_sec: float = 10.0,
         ignored_regions: dict[str, list[dict[str, Any]]] | None = None,
         preview_capture_factory: Callable[[int | str], Any] = open_video_capture,
+        clock_fn: Callable[[], float] = time.monotonic,
     ):
         self._detector = detector
         self._primary_enabled = primary_enabled
         self._interval_sec = interval_sec
+        self._confirmation_sec = max(0.0, confirmation_sec)
+        self._clock = clock_fn
         self._ignored_regions = ignored_regions or {}
         self._primary_frame: np.ndarray | None = None
         self._frame_lock = threading.Lock()
@@ -234,6 +238,10 @@ class ElectronicDeviceMonitor:
             "ambiente": deque(maxlen=3),
         }
         self._active = {"principal": False, "ambiente": False}
+        self._candidate_since: dict[str, float | None] = {
+            "principal": None,
+            "ambiente": None,
+        }
         self._results: queue.SimpleQueue[ElectronicDeviceTransition] = queue.SimpleQueue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -294,12 +302,28 @@ class ElectronicDeviceMonitor:
                 )
                 history = self._histories[camera]
                 history.append(bool(detections))
-                active = sum(history) >= 2
-                if active != self._active[camera]:
-                    self._active[camera] = active
-                    self._results.put(
-                        ElectronicDeviceTransition(camera, active, tuple(detections))
-                    )
+                self._update_detection_state(camera, detections)
+
+    def _update_detection_state(
+        self,
+        camera: str,
+        detections: list[ElectronicDeviceDetection],
+    ) -> None:
+        history = self._histories[camera]
+        candidate_present = sum(history) >= 2
+        now = self._clock()
+        if candidate_present:
+            if self._candidate_since[camera] is None:
+                self._candidate_since[camera] = now
+            active = now - self._candidate_since[camera] >= self._confirmation_sec
+        else:
+            self._candidate_since[camera] = None
+            active = False
+        if active != self._active[camera]:
+            self._active[camera] = active
+            self._results.put(
+                ElectronicDeviceTransition(camera, active, tuple(detections))
+            )
 
     def _is_ignored(
         self,
