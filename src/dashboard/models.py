@@ -75,6 +75,31 @@ class EventSnapshotRecord(BaseModel):
     error: str | None = None
 
 
+class NotificationSettings(BaseModel):
+    enabled: bool = False
+    sender_email: str = ""
+    recipient_emails: list[str] = Field(default_factory=list, max_length=50)
+    image_link_limit: int = Field(default=12, ge=0, le=100)
+    ses_region: str = "sa-east-1"
+    public_dashboard_url: str = ""
+
+
+class SessionEmailReport(BaseModel):
+    session_id: str
+    status: str = "queued"
+    sender_email: str
+    recipient_emails: list[str]
+    image_link_limit: int
+    ses_region: str
+    public_dashboard_url: str
+    attempts: int = 0
+    claim_id: str | None = None
+    claimed_at: datetime | None = None
+    sent_at: datetime | None = None
+    ses_message_id: str | None = None
+    error: str | None = None
+
+
 class RecordingAsset(BaseModel):
     label: str
     url: str | None = None

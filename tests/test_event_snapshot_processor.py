@@ -140,3 +140,35 @@ def test_processor_marks_snapshot_failed_without_webcam_recording(tmp_path):
     processor._process(session, [snapshot])
 
     assert store.finished[0][1]["error"] == "gravação da câmera principal indisponível"
+
+
+def test_processor_notifies_report_pipeline_after_images_finish(tmp_path):
+    now = datetime.now(timezone.utc)
+    session = SessionRecord(
+        session_id="session-1",
+        station_id="nuc-1",
+        turma="T1",
+        assessment="Quiz",
+        started_at=now,
+        ended_at=now,
+        status=StationStatus.COMPLETED,
+    )
+
+    class Store(FakeStore):
+        def get_session(self, _session_id):
+            return session
+
+        def claim_event_snapshots(self, _session_id):
+            return []
+
+    completed = []
+    processor = EventSnapshotProcessor(
+        store=Store(),
+        app_config=AppConfig(data_dir=tmp_path),
+        s3_client=FakeS3(),
+        on_complete=completed.append,
+    )
+
+    processor._run(session.session_id)
+
+    assert completed == [session.session_id]

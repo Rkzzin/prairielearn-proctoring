@@ -132,6 +132,28 @@
   {% endif %}
 </section>
 
+{% if session.ended_at %}
+<section class="panel session-email-report">
+  <div class="panel-header">
+    <div>
+      <p class="eyebrow">Distribuição</p>
+      <h2>Relatório por e-mail</h2>
+      {% if email_report %}
+      <p>Status: <strong>{{ email_report.status }}</strong>{% if email_report.sent_at %} · enviado em {{ email_report.sent_at.isoformat() }}{% endif %}</p>
+      <p>Destinatários: {{ email_report.recipient_emails|join(', ') }}</p>
+      {% if email_report.error %}<p class="form-error">{{ email_report.error }}</p>{% endif %}
+      {% else %}
+      <p>O relatório ainda não foi enviado.</p>
+      {% endif %}
+    </div>
+    <button type="button" class="button-secondary event-snapshot-process" id="email-report-send" onclick="sendEmailReport()">
+      {{ "Reenviar relatório" if email_report and email_report.status == "sent" else "Enviar relatório" }}
+    </button>
+  </div>
+  <p id="email-report-status"></p>
+</section>
+{% endif %}
+
 <section class="panel event-review">
   <div class="panel-header">
     <div>
@@ -200,6 +222,24 @@ async function processEventSnapshots() {
   }
   status.textContent = 'Processamento iniciado. Atualizando a página...';
   window.setTimeout(() => window.location.reload(), 2500);
+}
+async function sendEmailReport() {
+  const button = document.getElementById('email-report-send');
+  const status = document.getElementById('email-report-status');
+  button.disabled = true;
+  button.textContent = 'Enfileirando relatório...';
+  const response = await fetch('/api/sessions/{{ session.session_id }}/email-report/send', {
+    method: 'POST'
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    status.textContent = payload.detail || 'Não foi possível enviar o relatório.';
+    button.disabled = false;
+    button.textContent = 'Enviar relatório';
+    return;
+  }
+  status.textContent = 'Relatório enfileirado para envio.';
+  window.setTimeout(() => window.location.reload(), 2000);
 }
 const sessionStart = document.getElementById('session-start');
 if (sessionStart) {

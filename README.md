@@ -65,6 +65,28 @@ confirmados são enviados ao dashboard sem bloquear a prova; no modo rígido, ga
 e múltiplas faces podem bloquear após a confirmação. Eletrônicos permanecem
 sempre não bloqueantes.
 
+### Relatórios por e-mail
+
+O dashboard pode enviar pelo AWS SES um resumo depois que uma avaliação termina
+e as imagens dos alertas são processadas. A configuração fica em
+**Configuração → Notificações por e-mail** e contém o remetente verificado no
+SES, a lista global de destinatários, a região SES, a URL pública do dashboard e
+a quantidade de links de imagens incluídos.
+
+O limite padrão é `12`. Valores de `1` a `100` priorizam eventos `CRITICAL` e
+depois `WARNING`, preservando a ordem cronológica em cada grupo. O valor `0`
+inclui links para todas as imagens disponíveis. Os links apontam para o
+dashboard autenticado, que cria uma URL temporária do S3 somente no momento do
+acesso; URLs assinadas expiradas não são gravadas no e-mail.
+
+O estado do envio fica no PostgreSQL e evita duplicatas durante a operação
+normal, inclusive com mais de um processo do dashboard. A recuperação após
+falhas usa entrega pelo menos uma vez: uma interrupção rara depois de o SES
+aceitar a mensagem, mas antes de o dashboard gravar a confirmação, pode gerar
+uma segunda entrega. Na página da sessão é possível acompanhar falhas e enviar
+ou reenviar o relatório manualmente. Sessões finalizadas antes da ativação não
+disparam e-mail em massa; use o botão manual quando necessário.
+
 ## Configurar uma máquina do zero
 
 - Estação (NUC): [`docs/setup_nuc.md`](docs/setup_nuc.md)

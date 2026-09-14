@@ -116,6 +116,27 @@ depois exige apagar a linha correspondente na tabela `credentials` (ex:
 `DELETE FROM credentials WHERE username = 'professor';` via `psql`) e
 reiniciar o serviço (não existe rota de "trocar senha" na UI ainda).
 
+### 5.1. Preparar o AWS SES para relatórios
+
+O envio de relatórios usa as mesmas credenciais AWS carregadas pelo dashboard.
+A identidade usada como remetente precisa estar verificada no SES e a role ou o
+usuário IAM precisa permitir `ses:SendRawEmail`. Prefira verificar o domínio e
+ativar DKIM. Enquanto a conta SES estiver no sandbox, os destinatários também
+precisam estar verificados; solicite acesso de produção antes do uso real.
+
+Depois que o dashboard estiver no ar, abra **Configuração → Notificações por
+e-mail** e informe:
+
+- remetente verificado;
+- destinatários, um por linha (máximo de 50, limite do SES);
+- região na qual a identidade SES foi verificada;
+- URL HTTPS pública do dashboard;
+- quantidade de links de imagens (`0` envia todos; `1` a `100` limita e
+  prioriza eventos críticos).
+
+Não grave credenciais AWS nessa tela. Elas continuam no `.env` ou, de
+preferência, numa IAM Role associada à instância.
+
 ## 6. Instalar o serviço systemd (script)
 
 ```bash

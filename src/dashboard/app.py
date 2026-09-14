@@ -14,6 +14,7 @@ import unicodedata
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import anyio
 from fastapi import (
@@ -26,7 +27,13 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -40,11 +47,13 @@ from src.dashboard.models import (
     CameraSnapshotRecord,
     CommandType,
     ExamConfigPayload,
+    NotificationSettings,
     SessionEventPayload,
     SessionRecord,
     StationCreatePayload,
     StationHeartbeat,
 )
+from src.dashboard.session_report_mailer import SessionReportMailer
 from src.dashboard.store import DashboardStore
 
 #: Rotas que só a NUC chama — autenticadas por token de estação
@@ -105,6 +114,7 @@ def create_app(
     config: AppConfig | None = None,
     store: DashboardStore | None = None,
     event_snapshot_processor: EventSnapshotProcessor | None = None,
+    session_report_mailer: SessionReportMailer | None = None,
 ) -> FastAPI:
     app_config = config or AppConfig()
     dashboard_dir = Path(__file__).parent
@@ -117,9 +127,12 @@ def create_app(
         app_config.dashboard.database_url,
         app_config=app_config,
     )
+    auth_username = app_config.dashboard.admin_user
+    report_mailer = session_report_mailer or SessionReportMailer(store=dashboard_store)
     snapshot_processor = event_snapshot_processor or EventSnapshotProcessor(
         store=dashboard_store,
         app_config=app_config,
+        on_complete=report_mailer.enqueue,
     )
     camera_snapshot_dir = Path(app_config.data_dir) / "dashboard-camera-snapshots"
     camera_snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -134,8 +147,13 @@ def create_app(
     app.state.templates = templates
     app.state.s3_enrollment_service = S3EnrollmentService(app_config)
     app.state.event_snapshot_processor = snapshot_processor
+    app.state.session_report_mailer = report_mailer
+    snapshot_processor.resume_pending()
+    if auth_username:
+        for session_id in dashboard_store.waiting_email_report_ids():
+            snapshot_processor.enqueue(session_id)
+        report_mailer.resume_pending()
 
-    auth_username = app_config.dashboard.admin_user
     if auth_username:
         admin_password = app_config.dashboard.admin_password
         if admin_password and dashboard_store.get_credential_hash(auth_username) is None:
@@ -217,6 +235,7 @@ def create_app(
             request,
             "config.html",
             title="Configurações distribuídas",
+            notification_settings=dashboard_store.get_notification_settings(),
             **snapshot,
         )
 
@@ -264,6 +283,7 @@ def create_app(
             return HTMLResponse("Sessão não encontrada.", status_code=404)
         timeline = _build_timeline(session)
         event_snapshots = dashboard_store.list_event_snapshots(session_id)
+        email_report = dashboard_store.get_email_report(session_id)
         event_snapshot_cards = [
             {
                 "snapshot": snapshot,
@@ -288,6 +308,7 @@ def create_app(
                 snapshot.status in {"queued", "processing"}
                 for snapshot in event_snapshots
             ),
+            email_report=email_report,
             event_counts=_event_counts(timeline),
             integrity=compute_integrity_score(session),
             duration_label=_format_duration(session.duration_seconds),
@@ -549,8 +570,9 @@ def create_app(
         session = dashboard_store.finalize_session(session_id)
         if session is None:
             return JSONResponse({"detail": "Sessão não encontrada."}, status_code=404)
-        if session.recordings:
-            snapshot_processor.enqueue(session_id)
+        if auth_username:
+            report_mailer.prepare(session_id)
+        snapshot_processor.enqueue(session_id)
         return JSONResponse(session.model_dump(mode="json"))
 
     @app.post("/api/sessions/{session_id}/event-snapshots/process")
@@ -563,6 +585,102 @@ def create_app(
             raise HTTPException(status_code=409, detail="Finalize a sessão antes de processar imagens.")
         queued = snapshot_processor.enqueue(session_id, retry_failed=True)
         return JSONResponse({"status": "queued", "queued": queued}, status_code=202)
+
+    @app.get("/sessions/{session_id}/event-snapshots/{event_key}")
+    async def event_snapshot_image(session_id: str, event_key: str) -> RedirectResponse:
+        if not auth_username:
+            raise HTTPException(status_code=404, detail="Imagem do evento não encontrada.")
+        snapshot = dashboard_store.get_event_snapshot(session_id, event_key)
+        if snapshot is None or snapshot.status != "ready" or not snapshot.url:
+            raise HTTPException(status_code=404, detail="Imagem do evento não encontrada.")
+        return RedirectResponse(snapshot.url, status_code=302)
+
+    @app.post("/api/sessions/{session_id}/email-report/send")
+    async def send_session_email_report(request: Request, session_id: str) -> JSONResponse:
+        require_same_origin(request)
+        if not auth_username:
+            raise HTTPException(
+                status_code=409,
+                detail="Configure a autenticação administrativa antes do envio.",
+            )
+        session = dashboard_store.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+        if session.ended_at is None:
+            raise HTTPException(status_code=409, detail="Finalize a sessão antes do envio.")
+        flagged_count = sum(
+            event.severity.value in {"WARNING", "CRITICAL"}
+            for event in session.events
+        )
+        snapshots = dashboard_store.list_event_snapshots(session_id)
+        if flagged_count > len(snapshots) or any(
+            snapshot.status in {"queued", "processing"} for snapshot in snapshots
+        ):
+            snapshot_processor.enqueue(session_id, retry_failed=True)
+            raise HTTPException(
+                status_code=409,
+                detail="As imagens ainda estão sendo processadas. Tente novamente em instantes.",
+            )
+        current_report = dashboard_store.get_email_report(session_id)
+        if current_report is not None and current_report.status in {
+            "waiting_snapshots",
+            "queued",
+            "sending",
+        }:
+            raise HTTPException(
+                status_code=409,
+                detail="O relatório desta sessão já está na fila de envio.",
+            )
+        queued = report_mailer.enqueue(session_id, force=True)
+        if not queued:
+            raise HTTPException(
+                status_code=409,
+                detail="Configure e ative as notificações por e-mail antes do envio.",
+            )
+        return JSONResponse({"status": "queued"}, status_code=202)
+
+    @app.post("/api/notification-settings")
+    async def save_notification_settings(
+        request: Request,
+        payload: NotificationSettings,
+    ) -> JSONResponse:
+        require_same_origin(request)
+        email_pattern = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+        sender = payload.sender_email.strip().lower()
+        recipients = list(
+            dict.fromkeys(email.strip().lower() for email in payload.recipient_emails)
+        )
+        public_url = payload.public_dashboard_url.rstrip("/")
+        parsed_public_url = urlsplit(public_url)
+        if payload.enabled and (
+            not auth_username
+            or not email_pattern.fullmatch(sender)
+            or not recipients
+            or any(not email_pattern.fullmatch(email) for email in recipients)
+            or not payload.ses_region.strip()
+            or parsed_public_url.scheme != "https"
+            or not parsed_public_url.hostname
+            or parsed_public_url.username is not None
+            or parsed_public_url.password is not None
+            or bool(parsed_public_url.query)
+            or bool(parsed_public_url.fragment)
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Informe remetente, destinatários, região SES e URL pública HTTPS válidos."
+                ),
+            )
+        normalized = payload.model_copy(
+            update={
+                "sender_email": sender,
+                "recipient_emails": recipients,
+                "ses_region": payload.ses_region.strip(),
+                "public_dashboard_url": public_url,
+            }
+        )
+        saved = dashboard_store.save_notification_settings(normalized)
+        return JSONResponse(saved.model_dump(mode="json"))
 
     @app.post("/api/sessions/{session_id}/events")
     async def append_session_events(

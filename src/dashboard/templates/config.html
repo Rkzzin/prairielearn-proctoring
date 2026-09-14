@@ -1,5 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
+<section class="panel notification-settings">
+  <div class="panel-header">
+    <div>
+      <p class="eyebrow">Relatórios automáticos</p>
+      <h2>Notificações por e-mail</h2>
+      <p>O dashboard envia pelo AWS SES depois que as imagens dos alertas forem processadas.</p>
+    </div>
+  </div>
+  <form id="notification-settings-form" onsubmit="saveNotificationSettings(event)">
+    <label class="checkbox"><input type="checkbox" name="enabled" {% if notification_settings.enabled %}checked{% endif %}> Enviar relatório para todas as avaliações finalizadas</label>
+    <label>Remetente verificado no AWS SES
+      <input type="email" name="sender_email" value="{{ notification_settings.sender_email }}" placeholder="proctoring@instituicao.edu.br">
+    </label>
+    <label>Destinatários, um por linha (máximo de 50)
+      <textarea name="recipient_emails" rows="5" placeholder="professor@instituicao.edu.br">{{ notification_settings.recipient_emails|join('\n') }}</textarea>
+    </label>
+    <div class="form-grid">
+      <label>Quantidade de imagens no e-mail
+        <input type="number" name="image_link_limit" min="0" max="100" value="{{ notification_settings.image_link_limit }}">
+        <small>Use 0 para incluir links para todas; valores de 1 a 100 priorizam eventos críticos.</small>
+      </label>
+      <label>Região AWS SES<input type="text" name="ses_region" value="{{ notification_settings.ses_region }}"></label>
+      <label>URL pública do dashboard<input type="url" name="public_dashboard_url" value="{{ notification_settings.public_dashboard_url }}"></label>
+    </div>
+    <p class="form-error" id="notification-settings-error" hidden></p>
+    <p id="notification-settings-success" hidden>Configuração salva.</p>
+    <button type="submit">Salvar notificações</button>
+  </form>
+</section>
+
 <section class="panel">
   <div class="panel-header">
     <div>
@@ -57,6 +87,36 @@
 </section>
 
 <script>
+async function saveNotificationSettings(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const data = new FormData(form);
+  const error = document.getElementById('notification-settings-error');
+  const success = document.getElementById('notification-settings-success');
+  const payload = {
+    enabled: data.get('enabled') === 'on',
+    sender_email: String(data.get('sender_email') || ''),
+    recipient_emails: String(data.get('recipient_emails') || '').split('\n').map(value => value.trim()).filter(Boolean),
+    image_link_limit: Number(data.get('image_link_limit')),
+    ses_region: String(data.get('ses_region') || ''),
+    public_dashboard_url: String(data.get('public_dashboard_url') || '')
+  };
+  const response = await fetch('/api/notification-settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    error.textContent = body.detail || 'Não foi possível salvar as notificações.';
+    error.hidden = false;
+    success.hidden = true;
+    return;
+  }
+  error.hidden = true;
+  success.hidden = false;
+}
+
 async function clearConfigs() {
   const confirmed = window.confirm('Limpar o histórico local de configurações distribuídas? Isso não afeta o que já foi aplicado nas estações.');
   if (!confirmed) {

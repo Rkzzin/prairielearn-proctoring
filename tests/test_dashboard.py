@@ -24,6 +24,7 @@ from src.dashboard.models import (
     CommandType,
     EventSeverity,
     ExamConfigPayload,
+    NotificationSettings,
     RecordingAsset,
     SessionEventPayload,
     SessionRecord,
@@ -40,6 +41,7 @@ def _make_app(
     *,
     admin_auth: bool = False,
     event_snapshot_processor=None,
+    session_report_mailer=None,
 ):
     dashboard = DashboardConfig(
         database_url=database_url,
@@ -50,6 +52,7 @@ def _make_app(
     return create_app(
         config=config,
         event_snapshot_processor=event_snapshot_processor,
+        session_report_mailer=session_report_mailer,
     )
 
 
@@ -72,12 +75,279 @@ def test_dashboard_exam_config_defaults_are_tolerant_but_keep_liveness_blocking(
 
 
 @pytest.mark.asyncio
+async def test_notification_settings_persist_email_list_and_unlimited_images(
+    tmp_path, dashboard_database_url
+):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    payload = {
+        "enabled": True,
+        "sender_email": "Proctor@Example.edu ",
+        "recipient_emails": ["Teacher@Example.edu", "teacher@example.edu"],
+        "image_link_limit": 0,
+        "ses_region": "sa-east-1",
+        "public_dashboard_url": "https://dashboard.example.edu/",
+    }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/notification-settings",
+            json=payload,
+            auth=("prof", "secret"),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["sender_email"] == "proctor@example.edu"
+    assert response.json()["recipient_emails"] == ["teacher@example.edu"]
+    assert response.json()["image_link_limit"] == 0
+    assert response.json()["public_dashboard_url"] == "https://dashboard.example.edu"
+    assert app.state.store.get_notification_settings().enabled is True
+
+
+@pytest.mark.asyncio
+async def test_notification_settings_require_admin_auth_and_valid_https_url(
+    tmp_path, dashboard_database_url
+):
+    payload = {
+        "enabled": True,
+        "sender_email": "proctor@example.edu",
+        "recipient_emails": ["teacher@example.edu"],
+        "image_link_limit": 12,
+        "ses_region": "sa-east-1",
+        "public_dashboard_url": "https://dashboard.example.edu",
+    }
+    app_without_auth = _make_app(tmp_path, dashboard_database_url)
+    async with AsyncClient(
+        transport=ASGITransport(app=app_without_auth), base_url="http://testserver"
+    ) as client:
+        no_auth_config = await client.post("/api/notification-settings", json=payload)
+
+    app_with_auth = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    async with AsyncClient(
+        transport=ASGITransport(app=app_with_auth), base_url="http://testserver"
+    ) as client:
+        invalid_url = await client.post(
+            "/api/notification-settings",
+            json={
+                **payload,
+                "public_dashboard_url": "https://dashboard.example.edu?token=unsafe",
+            },
+            auth=("prof", "secret"),
+        )
+        too_many_recipients = await client.post(
+            "/api/notification-settings",
+            json={
+                **payload,
+                "public_dashboard_url": "https://dashboard.example.edu",
+                "recipient_emails": [f"teacher-{index}@example.edu" for index in range(51)],
+            },
+            auth=("prof", "secret"),
+        )
+
+    assert no_auth_config.status_code == 422
+    assert invalid_url.status_code == 422
+    assert too_many_recipients.status_code == 422
+
+
+def test_waiting_email_report_persists_and_can_be_activated(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    now = datetime.now(timezone.utc)
+    store.register_session(
+        SessionRecord(
+            session_id="session-durable-email",
+            station_id="nuc-01",
+            turma="T1",
+            assessment="Quiz",
+            started_at=now,
+            ended_at=now,
+            status=StationStatus.COMPLETED,
+        )
+    )
+    settings = NotificationSettings(
+        enabled=True,
+        sender_email="proctor@example.edu",
+        recipient_emails=["teacher@example.edu"],
+        ses_region="sa-east-1",
+        public_dashboard_url="https://dashboard.example.edu",
+    )
+
+    assert store.queue_email_report(
+        "session-durable-email", settings, status="waiting_snapshots"
+    )
+    reloaded = DashboardStore(dashboard_database_url)
+    assert reloaded.waiting_email_report_ids() == ["session-durable-email"]
+    assert reloaded.activate_waiting_email_report("session-durable-email")
+    assert reloaded.claim_email_report("session-durable-email").status == "sending"
+
+
+@pytest.mark.asyncio
+async def test_finalize_persists_email_intent_before_snapshot_processing(
+    tmp_path, dashboard_database_url
+):
+    calls = []
+
+    class FakeMailer:
+        def resume_pending(self):
+            pass
+
+        def prepare(self, session_id):
+            calls.append(("prepare", session_id))
+            return True
+
+    class FakeProcessor:
+        def resume_pending(self):
+            pass
+
+        def enqueue(self, session_id, *, retry_failed=False):
+            calls.append(("snapshots", session_id))
+            return 0
+
+    app = _make_app(
+        tmp_path,
+        dashboard_database_url,
+        admin_auth=True,
+        event_snapshot_processor=FakeProcessor(),
+        session_report_mailer=FakeMailer(),
+    )
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="session-finalize-email",
+            station_id="nuc-01",
+            turma="T1",
+            assessment="Quiz",
+            started_at=datetime.now(timezone.utc),
+            status=StationStatus.SESSION,
+        )
+    )
+    headers = _station_headers(app, "nuc-01")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/sessions/session-finalize-email/finalize", headers=headers
+        )
+
+    assert response.status_code == 200
+    assert calls == [
+        ("prepare", "session-finalize-email"),
+        ("snapshots", "session-finalize-email"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_manual_email_report_uses_configured_mailer(
+    tmp_path, dashboard_database_url
+):
+    class FakeMailer:
+        def __init__(self):
+            self.calls = []
+
+        def resume_pending(self):
+            pass
+
+        def enqueue(self, session_id, *, force=False):
+            self.calls.append((session_id, force))
+            return True
+
+    mailer = FakeMailer()
+    app = _make_app(
+        tmp_path,
+        dashboard_database_url,
+        admin_auth=True,
+        session_report_mailer=mailer,
+    )
+    now = datetime.now(timezone.utc)
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="session-email",
+            station_id="nuc-01",
+            turma="T1",
+            assessment="Quiz",
+            started_at=now,
+            ended_at=now,
+            status=StationStatus.COMPLETED,
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/sessions/session-email/email-report/send",
+            auth=("prof", "secret"),
+        )
+
+    assert response.status_code == 202
+    assert mailer.calls == [("session-email", True)]
+
+
+@pytest.mark.asyncio
+async def test_manual_email_report_waits_for_event_snapshots(
+    tmp_path, dashboard_database_url
+):
+    class FakeMailer:
+        def resume_pending(self):
+            pass
+
+        def enqueue(self, session_id, *, force=False):
+            raise AssertionError("report must not be queued before snapshots")
+
+    class FakeProcessor:
+        def __init__(self):
+            self.calls = []
+
+        def resume_pending(self):
+            pass
+
+        def enqueue(self, session_id, *, retry_failed=False):
+            self.calls.append((session_id, retry_failed))
+            return 1
+
+    processor = FakeProcessor()
+    app = _make_app(
+        tmp_path,
+        dashboard_database_url,
+        admin_auth=True,
+        event_snapshot_processor=processor,
+        session_report_mailer=FakeMailer(),
+    )
+    now = datetime.now(timezone.utc)
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="email-waiting-images",
+            station_id="nuc-01",
+            turma="T1",
+            assessment="Quiz",
+            started_at=now,
+            ended_at=now,
+            status=StationStatus.COMPLETED,
+            events=[
+                SessionEventPayload(
+                    timestamp=now,
+                    event_type="GAZE_WARNING",
+                    severity=EventSeverity.WARNING,
+                )
+            ],
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/sessions/email-waiting-images/email-report/send",
+            auth=("prof", "secret"),
+        )
+
+    assert response.status_code == 409
+    assert "imagens ainda estão sendo processadas" in response.json()["detail"]
+    assert processor.calls == [("email-waiting-images", True)]
+
+
+@pytest.mark.asyncio
 async def test_finished_session_queues_and_renders_event_snapshot_grid(
     tmp_path, dashboard_database_url
 ):
     class FakeProcessor:
         def __init__(self):
             self.calls = []
+
+        def resume_pending(self):
+            pass
 
         def enqueue(self, session_id, *, retry_failed=False):
             self.calls.append((session_id, retry_failed))
@@ -889,8 +1159,8 @@ async def test_autostart_command_endpoints_enqueue_toggle(tmp_path, dashboard_da
 
 
 @pytest.mark.asyncio
-async def test_config_page_lists_history_without_a_form(tmp_path, dashboard_database_url):
-    """Distribuir config é por estação, no modal do painel — /config só lista o histórico."""
+async def test_config_page_lists_history_and_notification_settings(tmp_path, dashboard_database_url):
+    """Config de estação fica no modal; /config reúne histórico e notificações."""
     app = _make_app(tmp_path, dashboard_database_url)
     store = app.state.store
     store.create_config(
@@ -909,7 +1179,8 @@ async def test_config_page_lists_history_without_a_form(tmp_path, dashboard_data
     assert response.status_code == 200
     assert api_response.status_code == 200
     assert api_response.json()[0]["target_station_ids"] == ["nuc-01"]
-    assert "<form" not in response.text
+    assert 'id="new-config-form"' not in response.text
+    assert 'id="notification-settings-form"' in response.text
     assert '<select name="turma">' not in response.text
     assert "ES2025-T1" in response.text
     assert "Quiz-03" in response.text
@@ -1163,9 +1434,19 @@ def test_dashboard_store_clear_sessions_removes_local_history(dashboard_database
             turma="ES2025-T1",
             assessment="Quiz-03",
             started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            ended_at=datetime(2026, 4, 16, 18, 30, tzinfo=timezone.utc),
             student=StudentInfo(student_id="123", student_name="Alice Silva"),
             status=StationStatus.COMPLETED,
         )
+    )
+    assert store.queue_email_report(
+        "sess-1",
+        NotificationSettings(
+            enabled=True,
+            sender_email="proctor@example.edu",
+            recipient_emails=["teacher@example.edu"],
+            public_dashboard_url="https://dashboard.example.edu",
+        ),
     )
 
     removed = store.clear_sessions()
@@ -1173,6 +1454,7 @@ def test_dashboard_store_clear_sessions_removes_local_history(dashboard_database
 
     assert removed == 1
     assert reloaded.list_sessions() == []
+    assert reloaded.get_email_report("sess-1") is None
     assert reloaded.list_enrollments()[0].student_name == "Alice Silva"
 
 

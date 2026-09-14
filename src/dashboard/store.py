@@ -21,6 +21,8 @@ from src.dashboard.models import (
     EventSeverity,
     EventSnapshotRecord,
     ExamConfigPayload,
+    NotificationSettings,
+    SessionEmailReport,
     SessionEventPayload,
     SessionRecord,
     StationHeartbeat,
@@ -85,6 +87,7 @@ class DashboardStore:
         with self._lock:
             removed = len(self._sessions)
             self._sessions.clear()
+            self._db.execute("DELETE FROM session_email_reports")
             self._db.execute("DELETE FROM event_snapshots")
             self._db.execute("DELETE FROM sessions")
             self._db.commit()
@@ -177,6 +180,21 @@ class DashboardStore:
             self._db.commit()
             return snapshots
 
+    def recover_event_snapshot_session_ids(self) -> list[str]:
+        """Recoloca trabalhos interrompidos na fila após reinício do dashboard."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT session_id, payload FROM event_snapshots "
+                "WHERE payload->>'status' IN ('queued', 'processing')"
+            ).fetchall()
+            for row in rows:
+                snapshot = EventSnapshotRecord.model_validate(row["payload"])
+                if snapshot.status == "processing":
+                    snapshot.status = "queued"
+                    self._save_event_snapshot(snapshot)
+            self._db.commit()
+            return list(dict.fromkeys(row["session_id"] for row in rows))
+
     def finish_event_snapshot(
         self,
         snapshot: EventSnapshotRecord,
@@ -202,6 +220,188 @@ class DashboardStore:
             ).fetchall()
             snapshots = [EventSnapshotRecord.model_validate(row["payload"]) for row in rows]
             return [self._hydrate_event_snapshot(snapshot) for snapshot in snapshots]
+
+    def get_event_snapshot(
+        self,
+        session_id: str,
+        event_key: str,
+    ) -> EventSnapshotRecord | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM event_snapshots WHERE session_id = %s AND event_key = %s",
+                (session_id, event_key),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._hydrate_event_snapshot(
+                EventSnapshotRecord.model_validate(row["payload"])
+            )
+
+    def get_notification_settings(self) -> NotificationSettings:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM notification_settings WHERE id = 1"
+            ).fetchone()
+            if row is not None:
+                return NotificationSettings.model_validate(row["payload"])
+        return NotificationSettings(
+            ses_region=(self._app_cfg.s3.region if self._app_cfg is not None else "sa-east-1"),
+            public_dashboard_url=(
+                self._app_cfg.dashboard.base_url if self._app_cfg is not None else ""
+            ),
+        )
+
+    def save_notification_settings(
+        self,
+        settings: NotificationSettings,
+    ) -> NotificationSettings:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO notification_settings (id, payload) VALUES (1, %s::jsonb) "
+                "ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload",
+                (settings.model_dump_json(),),
+            )
+            self._db.commit()
+        return settings.model_copy(deep=True)
+
+    def queue_email_report(
+        self,
+        session_id: str,
+        settings: NotificationSettings,
+        *,
+        force: bool = False,
+        status: str = "queued",
+    ) -> bool:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or session.ended_at is None:
+                return False
+            existing_row = self._db.execute(
+                "SELECT payload FROM session_email_reports WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            existing = (
+                SessionEmailReport.model_validate(existing_row["payload"])
+                if existing_row
+                else None
+            )
+            if existing is not None and existing.status in {"queued", "sending", "sent"} and not force:
+                return False
+            report = SessionEmailReport(
+                session_id=session_id,
+                status=status,
+                sender_email=settings.sender_email,
+                recipient_emails=settings.recipient_emails,
+                image_link_limit=settings.image_link_limit,
+                ses_region=settings.ses_region,
+                public_dashboard_url=settings.public_dashboard_url,
+                attempts=existing.attempts if existing else 0,
+            )
+            self._save_email_report(report)
+            self._db.commit()
+            return True
+
+    def claim_email_report(self, session_id: str) -> SessionEmailReport | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM session_email_reports WHERE session_id = %s "
+                "FOR UPDATE SKIP LOCKED",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                self._db.rollback()
+                return None
+            report = SessionEmailReport.model_validate(row["payload"])
+            if report.status != "queued":
+                self._db.rollback()
+                return None
+            report.status = "sending"
+            report.attempts += 1
+            report.claim_id = uuid4().hex
+            report.claimed_at = datetime.now(timezone.utc)
+            report.error = None
+            self._save_email_report(report)
+            self._db.commit()
+            return report
+
+    def finish_email_report(
+        self,
+        report: SessionEmailReport,
+        *,
+        message_id: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        with self._lock:
+            claim_id = report.claim_id
+            report.status = "failed" if error else "sent"
+            report.error = error
+            report.ses_message_id = message_id
+            report.claim_id = None
+            report.claimed_at = None
+            report.sent_at = None if error else datetime.now(timezone.utc)
+            self._db.execute(
+                "UPDATE session_email_reports SET payload = %s::jsonb "
+                "WHERE session_id = %s AND payload->>'status' = 'sending' "
+                "AND payload->>'claim_id' = %s",
+                (report.model_dump_json(), report.session_id, claim_id),
+            )
+            self._db.commit()
+
+    def get_email_report(self, session_id: str) -> SessionEmailReport | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM session_email_reports WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            return SessionEmailReport.model_validate(row["payload"]) if row else None
+
+    def pending_email_report_ids(self) -> list[str]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT session_id, payload FROM session_email_reports "
+                "WHERE payload->>'status' IN ('queued', 'sending')"
+            ).fetchall()
+            pending = []
+            stale_before = datetime.now(timezone.utc) - timedelta(minutes=15)
+            for row in rows:
+                report = SessionEmailReport.model_validate(row["payload"])
+                if report.status == "sending":
+                    if report.claimed_at is not None and report.claimed_at > stale_before:
+                        continue
+                    report.status = "queued"
+                    report.claim_id = None
+                    report.claimed_at = None
+                    self._save_email_report(report)
+                pending.append(row["session_id"])
+            self._db.commit()
+            return pending
+
+    def activate_waiting_email_report(self, session_id: str) -> bool:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT payload FROM session_email_reports WHERE session_id = %s "
+                "FOR UPDATE SKIP LOCKED",
+                (session_id,),
+            ).fetchone()
+            if row is None:
+                self._db.rollback()
+                return False
+            report = SessionEmailReport.model_validate(row["payload"])
+            if report.status != "waiting_snapshots":
+                self._db.rollback()
+                return False
+            report.status = "queued"
+            self._save_email_report(report)
+            self._db.commit()
+            return True
+
+    def waiting_email_report_ids(self) -> list[str]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT session_id FROM session_email_reports "
+                "WHERE payload->>'status' = 'waiting_snapshots'"
+            ).fetchall()
+            return [row["session_id"] for row in rows]
 
     def get_station(self, station_id: str) -> StationRecord | None:
         with self._lock:
@@ -716,6 +916,18 @@ class DashboardStore:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS notification_settings (
+              id SMALLINT PRIMARY KEY CHECK (id = 1),
+              payload JSONB NOT NULL
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS session_email_reports (
+              session_id TEXT PRIMARY KEY,
+              payload JSONB NOT NULL
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS enrollments (
               enrollment_id TEXT PRIMARY KEY,
               payload JSONB NOT NULL
@@ -829,6 +1041,13 @@ class DashboardStore:
             "INSERT INTO event_snapshots (session_id, event_key, payload) VALUES (%s, %s, %s::jsonb) "
             "ON CONFLICT (session_id, event_key) DO UPDATE SET payload = EXCLUDED.payload",
             (snapshot.session_id, snapshot.event_key, snapshot.model_dump_json()),
+        )
+
+    def _save_email_report(self, report: SessionEmailReport) -> None:
+        self._db.execute(
+            "INSERT INTO session_email_reports (session_id, payload) VALUES (%s, %s::jsonb) "
+            "ON CONFLICT (session_id) DO UPDATE SET payload = EXCLUDED.payload",
+            (report.session_id, report.model_dump_json()),
         )
 
     def _save_enrollment(self, enrollment: EnrollmentRecord) -> None:

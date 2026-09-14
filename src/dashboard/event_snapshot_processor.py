@@ -24,10 +24,12 @@ class EventSnapshotProcessor:
         store: DashboardStore,
         app_config: AppConfig,
         s3_client=None,
+        on_complete=None,
     ):
         self._store = store
         self._app_config = app_config
         self._s3 = s3_client or boto3.client("s3", region_name=app_config.s3.region)
+        self._on_complete = on_complete
         self._lock = threading.Lock()
         self._running: set[str] = set()
 
@@ -49,6 +51,10 @@ class EventSnapshotProcessor:
         ).start()
         return queued
 
+    def resume_pending(self) -> None:
+        for session_id in self._store.recover_event_snapshot_session_ids():
+            self.enqueue(session_id)
+
     def _run(self, session_id: str) -> None:
         try:
             session = self._store.get_session(session_id)
@@ -56,7 +62,9 @@ class EventSnapshotProcessor:
             if session is None:
                 return
             self._process(session, snapshots)
-        except Exception:  # noqa: BLE001
+            if self._on_complete is not None:
+                self._on_complete(session_id)
+        except Exception:
             logger.exception("Falha ao processar imagens da sessão %s", session_id)
         finally:
             with self._lock:
