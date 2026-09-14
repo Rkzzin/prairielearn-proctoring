@@ -298,6 +298,20 @@ class TestAbsenceFSM:
         assert len(engine._pitch_window) == 0
         assert engine._deviation_streak == 0
 
+    def test_flexible_absence_skips_initial_warning_and_limits_repeated_alerts(self, tmp_path: Path):
+        cfg = _make_config(absence_timeout=0.0, flexible_mode=True)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        _feed(engine, None)
+        _feed(engine, None)
+        _feed(engine, None)
+        engine._logger.close()
+
+        events = EventLogger.read_session(
+            tmp_path / "sessions" / "TEST-001" / "events.jsonl"
+        )
+        assert [event.type for event in events] == [EventType.ABSENCE_ALERT.value]
+
 
 # ── Testes de FSM: multi-face ────────────────────────────────────────────────
 

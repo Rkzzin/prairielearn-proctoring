@@ -1174,12 +1174,9 @@ class SessionManager:
                 self._handle_electronic_device_transitions()
 
             if not ret or frame is None:
-                if self._camera_recovering.is_set():
-                    self._sleep(0.1)
-                    continue
-                state = self._engine.update(None)
-                if state == ProctorState.BLOCKED:
-                    self._handle_blocked()
+                # Falha do transporte/preview não comprova ausência do aluno.
+                # O engine recebe None apenas quando analisou um frame válido e
+                # não encontrou rosto nele.
                 self._sleep(0.1)
                 continue
 

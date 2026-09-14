@@ -128,7 +128,7 @@ class ExamConfigPayload(BaseModel):
     gaze_h_threshold: float = 0.60
     gaze_v_threshold: float = 0.60
     gaze_duration_sec: float = 10.0
-    absence_timeout_sec: float = 10.0
+    absence_timeout_sec: float = 30.0
     multi_face_block: bool = True
     flexible_mode: bool = True
     liveness_enabled: bool = True

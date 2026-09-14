@@ -102,6 +102,7 @@ class FakeEngine:
         self.cancelled_timeouts: list[float] = []
         self.electronic_device_events = []
         self.critical_alerts = []
+        self.updated_frames = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -111,6 +112,7 @@ class FakeEngine:
         self.stopped = True
 
     def update(self, _frame):
+        self.updated_frames.append(_frame)
         if self.states:
             return self.states.popleft()
         return ProctorState.NORMAL
@@ -966,7 +968,7 @@ def test_session_manager_cancels_session_after_block_timeout():
             )
         ],
         engine_states=[ProctorState.BLOCKED],
-        frames=["identify-frame", "blocked-frame"],
+        frames=["identify-frame", *(["blocked-frame"] * 20)],
         reidentify_fn=reidentify,
     )
     manager.update_config(turma_id="ES2025-T1")
@@ -1319,6 +1321,22 @@ def test_camera_preview_encodes_latest_frame(monkeypatch):
     monkeypatch.setattr("src.core.session.cv2.imencode", lambda *_args: (True, Encoded()))
 
     assert manager.get_camera_preview_jpeg() == b"jpeg-data"
+
+
+def test_missing_camera_frame_does_not_report_student_absence():
+    manager, _recognizer, engine, *_rest = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._engine = engine
+    manager._ensure_browser_running = lambda: True
+    manager._read_camera_frame = lambda: (False, None)
+    manager._sleep = lambda _seconds: manager._stop_event.set()
+
+    manager._session_loop()
+
+    assert engine.updated_frames == []
 
 
 def test_preview_recovery_keeps_last_frame_visible():

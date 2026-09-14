@@ -300,6 +300,8 @@ class ProctorEngine:
         self._deviation_streak = 0
         self.state = ProctorState.ABSENCE
         self._absence_start = now
+        if self._cfg.flexible_mode:
+            return
         self._logger.log_event(
             frame=self._frame_count,
             event_type=EventType.ABSENCE_WARNING,
@@ -405,7 +407,8 @@ class ProctorEngine:
             self._warn_start = 0.0
             self._absence_start = 0.0
             self._deviation_streak = 0
-            if last_alert_at is not None and now - last_alert_at < 10.0:
+            cooldown_seconds = 300.0 if reason == BlockReason.ABSENCE else 60.0
+            if last_alert_at is not None and now - last_alert_at < cooldown_seconds:
                 return
             self._last_flexible_alert_at[reason] = now
             event_type = flexible_event_type_map[reason]
