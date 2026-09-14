@@ -33,6 +33,7 @@ from fastapi.templating import Jinja2Templates
 from src.core.config import AppConfig
 from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
 from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
+from src.dashboard.event_snapshot_processor import EventSnapshotProcessor
 from src.dashboard.integrity_score import compute_integrity_score
 from src.dashboard.models import (
     CameraSnapshotPayload,
@@ -100,7 +101,11 @@ def _station_id_from_name(station_name: str) -> str:
     return (station_id or "estacao")[:64].rstrip("-")
 
 
-def create_app(config: AppConfig | None = None, store: DashboardStore | None = None) -> FastAPI:
+def create_app(
+    config: AppConfig | None = None,
+    store: DashboardStore | None = None,
+    event_snapshot_processor: EventSnapshotProcessor | None = None,
+) -> FastAPI:
     app_config = config or AppConfig()
     dashboard_dir = Path(__file__).parent
     templates = Jinja2Templates(directory=str(dashboard_dir / "templates"))
@@ -110,6 +115,10 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     templates.env.globals["integrity_score"] = compute_integrity_score
     dashboard_store = store or DashboardStore(
         app_config.dashboard.database_url,
+        app_config=app_config,
+    )
+    snapshot_processor = event_snapshot_processor or EventSnapshotProcessor(
+        store=dashboard_store,
         app_config=app_config,
     )
     camera_snapshot_dir = Path(app_config.data_dir) / "dashboard-camera-snapshots"
@@ -124,6 +133,7 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
     app.state.store = dashboard_store
     app.state.templates = templates
     app.state.s3_enrollment_service = S3EnrollmentService(app_config)
+    app.state.event_snapshot_processor = snapshot_processor
 
     auth_username = app_config.dashboard.admin_user
     if auth_username:
@@ -253,12 +263,31 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         if session is None:
             return HTMLResponse("Sessão não encontrada.", status_code=404)
         timeline = _build_timeline(session)
+        event_snapshots = dashboard_store.list_event_snapshots(session_id)
+        event_snapshot_cards = [
+            {
+                "snapshot": snapshot,
+                "reason": _EVENT_REASON_LABELS.get(
+                    snapshot.event_type,
+                    "Evento de monitoramento registrado",
+                ),
+                "relative_time": _format_relative_time(
+                    max(0, int((snapshot.event_timestamp - session.started_at).total_seconds()))
+                ),
+            }
+            for snapshot in event_snapshots
+        ]
         return render_template(
             request,
             "session_detail.html",
             title=f"Sessão {session_id}",
             session=session,
             timeline=timeline,
+            event_snapshots=event_snapshot_cards,
+            event_snapshots_processing=any(
+                snapshot.status in {"queued", "processing"}
+                for snapshot in event_snapshots
+            ),
             event_counts=_event_counts(timeline),
             integrity=compute_integrity_score(session),
             duration_label=_format_duration(session.duration_seconds),
@@ -520,7 +549,20 @@ def create_app(config: AppConfig | None = None, store: DashboardStore | None = N
         session = dashboard_store.finalize_session(session_id)
         if session is None:
             return JSONResponse({"detail": "Sessão não encontrada."}, status_code=404)
+        if session.recordings:
+            snapshot_processor.enqueue(session_id)
         return JSONResponse(session.model_dump(mode="json"))
+
+    @app.post("/api/sessions/{session_id}/event-snapshots/process")
+    async def process_event_snapshots(request: Request, session_id: str) -> JSONResponse:
+        require_same_origin(request)
+        session = dashboard_store.get_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+        if session.ended_at is None:
+            raise HTTPException(status_code=409, detail="Finalize a sessão antes de processar imagens.")
+        queued = snapshot_processor.enqueue(session_id, retry_failed=True)
+        return JSONResponse({"status": "queued", "queued": queued}, status_code=202)
 
     @app.post("/api/sessions/{session_id}/events")
     async def append_session_events(

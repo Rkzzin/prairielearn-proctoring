@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from threading import Lock
@@ -13,11 +14,12 @@ import psycopg
 from psycopg.rows import dict_row
 
 from src.dashboard.models import (
+    CameraSnapshotRecord,
     CommandRecord,
     CommandType,
-    CameraSnapshotRecord,
     EnrollmentRecord,
     EventSeverity,
+    EventSnapshotRecord,
     ExamConfigPayload,
     SessionEventPayload,
     SessionRecord,
@@ -83,6 +85,7 @@ class DashboardStore:
         with self._lock:
             removed = len(self._sessions)
             self._sessions.clear()
+            self._db.execute("DELETE FROM event_snapshots")
             self._db.execute("DELETE FROM sessions")
             self._db.commit()
 
@@ -108,6 +111,97 @@ class DashboardStore:
         with self._lock:
             session = self._sessions.get(session_id)
             return self._hydrate_session(session) if session else None
+
+    def queue_event_snapshots(self, session_id: str) -> int:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None or session.ended_at is None:
+                return 0
+            queued = 0
+            for event in session.events:
+                if event.severity not in {EventSeverity.WARNING, EventSeverity.CRITICAL}:
+                    continue
+                identity = (
+                    f"{session_id}|{event.timestamp.isoformat()}|"
+                    f"{event.event_type}|{event.frame_number}"
+                )
+                event_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+                payload = EventSnapshotRecord(
+                    session_id=session_id,
+                    event_key=event_key,
+                    event_timestamp=event.timestamp,
+                    event_type=event.event_type,
+                    severity=event.severity,
+                    frame_number=event.frame_number,
+                )
+                result = self._db.execute(
+                    "INSERT INTO event_snapshots (session_id, event_key, payload) "
+                    "VALUES (%s, %s, %s::jsonb) ON CONFLICT DO NOTHING",
+                    (session_id, event_key, payload.model_dump_json()),
+                )
+                queued += result.rowcount
+            self._db.commit()
+            return queued
+
+    def retry_event_snapshots(self, session_id: str) -> int:
+        self.queue_event_snapshots(session_id)
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT event_key, payload FROM event_snapshots WHERE session_id = %s",
+                (session_id,),
+            ).fetchall()
+            for row in rows:
+                snapshot = EventSnapshotRecord.model_validate(row["payload"])
+                if snapshot.status == "ready":
+                    continue
+                snapshot.status = "queued"
+                snapshot.error = None
+                self._save_event_snapshot(snapshot)
+            self._db.commit()
+            return sum(
+                EventSnapshotRecord.model_validate(row["payload"]).status != "ready"
+                for row in rows
+            )
+
+    def claim_event_snapshots(self, session_id: str) -> list[EventSnapshotRecord]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM event_snapshots "
+                "WHERE session_id = %s AND payload->>'status' = 'queued'",
+                (session_id,),
+            ).fetchall()
+            snapshots = [EventSnapshotRecord.model_validate(row["payload"]) for row in rows]
+            for snapshot in snapshots:
+                snapshot.status = "processing"
+                self._save_event_snapshot(snapshot)
+            self._db.commit()
+            return snapshots
+
+    def finish_event_snapshot(
+        self,
+        snapshot: EventSnapshotRecord,
+        *,
+        s3_bucket: str | None = None,
+        s3_key: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        with self._lock:
+            snapshot.status = "failed" if error else "ready"
+            snapshot.s3_bucket = s3_bucket
+            snapshot.s3_key = s3_key
+            snapshot.error = error
+            self._save_event_snapshot(snapshot)
+            self._db.commit()
+
+    def list_event_snapshots(self, session_id: str) -> list[EventSnapshotRecord]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM event_snapshots WHERE session_id = %s "
+                "ORDER BY (payload->>'event_timestamp')::timestamptz",
+                (session_id,),
+            ).fetchall()
+            snapshots = [EventSnapshotRecord.model_validate(row["payload"]) for row in rows]
+            return [self._hydrate_event_snapshot(snapshot) for snapshot in snapshots]
 
     def get_station(self, station_id: str) -> StationRecord | None:
         with self._lock:
@@ -614,6 +708,14 @@ class DashboardStore:
             )
             """,
             """
+            CREATE TABLE IF NOT EXISTS event_snapshots (
+              session_id TEXT NOT NULL,
+              event_key TEXT NOT NULL,
+              payload JSONB NOT NULL,
+              PRIMARY KEY (session_id, event_key)
+            )
+            """,
+            """
             CREATE TABLE IF NOT EXISTS enrollments (
               enrollment_id TEXT PRIMARY KEY,
               payload JSONB NOT NULL
@@ -722,6 +824,13 @@ class DashboardStore:
         )
         self._db.commit()
 
+    def _save_event_snapshot(self, snapshot: EventSnapshotRecord) -> None:
+        self._db.execute(
+            "INSERT INTO event_snapshots (session_id, event_key, payload) VALUES (%s, %s, %s::jsonb) "
+            "ON CONFLICT (session_id, event_key) DO UPDATE SET payload = EXCLUDED.payload",
+            (snapshot.session_id, snapshot.event_key, snapshot.model_dump_json()),
+        )
+
     def _save_enrollment(self, enrollment: EnrollmentRecord) -> None:
         self._db.execute(
             "INSERT INTO enrollments (enrollment_id, payload) VALUES (%s, %s::jsonb) "
@@ -740,6 +849,19 @@ class DashboardStore:
     def _hydrate_session(self, session: SessionRecord) -> SessionRecord:
         hydrated = session.model_copy(deep=True)
         hydrated.recordings = [self._hydrate_asset(asset) for asset in hydrated.recordings]
+        return hydrated
+
+    def _hydrate_event_snapshot(self, snapshot: EventSnapshotRecord) -> EventSnapshotRecord:
+        hydrated = snapshot.model_copy(deep=True)
+        if hydrated.s3_bucket and hydrated.s3_key and self._s3 is not None:
+            try:
+                hydrated.url = self._s3.generate_presigned_url(
+                    "get_object",
+                    Params={"Bucket": hydrated.s3_bucket, "Key": hydrated.s3_key},
+                    ExpiresIn=3600,
+                )
+            except Exception:
+                pass
         return hydrated
 
     def _hydrate_asset(self, asset):

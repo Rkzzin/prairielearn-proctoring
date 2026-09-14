@@ -61,6 +61,20 @@ class SessionEventPayload(BaseModel):
     details: dict[str, object] = Field(default_factory=dict)
 
 
+class EventSnapshotRecord(BaseModel):
+    session_id: str
+    event_key: str
+    event_timestamp: datetime
+    event_type: str
+    severity: EventSeverity
+    frame_number: int = 0
+    status: str = "queued"
+    s3_bucket: str | None = None
+    s3_key: str | None = None
+    url: str | None = None
+    error: str | None = None
+
+
 class RecordingAsset(BaseModel):
     label: str
     url: str | None = None

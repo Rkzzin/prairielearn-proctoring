@@ -84,6 +84,54 @@
   </dl>
 </details>
 
+<section class="panel event-snapshot-review">
+  <div class="panel-header">
+    <div>
+      <p class="eyebrow">Evidências visuais</p>
+      <h2>Fotos dos alertas</h2>
+      <p>Frames da câmera principal no momento de cada evento crítico ou de atenção.</p>
+    </div>
+    {% if session.ended_at %}
+    <button
+      type="button"
+      class="button-secondary event-snapshot-process"
+      id="event-snapshot-process"
+      onclick="processEventSnapshots()"
+      {% if event_snapshots_processing %}disabled{% endif %}
+    >
+      {{ "Processando imagens..." if event_snapshots_processing else "Processar imagens dos alertas" }}
+    </button>
+    {% endif %}
+  </div>
+  <p class="snapshot-process-status" id="snapshot-process-status"></p>
+  {% if event_snapshots %}
+  <div class="event-snapshot-grid">
+    {% for card in event_snapshots %}
+    {% set snapshot = card.snapshot %}
+    <article class="event-snapshot-card severity-{{ snapshot.severity.value|lower }}">
+      {% if snapshot.url %}
+      <a href="{{ snapshot.url }}" target="_blank" rel="noopener">
+        <img src="{{ snapshot.url }}" alt="{{ card.reason }} em {{ card.relative_time }}" loading="lazy">
+      </a>
+      {% else %}
+      <div class="event-snapshot-placeholder">
+        {% if snapshot.status == "failed" %}Imagem indisponível{% else %}Processando imagem{% endif %}
+      </div>
+      {% endif %}
+      <div class="event-snapshot-copy">
+        <time>{{ card.relative_time }}</time>
+        <strong>{{ card.reason }}</strong>
+        <span>{{ "Crítico" if snapshot.severity.value == "CRITICAL" else "Alerta" }}</span>
+        {% if snapshot.error %}<small>{{ snapshot.error }}</small>{% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">As imagens ainda não foram processadas para esta sessão.</p>
+  {% endif %}
+</section>
+
 <section class="panel event-review">
   <div class="panel-header">
     <div>
@@ -135,6 +183,24 @@
 <script id="timeline-data" type="application/json">{{ timeline | tojson }}</script>
 <script>
 const timelineData = JSON.parse(document.getElementById('timeline-data').textContent);
+async function processEventSnapshots() {
+  const button = document.getElementById('event-snapshot-process');
+  const status = document.getElementById('snapshot-process-status');
+  button.disabled = true;
+  button.textContent = 'Processando imagens...';
+  const response = await fetch('/api/sessions/{{ session.session_id }}/event-snapshots/process', {
+    method: 'POST'
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    status.textContent = payload.detail || 'Não foi possível iniciar o processamento.';
+    button.disabled = false;
+    button.textContent = 'Processar imagens dos alertas';
+    return;
+  }
+  status.textContent = 'Processamento iniciado. Atualizando a página...';
+  window.setTimeout(() => window.location.reload(), 2500);
+}
 const sessionStart = document.getElementById('session-start');
 if (sessionStart) {
   const startedAt = new Date(sessionStart.dateTime);

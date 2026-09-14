@@ -34,14 +34,23 @@ from src.dashboard.models import (
 from src.dashboard.store import DashboardStore
 
 
-def _make_app(tmp_path, database_url, *, admin_auth: bool = False):
+def _make_app(
+    tmp_path,
+    database_url,
+    *,
+    admin_auth: bool = False,
+    event_snapshot_processor=None,
+):
     dashboard = DashboardConfig(
         database_url=database_url,
         admin_user="prof" if admin_auth else None,
         admin_password="secret" if admin_auth else None,
     )
     config = AppConfig(data_dir=tmp_path, dashboard=dashboard)
-    return create_app(config=config)
+    return create_app(
+        config=config,
+        event_snapshot_processor=event_snapshot_processor,
+    )
 
 
 def test_dashboard_exam_config_defaults_are_tolerant_but_keep_liveness_blocking():
@@ -60,6 +69,69 @@ def test_dashboard_exam_config_defaults_are_tolerant_but_keep_liveness_blocking(
     assert config.liveness_enabled is True
     assert config.liveness_average_threshold == 0.80
     assert config.liveness_shadow_mode is False
+
+
+@pytest.mark.asyncio
+async def test_finished_session_queues_and_renders_event_snapshot_grid(
+    tmp_path, dashboard_database_url
+):
+    class FakeProcessor:
+        def __init__(self):
+            self.calls = []
+
+        def enqueue(self, session_id, *, retry_failed=False):
+            self.calls.append((session_id, retry_failed))
+            return 2
+
+    processor = FakeProcessor()
+    app = _make_app(
+        tmp_path,
+        dashboard_database_url,
+        event_snapshot_processor=processor,
+    )
+    now = datetime.now(timezone.utc)
+    session = SessionRecord(
+        session_id="session-images",
+        station_id="nuc-01",
+        turma="T1",
+        assessment="Quiz",
+        started_at=now,
+        ended_at=now,
+        status=StationStatus.COMPLETED,
+        events=[
+            SessionEventPayload(
+                timestamp=now,
+                event_type="SESSION_STARTED",
+                severity=EventSeverity.INFO,
+            ),
+            SessionEventPayload(
+                timestamp=now,
+                event_type="GAZE_WARNING",
+                severity=EventSeverity.WARNING,
+            ),
+            SessionEventPayload(
+                timestamp=now,
+                event_type="MULTI_FACE_ALERT",
+                severity=EventSeverity.CRITICAL,
+            ),
+        ],
+    )
+    app.state.store.register_session(session)
+    assert app.state.store.queue_event_snapshots(session.session_id) == 2
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        detail = await client.get(f"/sessions/{session.session_id}")
+        response = await client.post(
+            f"/api/sessions/{session.session_id}/event-snapshots/process"
+        )
+
+    assert detail.status_code == 200
+    assert 'class="event-snapshot-grid"' in detail.text
+    assert detail.text.count('class="event-snapshot-card') == 2
+    assert "Processar imagens dos alertas" in detail.text
+    assert response.status_code == 202
+    assert response.json() == {"status": "queued", "queued": 2}
+    assert processor.calls == [(session.session_id, True)]
 
 
 def _station_headers(app, station_id: str, token: str = "test-token") -> dict[str, str]:
