@@ -200,6 +200,20 @@ def test_processor_keeps_only_one_downloaded_segment(tmp_path):
     assert s3.existing_segments == [0, 0]
 
 
+def test_processor_clears_its_stale_working_directories(tmp_path):
+    stale = tmp_path / "dashboard-event-snapshots" / "proctor-event-snapshots-stale"
+    stale.mkdir(parents=True)
+    (stale / "segment.mp4").write_bytes(b"old")
+
+    EventSnapshotProcessor(
+        store=FakeStore(),
+        app_config=AppConfig(data_dir=tmp_path),
+        s3_client=FakeS3(),
+    )
+
+    assert not stale.exists()
+
+
 def test_processor_notifies_report_pipeline_after_images_finish(tmp_path):
     now = datetime.now(timezone.utc)
     session = SessionRecord(

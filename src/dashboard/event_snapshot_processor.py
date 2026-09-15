@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import tempfile
 import threading
 from pathlib import Path
@@ -30,6 +31,10 @@ class EventSnapshotProcessor:
         self._app_config = app_config
         self._s3 = s3_client or boto3.client("s3", region_name=app_config.s3.region)
         self._on_complete = on_complete
+        self._temp_root = Path(app_config.data_dir) / "dashboard-event-snapshots"
+        self._temp_root.mkdir(parents=True, exist_ok=True)
+        self._clear_stale_directories(self._temp_root)
+        self._clear_stale_directories(Path(tempfile.gettempdir()))
         self._lock = threading.Lock()
         self._running: set[str] = set()
 
@@ -87,7 +92,10 @@ class EventSnapshotProcessor:
             session_started_event.timestamp if session_started_event else session.started_at
         )
 
-        with tempfile.TemporaryDirectory(prefix="proctor-event-snapshots-") as temp_dir:
+        with tempfile.TemporaryDirectory(
+            prefix="proctor-event-snapshots-",
+            dir=self._temp_root,
+        ) as temp_dir:
             source = Path(temp_dir) / "segment.mp4"
             current_s3_key = None
             for snapshot in sorted(snapshots, key=lambda item: item.event_timestamp):
@@ -130,6 +138,12 @@ class EventSnapshotProcessor:
                         exc,
                     )
                     self._store.finish_event_snapshot(snapshot, error=str(exc)[:500])
+
+    @staticmethod
+    def _clear_stale_directories(root: Path) -> None:
+        for path in root.glob("proctor-event-snapshots-*"):
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
 
     @staticmethod
     def _is_webcam(asset: RecordingAsset) -> bool:
