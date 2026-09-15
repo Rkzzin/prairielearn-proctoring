@@ -516,13 +516,6 @@ def create_app(
         station = dashboard_store.get_station(station_id)
         if station is None:
             raise HTTPException(status_code=404, detail="Estação não encontrada.")
-        if station.active_session_id or station.status.value in {
-            "IDENTIFYING",
-            "SESSION",
-            "BLOCKED",
-            "UPLOADING",
-        }:
-            raise HTTPException(status_code=409, detail="Encerre a avaliação ativa antes de atualizar a estação.")
         command = dashboard_store.enqueue_command(station_id, CommandType.UPDATE_AND_REBOOT)
         return JSONResponse(command.model_dump(mode="json"), status_code=202)
 

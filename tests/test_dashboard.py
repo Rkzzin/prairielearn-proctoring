@@ -691,7 +691,9 @@ async def test_dashboard_queues_update_and_reboot_only_when_station_is_idle(tmp_
 
 
 @pytest.mark.asyncio
-async def test_dashboard_rejects_update_and_reboot_when_station_is_busy(tmp_path, dashboard_database_url):
+async def test_dashboard_defers_update_and_reboot_until_station_is_idle(
+    tmp_path, dashboard_database_url
+):
     app = _make_app(tmp_path, dashboard_database_url)
     app.state.store.upsert_station_heartbeat(
         StationHeartbeat(
@@ -705,8 +707,19 @@ async def test_dashboard_rejects_update_and_reboot_when_station_is_busy(tmp_path
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         response = await client.post("/api/stations/nuc-01/update-and-reboot")
 
-    assert response.status_code == 409
-    assert "avaliação ativa" in response.json()["detail"]
+    assert response.status_code == 202
+    assert app.state.store.drain_commands("nuc-01") == []
+
+    app.state.store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.IDLE,
+            active_session_id=None,
+        )
+    )
+    commands = app.state.store.drain_commands("nuc-01")
+    assert [command.command_type for command in commands] == [CommandType.UPDATE_AND_REBOOT]
 
 
 @pytest.mark.asyncio

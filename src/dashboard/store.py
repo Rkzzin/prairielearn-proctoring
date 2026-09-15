@@ -861,8 +861,22 @@ class DashboardStore:
             station = self._stations.get(station_id)
             if station is None:
                 return []
-            commands = [command.model_copy(deep=True) for command in station.pending_commands]
-            station.pending_commands.clear()
+            busy = bool(station.active_session_id) or station.status in {
+                StationStatus.IDENTIFYING,
+                StationStatus.SESSION,
+                StationStatus.BLOCKED,
+                StationStatus.UPLOADING,
+            }
+            commands = [
+                command.model_copy(deep=True)
+                for command in station.pending_commands
+                if not (busy and command.command_type == CommandType.UPDATE_AND_REBOOT)
+            ]
+            station.pending_commands = [
+                command
+                for command in station.pending_commands
+                if busy and command.command_type == CommandType.UPDATE_AND_REBOOT
+            ]
             self._save_station(station)
 
         self._broadcast()
