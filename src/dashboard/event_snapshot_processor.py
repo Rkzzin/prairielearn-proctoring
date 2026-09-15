@@ -88,8 +88,9 @@ class EventSnapshotProcessor:
         )
 
         with tempfile.TemporaryDirectory(prefix="proctor-event-snapshots-") as temp_dir:
-            downloaded: dict[str, Path] = {}
-            for snapshot in snapshots:
+            source = Path(temp_dir) / "segment.mp4"
+            current_s3_key = None
+            for snapshot in sorted(snapshots, key=lambda item: item.event_timestamp):
                 try:
                     offset = max(
                         0.0,
@@ -98,11 +99,11 @@ class EventSnapshotProcessor:
                     asset = self._asset_for_offset(webcam_assets, offset)
                     if asset is None or not asset.s3_bucket or not asset.s3_key:
                         raise RuntimeError("gravação da câmera principal indisponível")
-                    source = downloaded.get(asset.s3_key)
-                    if source is None:
-                        source = Path(temp_dir) / f"segment-{len(downloaded):04d}.mp4"
+                    if asset.s3_key != current_s3_key:
+                        source.unlink(missing_ok=True)
+                        current_s3_key = None
                         self._s3.download_file(asset.s3_bucket, asset.s3_key, str(source))
-                        downloaded[asset.s3_key] = source
+                        current_s3_key = asset.s3_key
                     relative_offset = max(0.0, offset - (asset.start_offset_seconds or 0.0))
                     image_path = Path(temp_dir) / f"{snapshot.event_key}.jpg"
                     self._extract_frame(source, relative_offset, image_path)
@@ -121,6 +122,7 @@ class EventSnapshotProcessor:
                         s3_bucket=self._app_config.s3.bucket,
                         s3_key=output_key,
                     )
+                    image_path.unlink(missing_ok=True)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "Imagem do evento %s não foi gerada: %s",

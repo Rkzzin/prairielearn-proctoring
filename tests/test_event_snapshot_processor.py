@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from src.core.config import AppConfig
 from src.dashboard.event_snapshot_processor import EventSnapshotProcessor
@@ -140,6 +141,63 @@ def test_processor_marks_snapshot_failed_without_webcam_recording(tmp_path):
     processor._process(session, [snapshot])
 
     assert store.finished[0][1]["error"] == "gravação da câmera principal indisponível"
+
+
+def test_processor_keeps_only_one_downloaded_segment(tmp_path):
+    now = datetime.now(timezone.utc)
+    session = SessionRecord(
+        session_id="session-1",
+        station_id="nuc-1",
+        turma="T1",
+        assessment="Quiz",
+        started_at=now,
+        ended_at=now + timedelta(minutes=10),
+        status=StationStatus.COMPLETED,
+        recordings=[
+            RecordingAsset(
+                label=f"Webcam {index}",
+                stream="webcam",
+                s3_bucket="recordings",
+                s3_key=f"webcam_{index:03d}.mp4",
+                start_offset_seconds=index * 300,
+                duration_seconds=300,
+            )
+            for index in range(2)
+        ],
+    )
+    snapshots = [
+        EventSnapshotRecord(
+            session_id=session.session_id,
+            event_key=f"event-{index}",
+            event_timestamp=now + timedelta(seconds=index * 300 + 10),
+            event_type="GAZE_ALERT",
+            severity=EventSeverity.CRITICAL,
+        )
+        for index in range(2)
+    ]
+
+    class SpaceCheckingS3(FakeS3):
+        def __init__(self):
+            super().__init__()
+            self.existing_segments = []
+
+        def download_file(self, bucket, key, destination):
+            self.existing_segments.append(len(list(Path(destination).parent.glob("*.mp4"))))
+            super().download_file(bucket, key, destination)
+
+    s3 = SpaceCheckingS3()
+    processor = EventSnapshotProcessor(
+        store=FakeStore(),
+        app_config=AppConfig(data_dir=tmp_path),
+        s3_client=s3,
+    )
+    processor._extract_frame = (
+        lambda _source, _offset, destination: destination.write_bytes(b"image")
+    )
+
+    processor._process(session, snapshots)
+
+    assert s3.existing_segments == [0, 0]
 
 
 def test_processor_notifies_report_pipeline_after_images_finish(tmp_path):
