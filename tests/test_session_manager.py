@@ -886,7 +886,13 @@ def test_periodic_identity_check_blocks_a_different_student(monkeypatch):
                 student_id="456",
                 student_name="Bob",
                 confidence=0.92,
-            )
+            ),
+            IdentifyResult(
+                status=IdentifyStatus.MATCH,
+                student_id="456",
+                student_name="Bob",
+                confidence=0.93,
+            ),
         ],
         engine_states=[],
         frames=[],
@@ -905,19 +911,29 @@ def test_periodic_identity_check_blocks_a_different_student(monkeypatch):
         prairielearn_url="https://pl.test/exam",
     )
     manager._last_identity_check_at = 100.0
-    monkeypatch.setattr("src.core.session.time.monotonic", lambda: 110.0)
+    now = {"value": 110.0}
+    monkeypatch.setattr("src.core.session.time.monotonic", lambda: now["value"])
 
+    manager._verify_session_identity("frame")
+    assert engine.external_blocks == []
+    now["value"] = 120.0
     manager._verify_session_identity("frame")
 
     assert engine.external_blocks == [
         (
             BlockReason.DIFFERENT_USER,
-            {"expected_student_id": "123", "detected_student_id": "456"},
+            {
+                "expected_student_id": "123",
+                "detected_student_id": "456",
+                "detected_status": "MATCH",
+                "detected_confidence": 0.93,
+                "confirmation_checks": 2,
+            },
         )
     ]
 
 
-def test_periodic_identity_check_blocks_an_unknown_person(monkeypatch):
+def test_periodic_identity_check_ignores_unknown_person(monkeypatch):
     manager, recognizer, engine, *_ = _make_manager(
         identify_results=[IdentifyResult(status=IdentifyStatus.NO_MATCH, confidence=0.41, face_count=1)],
         engine_states=[],
@@ -941,17 +957,41 @@ def test_periodic_identity_check_blocks_an_unknown_person(monkeypatch):
 
     manager._verify_session_identity("frame")
 
-    assert engine.external_blocks == [
-        (
-            BlockReason.DIFFERENT_USER,
-            {
-                "expected_student_id": "123",
-                "detected_student_id": None,
-                "detected_status": "NO_MATCH",
-                "detected_confidence": 0.41,
-            },
-        )
-    ]
+    assert engine.external_blocks == []
+
+
+def test_unknown_result_resets_different_user_confirmation(monkeypatch):
+    manager, recognizer, engine, *_ = _make_manager(
+        identify_results=[
+            IdentifyResult(status=IdentifyStatus.MATCH, student_id="456", confidence=0.92),
+            IdentifyResult(status=IdentifyStatus.NO_MATCH, confidence=0.41, face_count=1),
+            IdentifyResult(status=IdentifyStatus.MATCH, student_id="456", confidence=0.93),
+        ],
+        engine_states=[],
+        frames=[],
+    )
+    manager._recognizer = recognizer
+    manager._engine = engine
+    manager._runtime = SessionRuntime(
+        session_id="session-1",
+        turma_id="ES2025-T1",
+        assessment="Quiz-01",
+        timer_minutes=45,
+        student_id="123",
+        student_name="Alice",
+        started_at=datetime.now(timezone.utc),
+        state=SessionState.SESSION,
+        prairielearn_url="https://pl.test/exam",
+    )
+    manager._last_identity_check_at = 100.0
+    now = {"value": 110.0}
+    monkeypatch.setattr("src.core.session.time.monotonic", lambda: now["value"])
+
+    for check_time in (110.0, 120.0, 130.0):
+        now["value"] = check_time
+        manager._verify_session_identity("frame")
+
+    assert engine.external_blocks == []
 
 
 def test_periodic_identity_check_runs_only_every_ten_seconds(monkeypatch):

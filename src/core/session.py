@@ -46,7 +46,6 @@ from src.core.dashboard_payload import (
     collect_session_events,
     collect_session_recordings,
 )
-from src.core.models import IdentifyStatus
 from src.core.states import SessionState, StationMode, derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.face.liveness import PassiveLivenessDetector
@@ -124,6 +123,7 @@ DASHBOARD_PROCTOR_FIELD_CASTS = {
 DASHBOARD_ROUTING_FIELDS = frozenset({"target_station_ids"})
 PRE_EXAM_CONFIRMATION_TIMEOUT_SEC = 20.0
 SESSION_IDENTITY_CHECK_INTERVAL_SEC = 10.0
+DIFFERENT_USER_CONFIRMATION_CHECKS = 2
 LIVENESS_REQUIRED_SAMPLES = 3
 
 
@@ -295,6 +295,8 @@ class SessionManager:
         self._runtime: SessionRuntime | None = None
         self._last_session: SessionRuntime | None = None
         self._last_identity_check_at = 0.0
+        self._different_user_candidate_id: str | None = None
+        self._different_user_confirmation_count = 0
 
         self._recognizer = None
         self._liveness = None
@@ -1060,6 +1062,8 @@ class SessionManager:
 
                 self._stop_event.clear()
                 self._last_identity_check_at = time.monotonic()
+                self._different_user_candidate_id = None
+                self._different_user_confirmation_count = 0
                 self._block_handled = False
                 self._set_state(SessionState.SESSION)
                 self._mode = StationMode.SESSION
@@ -1226,28 +1230,36 @@ class SessionManager:
             logger.warning("Falha na verificação periódica de identidade: %s", exc)
             return
 
-        different_student = result.is_match and result.student_id != self._runtime.student_id
-        unknown_student = result.status == IdentifyStatus.NO_MATCH
-        if different_student or unknown_student:
-            details: dict[str, Any] = {
-                "expected_student_id": self._runtime.student_id,
-                "detected_student_id": result.student_id,
-            }
-            if unknown_student:
-                details.update(
-                    detected_status=result.status.value,
-                    detected_confidence=result.confidence,
-                )
-            logger.warning(
-                "Usuário diferente ou desconhecido detectado: esperado=%s detectado=%s status=%s",
-                self._runtime.student_id,
-                result.student_id,
-                result.status.value,
-            )
-            self._engine.block(
-                BlockReason.DIFFERENT_USER,
-                details=details,
-            )
+        if not result.is_match or result.student_id == self._runtime.student_id:
+            self._different_user_candidate_id = None
+            self._different_user_confirmation_count = 0
+            return
+
+        if result.student_id == self._different_user_candidate_id:
+            self._different_user_confirmation_count += 1
+        else:
+            self._different_user_candidate_id = result.student_id
+            self._different_user_confirmation_count = 1
+        if self._different_user_confirmation_count < DIFFERENT_USER_CONFIRMATION_CHECKS:
+            return
+
+        details: dict[str, Any] = {
+            "expected_student_id": self._runtime.student_id,
+            "detected_student_id": result.student_id,
+            "detected_status": result.status.value,
+            "detected_confidence": result.confidence,
+            "confirmation_checks": self._different_user_confirmation_count,
+        }
+        logger.warning(
+            "Usuário diferente confirmado: esperado=%s detectado=%s confiança=%.4f",
+            self._runtime.student_id,
+            result.student_id,
+            result.confidence,
+        )
+        self._engine.block(
+            BlockReason.DIFFERENT_USER,
+            details=details,
+        )
 
     def _handle_blocked(self) -> None:
         with self._lock:
