@@ -511,6 +511,23 @@ class DashboardStore:
             station.last_seen_at = datetime.now(timezone.utc)
             station.last_event = payload.last_event
             station.recent_events = payload.recent_events[-10:]
+            if (
+                payload.status == StationStatus.BLOCKED
+                and station.assigned_config is not None
+                and station.assigned_config.flexible_mode
+                and not any(
+                    command.command_type == CommandType.UNBLOCK_SESSION
+                    for command in station.pending_commands
+                )
+            ):
+                station.pending_commands.append(
+                    CommandRecord(
+                        command_id=str(uuid4()),
+                        station_id=payload.station_id,
+                        command_type=CommandType.UNBLOCK_SESSION,
+                        issued_at=datetime.now(timezone.utc),
+                    )
+                )
 
             if payload.active_session_id:
                 session = self._sessions.get(payload.active_session_id)

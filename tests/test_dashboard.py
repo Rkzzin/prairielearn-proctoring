@@ -882,6 +882,32 @@ async def test_heartbeat_requires_valid_station_token(tmp_path, dashboard_databa
         assert ok.status_code == 200
 
 
+def test_flexible_station_heartbeat_queues_emergency_unblock(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    store.create_config(
+        ExamConfigPayload(
+            turma="T1",
+            assessment="Quiz",
+            prairielearn_url="https://us.prairietest.com",
+            target_station_ids=["nuc-01"],
+            flexible_mode=True,
+        )
+    )
+    store.drain_commands("nuc-01")
+
+    store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            status=StationStatus.BLOCKED,
+            mode="SESSION",
+            active_session_id="session-1",
+        )
+    )
+
+    commands = store.drain_commands("nuc-01")
+    assert [command.command_type for command in commands] == [CommandType.UNBLOCK_SESSION]
+
+
 @pytest.mark.asyncio
 async def test_create_and_delete_station_manages_its_token(tmp_path, dashboard_database_url):
     app = _make_app(tmp_path, dashboard_database_url)
