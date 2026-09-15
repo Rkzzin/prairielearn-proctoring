@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -919,6 +919,48 @@ def test_flexible_station_heartbeat_queues_emergency_unblock(dashboard_database_
 
     commands = store.drain_commands("nuc-01")
     assert [command.command_type for command in commands] == [CommandType.UNBLOCK_SESSION]
+
+
+def test_dashboard_ignores_unconfirmed_different_user_events(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    now = datetime.now(timezone.utc)
+    store.register_session(
+        SessionRecord(
+            session_id="session-1",
+            station_id="nuc-01",
+            turma="T1",
+            assessment="Quiz",
+            started_at=now,
+            status=StationStatus.SESSION,
+        )
+    )
+    ignored = SessionEventPayload(
+        timestamp=now,
+        event_type="DIFFERENT_USER_ALERT",
+        severity=EventSeverity.CRITICAL,
+        details={"detected_status": "NO_MATCH", "detected_confidence": 0.51},
+    )
+    confirmed = SessionEventPayload(
+        timestamp=now + timedelta(seconds=20),
+        event_type="DIFFERENT_USER_ALERT",
+        severity=EventSeverity.CRITICAL,
+        details={"detected_status": "MATCH", "detected_student_id": "456"},
+    )
+
+    session = store.append_events("session-1", [ignored, confirmed])
+    store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            status=StationStatus.SESSION,
+            last_event=ignored,
+            recent_events=[confirmed, ignored],
+        )
+    )
+
+    assert [event.details["detected_status"] for event in session.events] == ["MATCH"]
+    station = store.get_station("nuc-01")
+    assert station.last_event.details["detected_status"] == "MATCH"
+    assert [event.details["detected_status"] for event in station.recent_events] == ["MATCH"]
 
 
 @pytest.mark.asyncio

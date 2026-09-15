@@ -509,8 +509,18 @@ class DashboardStore:
                 station.camera_capture_batch_id = payload.camera_capture_batch_id
             station.seconds_remaining = payload.seconds_remaining
             station.last_seen_at = datetime.now(timezone.utc)
-            station.last_event = payload.last_event
-            station.recent_events = payload.recent_events[-10:]
+            recent_events = [
+                event
+                for event in payload.recent_events
+                if not self._is_unconfirmed_different_user(event)
+            ]
+            station.last_event = (
+                payload.last_event
+                if payload.last_event is not None
+                and not self._is_unconfirmed_different_user(payload.last_event)
+                else (recent_events[-1] if recent_events else None)
+            )
+            station.recent_events = recent_events[-10:]
             if (
                 payload.status == StationStatus.BLOCKED
                 and station.assigned_config is not None
@@ -1138,6 +1148,8 @@ class DashboardStore:
             for event in session.events
         }
         for event in events:
+            if DashboardStore._is_unconfirmed_different_user(event):
+                continue
             key = (event.timestamp.isoformat(), event.event_type, event.frame_number)
             if key in known_keys:
                 continue
@@ -1146,3 +1158,10 @@ class DashboardStore:
                 session.flags_count += 1
             known_keys.add(key)
         session.events.sort(key=lambda item: item.timestamp)
+
+    @staticmethod
+    def _is_unconfirmed_different_user(event: SessionEventPayload) -> bool:
+        return (
+            event.event_type in {"DIFFERENT_USER_ALERT", "DIFFERENT_USER_BLOCKED"}
+            and event.details.get("detected_status") == "NO_MATCH"
+        )
