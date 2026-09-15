@@ -32,7 +32,11 @@ class EventSnapshotProcessor:
         self._s3 = s3_client or boto3.client("s3", region_name=app_config.s3.region)
         self._on_complete = on_complete
         self._temp_root = Path(app_config.data_dir) / "dashboard-event-snapshots"
-        self._temp_root.mkdir(parents=True, exist_ok=True)
+        try:
+            self._temp_root.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            self._temp_root = Path(tempfile.gettempdir()) / "proctor-dashboard-event-snapshots"
+            self._temp_root.mkdir(parents=True, exist_ok=True)
         self._clear_stale_directories(self._temp_root)
         self._clear_stale_directories(Path(tempfile.gettempdir()))
         self._lock = threading.Lock()
