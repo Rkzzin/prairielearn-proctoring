@@ -137,12 +137,12 @@ class FaceConfig(BaseSettings):
 class ProctorConfig(BaseSettings):
     """Parâmetros do proctoring engine."""
 
-    gaze_h_threshold: float = 0.35
-    gaze_v_threshold: float = 0.30
-    gaze_duration_sec: float = 5.0   # segundos em GAZE_WARN antes de BLOCKED
-    absence_timeout_sec: float = 5.0
+    gaze_h_threshold: float = 0.60
+    gaze_v_threshold: float = 0.60
+    gaze_duration_sec: float = 10.0
+    absence_timeout_sec: float = 30.0
     multi_face_block: bool = True
-    flexible_mode: bool = False
+    flexible_mode: bool = True
     gaze_debounce_frames: int = Field(
         default=3,
         ge=1,

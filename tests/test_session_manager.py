@@ -1434,9 +1434,29 @@ def test_browser_guard_blocks_screen_when_browser_is_not_running():
         frames=[],
     )
     manager._kiosk = StoppedKiosk()
+    manager._proctor_cfg.flexible_mode = False
 
     assert manager._ensure_exam_browser_fullscreen() is False
     assert overlay.blocked_shown == ["BROWSER_EXIT"]
+
+
+def test_browser_guard_does_not_block_screen_in_flexible_mode():
+    class StoppedKiosk:
+        is_running = False
+
+        def relaunch(self):
+            return False
+
+    manager, _recognizer, _engine, _capture, _uploader, _kiosk, overlay, _lockdown, _camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._kiosk = StoppedKiosk()
+    manager._proctor_cfg.flexible_mode = True
+
+    assert manager._ensure_exam_browser_fullscreen() is False
+    assert overlay.blocked_shown == []
 
 
 def test_flexible_mode_retries_closed_browser_without_blocking_session():

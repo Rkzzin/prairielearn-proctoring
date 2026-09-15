@@ -35,6 +35,16 @@ from src.proctor.gaze import GazeData
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
+def test_proctor_defaults_are_flexible_and_tolerant():
+    config = ProctorConfig()
+
+    assert config.flexible_mode is True
+    assert config.gaze_h_threshold == 0.60
+    assert config.gaze_v_threshold == 0.60
+    assert config.gaze_duration_sec == 10.0
+    assert config.absence_timeout_sec == 30.0
+
+
 def _make_config(
     gaze_h: float = 0.35,
     gaze_v: float = 0.30,

@@ -1432,12 +1432,15 @@ class SessionManager:
                     else self._next_config.no_kiosk
                 )
                 active_exam = self._mode == StationMode.SESSION and not no_kiosk
+                flexible_mode = self._proctor_cfg.flexible_mode
             if not active_exam:
                 continue
             browser_ok = self._ensure_exam_browser_fullscreen()
             with self._lock:
                 self._browser_ready = browser_ok
             if browser_ok:
+                self._hide_browser_guard_overlay()
+            elif flexible_mode:
                 self._hide_browser_guard_overlay()
             else:
                 self._show_browser_guard_overlay("BROWSER_NOT_FULLSCREEN")
@@ -1447,7 +1450,8 @@ class SessionManager:
         if kiosk is None:
             return False
         if not getattr(kiosk, "is_running", True):
-            self._show_browser_guard_overlay("BROWSER_EXIT")
+            if not self._proctor_cfg.flexible_mode:
+                self._show_browser_guard_overlay("BROWSER_EXIT")
             relaunch = getattr(kiosk, "relaunch", None)
             if not callable(relaunch) or not relaunch():
                 return False
