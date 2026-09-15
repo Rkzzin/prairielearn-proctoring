@@ -214,6 +214,39 @@ def test_processor_clears_its_stale_working_directories(tmp_path):
     assert not stale.exists()
 
 
+def test_extract_frame_rewinds_near_segment_end(monkeypatch, tmp_path):
+    class Capture:
+        positions = []
+
+        def __init__(self, _source):
+            self.position = 0
+
+        def isOpened(self):
+            return True
+
+        def set(self, _property, value):
+            self.position = value
+            self.positions.append(value)
+
+        def read(self):
+            return (self.position <= 295_000, object())
+
+        def release(self):
+            pass
+
+    destination = tmp_path / "event.jpg"
+    monkeypatch.setattr("src.dashboard.event_snapshot_processor.cv2.VideoCapture", Capture)
+    monkeypatch.setattr(
+        "src.dashboard.event_snapshot_processor.cv2.imwrite",
+        lambda path, _frame, _options: Path(path).write_bytes(b"image") > 0,
+    )
+
+    EventSnapshotProcessor._extract_frame(tmp_path / "segment.mp4", 300, destination)
+
+    assert Capture.positions == [300_000, 298_000, 295_000]
+    assert destination.read_bytes() == b"image"
+
+
 def test_processor_notifies_report_pipeline_after_images_finish(tmp_path):
     now = datetime.now(timezone.utc)
     session = SessionRecord(

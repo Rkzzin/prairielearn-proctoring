@@ -172,8 +172,16 @@ class EventSnapshotProcessor:
         try:
             if not capture.isOpened():
                 raise RuntimeError("não foi possível abrir o segmento de vídeo")
-            capture.set(cv2.CAP_PROP_POS_MSEC, offset * 1000.0)
-            ok, frame = capture.read()
+            frame = None
+            ok = False
+            for rewind_seconds in (0.0, 2.0, 5.0, 10.0):
+                capture.set(
+                    cv2.CAP_PROP_POS_MSEC,
+                    max(0.0, offset - rewind_seconds) * 1000.0,
+                )
+                ok, frame = capture.read()
+                if ok and frame is not None:
+                    break
             if not ok or frame is None:
                 raise RuntimeError("não foi possível extrair o frame do evento")
             if not cv2.imwrite(str(destination), frame, [cv2.IMWRITE_JPEG_QUALITY, 88]):
