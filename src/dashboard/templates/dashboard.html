@@ -59,14 +59,20 @@
     </div>
     <span id="camera-capture-feedback" class="camera-capture-feedback" aria-live="polite"></span>
   </div>
-  <div
-    id="camera-gallery-panel"
-    hx-get="/partials/camera-gallery"
-    hx-trigger="load, every 3s"
-    hx-swap="innerHTML"
-  >
-    {% include "_camera_gallery.html" %}
-  </div>
+  <details class="review-details">
+    <summary>
+      <strong>Ver fotos</strong>
+      <span class="details-chevron" aria-hidden="true">⌄</span>
+    </summary>
+    <div
+      id="camera-gallery-panel"
+      hx-get="/partials/camera-gallery"
+      hx-trigger="load, every 3s"
+      hx-swap="innerHTML"
+    >
+      {% include "_camera_gallery.html" %}
+    </div>
+  </details>
 </section>
 
 <dialog id="create-station-modal" class="modal">
