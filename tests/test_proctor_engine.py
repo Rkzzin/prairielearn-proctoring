@@ -22,15 +22,14 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from src.core.config import AppConfig, FaceConfig, ProctorConfig
 from src.proctor.engine import BlockReason, ProctorEngine, ProctorState
-from src.proctor.events import EventLogger, EventType, ProctorEvent, Severity
+from src.proctor.events import EventLogger, EventType, Severity
 from src.proctor.gaze import GazeData
-
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -97,10 +96,15 @@ def _make_engine(
     return engine
 
 
-def _feed(engine: ProctorEngine, gaze_data: GazeData | None) -> ProctorState:
+def _feed(
+    engine: ProctorEngine,
+    gaze_data: GazeData | None,
+    *,
+    person_present: bool | None = None,
+) -> ProctorState:
     """Injeta GazeData diretamente na FSM, sem passar pelo GazeEstimator."""
     engine._frame_count += 1
-    engine._transition(gaze_data)
+    engine._transition(gaze_data, person_present=person_present)
     return engine.state
 
 
@@ -169,7 +173,7 @@ class TestGazeFSM:
         assert engine.state == ProctorState.BLOCKED
 
     def test_vertical_deviation_triggers_warn(self, engine: ProctorEngine):
-        # pitch=45° → ratio=0.5 > threshold 0.30
+        # pitch=45° → desvio centralizado=-135°, acima do threshold 0.30
         state = _feed(engine, _gaze(pitch=45.0))
         assert state == ProctorState.GAZE_WARN
 
@@ -231,10 +235,30 @@ class TestGazeDebounceAndSmoothing:
             _feed(engine, _gaze(pitch=180.0))  # 180 = neutro (ver _gaze docstring)
         assert engine.state == ProctorState.NORMAL
 
-        # Um pico isolado de pitch: smooth_pitch = (9*180 + 135)/10 = 175.5
-        # pitch_ratio = |175.5-180|/90 = 0.05, bem abaixo do threshold 0.30
+        # Um pico isolado vira -45° centralizado; a média fica em -4.5°.
+        # pitch_ratio = 4.5/90 = 0.05, bem abaixo do threshold 0.30.
         state = _feed(engine, _gaze(pitch=135.0))
         assert state == ProctorState.NORMAL
+
+    def test_pitch_wraparound_does_not_create_false_vertical_deviation(self, tmp_path: Path):
+        cfg = _make_config(gaze_debounce_frames=1)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        for pitch in (179.0, -179.0) * 5:
+            state = _feed(engine, _gaze(pitch=pitch))
+
+        assert state == ProctorState.NORMAL
+        assert abs(sum(engine._pitch_window) / len(engine._pitch_window)) < 0.1
+
+    def test_wrapped_pitch_still_detects_sustained_vertical_deviation(self, tmp_path: Path):
+        cfg = _make_config(gaze_debounce_frames=3)
+        engine = _make_engine(tmp_path, proctor_config=cfg)
+
+        _feed(engine, _gaze(pitch=135.0))
+        _feed(engine, _gaze(pitch=-225.0))
+        state = _feed(engine, _gaze(pitch=135.0))
+
+        assert state == ProctorState.GAZE_WARN
 
     def test_gaze_warn_details_include_smoothed_values(self, tmp_path: Path):
         cfg = _make_config(gaze_debounce_frames=1)
@@ -247,6 +271,8 @@ class TestGazeDebounceAndSmoothing:
         warning = next(e for e in events if e.type == EventType.GAZE_WARNING.value)
         assert "smooth_yaw" in warning.details
         assert "smooth_pitch" in warning.details
+        assert warning.details["pitch_centered"] == 45.0
+        assert warning.details["smooth_pitch_centered"] == 45.0
 
 
 # ── Testes de FSM: ausência ──────────────────────────────────────────────────
@@ -260,6 +286,20 @@ class TestAbsenceFSM:
     def test_no_face_enters_absence(self, engine: ProctorEngine):
         state = _feed(engine, None)
         assert state == ProctorState.ABSENCE
+
+    def test_person_detection_suppresses_face_only_absence(self, engine: ProctorEngine):
+        state = _feed(engine, None, person_present=True)
+
+        assert state == ProctorState.NORMAL
+        assert engine._absence_start == 0.0
+
+    def test_person_detection_recovers_short_absence(self, engine: ProctorEngine):
+        _feed(engine, None, person_present=False)
+
+        state = _feed(engine, None, person_present=True)
+
+        assert state == ProctorState.NORMAL
+        assert engine._absence_start == 0.0
 
     def test_short_absence_does_not_block(self, tmp_path: Path):
         cfg = _make_config(absence_timeout=10.0)
@@ -276,12 +316,36 @@ class TestAbsenceFSM:
         cfg = _make_config(absence_timeout=0.0)  # timeout imediato
         engine = _make_engine(tmp_path, proctor_config=cfg)
 
-        _feed(engine, None)  # → ABSENCE com absence_start no passado
+        _feed(engine, None, person_present=False)  # → ABSENCE com absence_start no passado
         engine._absence_start = time.time() - 1.0
 
-        _feed(engine, None)  # → BLOCKED
+        _feed(engine, None, person_present=False)  # → BLOCKED
         assert engine.state == ProctorState.BLOCKED
         assert engine.block_reason == BlockReason.ABSENCE
+
+        engine._logger.close()
+        events = EventLogger.read_session(tmp_path / "sessions" / "TEST-001" / "events.jsonl")
+        assert events[-1].details["person_detection_available"] is True
+        assert events[-1].details["person_present"] is False
+        assert events[-1].details["absence_duration_sec"] >= 1.0
+
+    def test_person_detection_does_not_unblock_existing_block(self, tmp_path: Path):
+        engine = _make_engine(tmp_path, _make_config(absence_timeout=0.0))
+        _feed(engine, None)
+        _feed(engine, None)
+
+        state = _feed(engine, None, person_present=True)
+
+        assert state == ProctorState.BLOCKED
+
+    def test_person_detection_does_not_suppress_multiple_faces(self, tmp_path: Path):
+        engine = _make_engine(tmp_path, _make_config(gaze_dur=0.0))
+        _feed(engine, _gaze(face_count=2), person_present=True)
+
+        state = _feed(engine, _gaze(face_count=2), person_present=True)
+
+        assert state == ProctorState.BLOCKED
+        assert engine.block_reason == BlockReason.MULTI_FACE
 
     def test_face_returns_after_absence_warn(self, engine: ProctorEngine):
         """Rosto retorna enquanto ainda em ABSENCE (não bloqueado)."""

@@ -1186,7 +1186,13 @@ class SessionManager:
                 continue
 
             self._verify_session_identity(frame)
-            state = self._engine.update(frame)
+            presence_reader = (
+                getattr(self._device_monitor, "latest_primary_person_present", None)
+                if self._device_monitor is not None
+                else None
+            )
+            person_present = presence_reader() if callable(presence_reader) else None
+            state = self._engine.update(frame, person_present=person_present)
             if state == ProctorState.BLOCKED:
                 self._handle_blocked()
             else:

@@ -200,6 +200,10 @@ def test_uploader_stop_processes_segments_enqueued_before_sentinel(tmp_path: Pat
     assert uploaded == ["test-bucket:gravacoes/sess-upload/webcam_000.mp4:webcam_000.mp4"]
 
 
+def test_recorder_preview_crf_defaults_to_detection_friendly_quality():
+    assert RecorderConfig().preview_crf == 28
+
+
 def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, monkeypatch):
     commands: list[list[str]] = []
 
@@ -229,6 +233,7 @@ def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, m
             preview_width=640,
             preview_height=360,
             preview_fps=10,
+            preview_crf=27,
         ),
     )
 
@@ -266,6 +271,9 @@ def test_capture_webcam_ffmpeg_command_includes_preview_output(tmp_path: Path, m
     assert "veryfast" in cmd
     assert "ultrafast" in cmd
     assert "zerolatency" in cmd
+    ultrafast_index = cmd.index("ultrafast")
+    preview_crf_index = cmd.index("-crf", ultrafast_index)
+    assert cmd[preview_crf_index + 1] == "27"
     assert cmd.count("-pix_fmt") >= 2
     assert cmd.count("yuv420p") >= 2
     assert "-g" in cmd
@@ -329,7 +337,11 @@ def test_environment_camera_records_with_detection_preview_and_without_audio(tmp
         s3_config=S3Config(segment_duration_sec=300),
         face_config=FaceConfig(camera_index=2),
         app_config=AppConfig(data_dir=tmp_path),
-        recorder_config=RecorderConfig(preview_port=19191, environment_preview_port=19192),
+        recorder_config=RecorderConfig(
+            preview_port=19191,
+            environment_preview_port=19192,
+            preview_crf=29,
+        ),
         secondary_camera_index=4,
         environment_preview_enabled=True,
     )
@@ -346,6 +358,9 @@ def test_environment_camera_records_with_detection_preview_and_without_audio(tmp
     assert cmd[start_number + 1] == "0"
     assert "udp://127.0.0.1:19192?pkt_size=1316" in cmd
     assert "-filter_complex" in cmd
+    ultrafast_index = cmd.index("ultrafast")
+    preview_crf_index = cmd.index("-crf", ultrafast_index)
+    assert cmd[preview_crf_index + 1] == "29"
     assert capture.environment_preview_url.startswith("udp://127.0.0.1:19192")
 
 

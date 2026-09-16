@@ -237,6 +237,12 @@ class RecorderConfig(BaseSettings):
         default=10,
         description="FPS do preview local consumido pelo proctoring.",
     )
+    preview_crf: int = Field(
+        default=28,
+        ge=0,
+        le=51,
+        description="Qualidade H.264 do preview; valores menores preservam melhor o rosto.",
+    )
     environment_preview_port: int = Field(
         default=18182,
         description="Porta UDP do preview de baixa frequência da câmera ambiente.",

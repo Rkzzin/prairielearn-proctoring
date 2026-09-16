@@ -33,11 +33,11 @@ from src.core.states import StationMode as CanonicalStationMode
 from src.core.states import derive_station_status
 from src.core.teardown import EXIT_EXAM_MODE_REASON, ShutdownPolicy
 from src.dashboard.models import ExamConfigPayload
-from src.proctor.engine import BlockReason, ProctorState
 from src.proctor.electronic_devices import (
     ElectronicDeviceDetection,
     ElectronicDeviceTransition,
 )
+from src.proctor.engine import BlockReason, ProctorState
 from src.proctor.events import EventType
 
 
@@ -103,6 +103,7 @@ class FakeEngine:
         self.electronic_device_events = []
         self.critical_alerts = []
         self.updated_frames = []
+        self.updated_person_presence = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -111,8 +112,9 @@ class FakeEngine:
     def stop(self):
         self.stopped = True
 
-    def update(self, _frame):
+    def update(self, _frame, *, person_present=None):
         self.updated_frames.append(_frame)
+        self.updated_person_presence.append(person_present)
         if self.states:
             return self.states.popleft()
         return ProctorState.NORMAL
@@ -1422,6 +1424,34 @@ def test_missing_camera_frame_does_not_report_student_absence():
     manager._session_loop()
 
     assert engine.updated_frames == []
+
+
+def test_session_loop_forwards_person_presence_to_engine():
+    manager, _recognizer, engine, *_rest = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    submitted = []
+    manager._engine = engine
+    manager._device_monitor = SimpleNamespace(
+        submit_primary=submitted.append,
+        drain_transitions=lambda: [],
+        latest_primary_person_present=lambda: True,
+    )
+    manager._ensure_browser_running = lambda: True
+
+    def read_once():
+        manager._stop_event.set()
+        return True, "session-frame"
+
+    manager._read_camera_frame = read_once
+
+    manager._session_loop()
+
+    assert submitted == ["session-frame"]
+    assert engine.updated_frames == ["session-frame"]
+    assert engine.updated_person_presence == [True]
 
 
 def test_preview_recovery_keeps_last_frame_visible():

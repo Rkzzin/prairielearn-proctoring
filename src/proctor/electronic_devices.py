@@ -19,6 +19,7 @@ from src.core.camera import open_video_capture
 
 logger = logging.getLogger(__name__)
 
+PERSON_CLASS_ID = 0
 TARGET_CLASSES = {63: "notebook", 67: "celular"}
 
 
@@ -42,6 +43,16 @@ class ElectronicDeviceTransition:
         }
 
 
+@dataclass(frozen=True)
+class YoloXInferenceResult:
+    electronic_devices: tuple[ElectronicDeviceDetection, ...]
+    person_confidence: float | None = None
+
+    @property
+    def person_present(self) -> bool:
+        return self.person_confidence is not None
+
+
 class YoloXElectronicDeviceDetector:
     """YOLOX-S COCO do OpenCV Zoo executado pelo OpenCV DNN."""
 
@@ -53,6 +64,7 @@ class YoloXElectronicDeviceDetector:
         model_path: str | Path,
         *,
         confidence_threshold: float = 0.45,
+        person_confidence_threshold: float = 0.35,
         nms_threshold: float = 0.45,
         net: Any | None = None,
     ):
@@ -65,10 +77,14 @@ class YoloXElectronicDeviceDetector:
             net = cv2.dnn.readNetFromONNX(str(model_path))
         self._net = net
         self._confidence_threshold = confidence_threshold
+        self._person_confidence_threshold = person_confidence_threshold
         self._nms_threshold = nms_threshold
         self._grid, self._expanded_strides = self._generate_anchors()
 
     def detect(self, frame: np.ndarray) -> list[ElectronicDeviceDetection]:
+        return list(self.infer(frame).electronic_devices)
+
+    def infer(self, frame: np.ndarray) -> YoloXInferenceResult:
         height, width = frame.shape[:2]
         scale = min(self.INPUT_SIZE / width, self.INPUT_SIZE / height)
         resized = cv2.resize(
@@ -95,13 +111,19 @@ class YoloXElectronicDeviceDetector:
         class_scores = predictions[:, 4:5] * predictions[:, 5:]
         class_ids = np.argmax(class_scores, axis=1)
         scores = class_scores[np.arange(len(class_ids)), class_ids]
+        person_scores = scores[
+            (class_ids == PERSON_CLASS_ID) & (scores >= self._person_confidence_threshold)
+        ]
+        person_confidence = (
+            round(float(np.max(person_scores)), 4) if len(person_scores) else None
+        )
         selected = [
             index
             for index, (class_id, score) in enumerate(zip(class_ids, scores, strict=True))
             if int(class_id) in TARGET_CLASSES and float(score) >= self._confidence_threshold
         ]
         if not selected:
-            return []
+            return YoloXInferenceResult((), person_confidence)
 
         boxes: list[list[int]] = []
         selected_scores: list[float] = []
@@ -132,14 +154,17 @@ class YoloXElectronicDeviceDetector:
             )
             keep.extend(class_indexes[int(index)] for index in np.asarray(class_keep).reshape(-1))
 
-        return [
-            ElectronicDeviceDetection(
-                label=TARGET_CLASSES[selected_classes[index]],
-                confidence=round(selected_scores[index], 4),
-                box=tuple(boxes[index]),
-            )
-            for index in keep
-        ]
+        return YoloXInferenceResult(
+            electronic_devices=tuple(
+                ElectronicDeviceDetection(
+                    label=TARGET_CLASSES[selected_classes[index]],
+                    confidence=round(selected_scores[index], 4),
+                    box=tuple(boxes[index]),
+                )
+                for index in keep
+            ),
+            person_confidence=person_confidence,
+        )
 
     @classmethod
     def _generate_anchors(cls) -> tuple[np.ndarray, np.ndarray]:
@@ -216,6 +241,7 @@ class ElectronicDeviceMonitor:
         secondary_preview_url: str | None,
         interval_sec: float = 1.0,
         confirmation_sec: float = 10.0,
+        person_presence_ttl_sec: float = 5.0,
         ignored_regions: dict[str, list[dict[str, Any]]] | None = None,
         preview_capture_factory: Callable[[int | str], Any] = open_video_capture,
         clock_fn: Callable[[], float] = time.monotonic,
@@ -224,9 +250,13 @@ class ElectronicDeviceMonitor:
         self._primary_enabled = primary_enabled
         self._interval_sec = interval_sec
         self._confirmation_sec = max(0.0, confirmation_sec)
+        self._person_presence_ttl_sec = max(0.0, person_presence_ttl_sec)
         self._clock = clock_fn
         self._ignored_regions = ignored_regions or {}
         self._primary_frame: np.ndarray | None = None
+        self._primary_frame_at: float | None = None
+        self._primary_person_present: bool | None = None
+        self._primary_person_frame_at: float | None = None
         self._frame_lock = threading.Lock()
         self._reader = (
             _LatestPreviewReader(secondary_preview_url, preview_capture_factory)
@@ -257,6 +287,15 @@ class ElectronicDeviceMonitor:
             return
         with self._frame_lock:
             self._primary_frame = frame
+            self._primary_frame_at = self._clock()
+
+    def latest_primary_person_present(self) -> bool | None:
+        with self._frame_lock:
+            if self._primary_person_frame_at is None:
+                return None
+            if self._clock() - self._primary_person_frame_at > self._person_presence_ttl_sec:
+                return None
+            return self._primary_person_present
 
     def drain_transitions(self) -> list[ElectronicDeviceTransition]:
         transitions = []
@@ -275,21 +314,35 @@ class ElectronicDeviceMonitor:
 
     def _run(self) -> None:
         while not self._stop.wait(self._interval_sec):
-            frames: dict[str, np.ndarray | None] = {}
+            frames: dict[str, tuple[np.ndarray | None, float | None]] = {}
             if self._primary_enabled:
                 with self._frame_lock:
-                    frames["principal"] = self._primary_frame
+                    frames["principal"] = (self._primary_frame, self._primary_frame_at)
             if self._reader is not None:
-                frames["ambiente"] = self._reader.latest()
-            for camera, frame in frames.items():
+                frames["ambiente"] = (self._reader.latest(), None)
+            for camera, (frame, frame_at) in frames.items():
                 if frame is None:
                     continue
                 started_at = time.monotonic()
                 try:
-                    detections = self._detector.detect(frame)
+                    infer = getattr(self._detector, "infer", None)
+                    inference = (
+                        infer(frame)
+                        if callable(infer)
+                        else YoloXInferenceResult(tuple(self._detector.detect(frame)))
+                    )
                 except (RuntimeError, ValueError, cv2.error) as exc:  # pragma: no cover
                     logger.warning("Falha ao detectar eletrônicos na câmera %s: %s", camera, exc)
                     continue
+                if camera == "principal" and frame_at is not None:
+                    with self._frame_lock:
+                        if (
+                            self._primary_person_frame_at is None
+                            or frame_at >= self._primary_person_frame_at
+                        ):
+                            self._primary_person_present = inference.person_present
+                            self._primary_person_frame_at = frame_at
+                detections = list(inference.electronic_devices)
                 detections = [
                     detection
                     for detection in detections

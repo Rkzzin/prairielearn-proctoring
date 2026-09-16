@@ -166,7 +166,12 @@ class ProctorEngine:
     #  Loop principal
     # ──────────────────────────────────────────────
 
-    def update(self, frame: np.ndarray | None) -> ProctorState:
+    def update(
+        self,
+        frame: np.ndarray | None,
+        *,
+        person_present: bool | None = None,
+    ) -> ProctorState:
         """Processa um frame BGR e retorna o estado atual da FSM.
 
         Deve ser chamado a cada frame capturado da webcam.
@@ -179,7 +184,7 @@ class ProctorEngine:
         """
         self._frame_count += 1
         gaze_data = self._gaze.process_frame(frame) if frame is not None else None
-        self._transition(gaze_data)
+        self._transition(gaze_data, person_present=person_present)
         return self.state
 
     def unblock(self) -> None:
@@ -252,7 +257,12 @@ class ProctorEngine:
     #  FSM
     # ──────────────────────────────────────────────
 
-    def _transition(self, gaze_data: GazeData | None) -> None:
+    def _transition(
+        self,
+        gaze_data: GazeData | None,
+        *,
+        person_present: bool | None = None,
+    ) -> None:
         """Aplica as transições da FSM com base nos dados de gaze."""
 
         # ── BLOCKED: só sai via unblock() ──────────
@@ -262,7 +272,10 @@ class ProctorEngine:
         # ── Sem rosto ───────────────────────────────
         if gaze_data is None:
             self._multi_face_start = 0.0
-            self._handle_no_face()
+            if person_present is True:
+                self._handle_person_without_face()
+            else:
+                self._handle_no_face(person_present=person_present)
             return
 
         # Rosto voltou — resetar timer de ausência
@@ -285,7 +298,17 @@ class ProctorEngine:
 
         self._handle_gaze(gaze_data)
 
-    def _handle_no_face(self) -> None:
+    def _handle_person_without_face(self) -> None:
+        """YOLO confirma ocupação quando o detector frontal perde o rosto."""
+        self._absence_start = 0.0
+        self._warn_start = 0.0
+        self._yaw_window.clear()
+        self._pitch_window.clear()
+        self._deviation_streak = 0
+        if self.state in {ProctorState.ABSENCE, ProctorState.GAZE_WARN}:
+            self.state = ProctorState.NORMAL
+
+    def _handle_no_face(self, *, person_present: bool | None = None) -> None:
         """Gerencia a ausência de rosto.
 
         Qualquer estado não-BLOCKED transita para ABSENCE ao perder o rosto.
@@ -297,7 +320,15 @@ class ProctorEngine:
         if self.state == ProctorState.ABSENCE:
             elapsed = now - self._absence_start
             if elapsed >= self._cfg.absence_timeout_sec:
-                self._block(BlockReason.ABSENCE)
+                self._block(
+                    BlockReason.ABSENCE,
+                    details={
+                        "absence_duration_sec": round(elapsed, 1),
+                        "face_detected": False,
+                        "person_detection_available": person_present is not None,
+                        "person_present": person_present,
+                    },
+                )
             return
 
         # NORMAL ou GAZE_WARN → iniciar ausência
@@ -313,7 +344,12 @@ class ProctorEngine:
             frame=self._frame_count,
             event_type=EventType.ABSENCE_WARNING,
             severity=Severity.WARNING,
-            details={"timeout_sec": self._cfg.absence_timeout_sec},
+            details={
+                "timeout_sec": self._cfg.absence_timeout_sec,
+                "face_detected": False,
+                "person_detection_available": person_present is not None,
+                "person_present": person_present,
+            },
         )
 
     def _handle_gaze(self, data: GazeData) -> None:
@@ -328,22 +364,26 @@ class ProctorEngine:
         detecção de desvio sustentado (gaze_duration_sec só começa a contar
         depois desse debounce, não antes).
         """
-        # Suavizar yaw e pitch (mesma técnica para os dois — antes só o yaw
-        # era suavizado, e o pitch cru é a fonte mais comum de ruído porque
-        # o preview de baixa resolução degrada mais a estimativa vertical).
+        # O pitch do solvePnP cruza a descontinuidade +180/-180 com a cabeça
+        # ereta. Centralize cada amostra antes da média para que +179 e -179
+        # representem -1 e +1, em vez de produzirem uma média falsa de zero.
         self._yaw_window.append(data.yaw)
-        self._pitch_window.append(data.pitch)
+        pitch_centered = (data.pitch % 360.0) - 180.0
+        self._pitch_window.append(pitch_centered)
         smooth_yaw = sum(self._yaw_window) / len(self._yaw_window)
-        smooth_pitch = sum(self._pitch_window) / len(self._pitch_window)
+        smooth_pitch_centered = sum(self._pitch_window) / len(self._pitch_window)
+        smooth_pitch = (
+            180.0 + smooth_pitch_centered
+            if data.pitch >= 0.0
+            else -180.0 + smooth_pitch_centered
+        )
 
         # Desvio horizontal: yaw varia ±90° → ratio 0.0–1.0
         yaw_ratio = abs(smooth_yaw) / 90.0
 
-        # Desvio vertical: solvePnP retorna pitch ~180° quando cabeça ereta
-        # (ambiguidade de decomposição de Euler). Normalizamos subtraindo 180°
-        # para que cabeça ereta → ~0°, olhar para baixo → positivo.
-        pitch_centered = abs(smooth_pitch) - 180.0
-        pitch_ratio = abs(pitch_centered) / 90.0
+        # Desvio vertical já está centrado em zero após remover a ambiguidade
+        # ±180° do solvePnP.
+        pitch_ratio = abs(smooth_pitch_centered) / 90.0
 
         frame_deviated = (
             yaw_ratio > self._cfg.gaze_h_threshold
@@ -379,6 +419,8 @@ class ProctorEngine:
                         "smooth_yaw": round(smooth_yaw, 2),
                         "pitch": round(data.pitch, 2),
                         "smooth_pitch": round(smooth_pitch, 2),
+                        "pitch_centered": round(pitch_centered, 2),
+                        "smooth_pitch_centered": round(smooth_pitch_centered, 2),
                         "eye_ratio": round(data.eye_ratio, 3) if data.eye_ratio else None,
                     },
                 )
