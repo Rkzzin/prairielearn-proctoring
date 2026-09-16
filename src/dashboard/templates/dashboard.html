@@ -1,19 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
-<section class="hero">
-  <div class="hero-card">
-    <span class="metric" id="stations-count">{{ stations|length }}</span>
-    <span>estações registradas</span>
-  </div>
-  <div class="hero-card">
-    <span class="metric">{{ sessions|length }}</span>
-    <span>sessões conhecidas</span>
-  </div>
-  <div class="hero-card">
-    <span class="metric">{{ enrollments|length }}</span>
-    <span>enrollments recentes</span>
-  </div>
-</section>
+<details class="panel review-details">
+  <summary>
+    <strong>Resumo</strong>
+    <span class="details-chevron" aria-hidden="true">⌄</span>
+  </summary>
+  <section class="hero">
+    <div class="hero-card">
+      <span class="metric" id="stations-count">{{ stations|length }}</span>
+      <span>estações registradas</span>
+    </div>
+    <div class="hero-card">
+      <span class="metric">{{ sessions|length }}</span>
+      <span>sessões conhecidas</span>
+    </div>
+    <div class="hero-card">
+      <span class="metric">{{ enrollments|length }}</span>
+      <span>enrollments recentes</span>
+    </div>
+  </section>
+</details>
 
 <section class="panel">
   <div class="panel-header">
@@ -28,14 +34,20 @@
       <button type="button" onclick="openBulkConfigModal()">Configurar estações</button>
     </div>
   </div>
-  <div
-    id="stations-panel"
-    hx-get="/partials/stations"
-    hx-trigger="load, every 5s"
-    hx-swap="innerHTML"
-  >
-    {% include "_stations.html" %}
-  </div>
+  <details class="review-details">
+    <summary>
+      <strong>Ver estações</strong>
+      <span class="details-chevron" aria-hidden="true">⌄</span>
+    </summary>
+    <div
+      id="stations-panel"
+      hx-get="/partials/stations"
+      hx-trigger="load, every 5s"
+      hx-swap="innerHTML"
+    >
+      {% include "_stations.html" %}
+    </div>
+  </details>
 </section>
 
 <section class="panel camera-diagnostics">
