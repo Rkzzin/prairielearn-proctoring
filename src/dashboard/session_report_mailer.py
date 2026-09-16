@@ -8,6 +8,7 @@ import threading
 from collections import Counter
 from email.message import EmailMessage
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import boto3
 
@@ -16,6 +17,9 @@ from src.dashboard.models import EventSeverity, EventSnapshotRecord, SessionEmai
 from src.dashboard.store import DashboardStore
 
 logger = logging.getLogger(__name__)
+
+_REPORT_TIMEZONE = ZoneInfo("America/Sao_Paulo")
+_MAX_INLINE_IMAGE_BYTES = 7 * 1024 * 1024
 
 _EVENT_LABELS = {
     "GAZE_WARNING": "Olhar desviado detectado",
@@ -105,7 +109,8 @@ class SessionReportMailer:
                 self._store.list_event_snapshots(session_id),
                 report.image_link_limit,
             )
-            message = self._build_message(report, session, snapshots)
+            inline_images = self._load_inline_images(snapshots)
+            message = self._build_message(report, session, snapshots, inline_images)
             response = self._ses_client_factory(report.ses_region).send_raw_email(
                 Source=report.sender_email,
                 Destinations=report.recipient_emails,
@@ -137,8 +142,36 @@ class SessionReportMailer:
         )
         return ready if limit == 0 else ready[:limit]
 
+    def _load_inline_images(
+        self,
+        snapshots: list[EventSnapshotRecord],
+    ) -> dict[str, bytes]:
+        images: dict[str, bytes] = {}
+        total_bytes = 0
+        for snapshot in snapshots:
+            try:
+                image = self._store.read_event_snapshot_image(snapshot)
+            except Exception:
+                logger.warning(
+                    "Falha ao carregar imagem inline do evento %s",
+                    snapshot.event_key,
+                    exc_info=True,
+                )
+                continue
+            if not image or total_bytes + len(image) > _MAX_INLINE_IMAGE_BYTES:
+                continue
+            images[snapshot.event_key] = image
+            total_bytes += len(image)
+        return images
+
     @staticmethod
-    def _build_message(report: SessionEmailReport, session, snapshots) -> EmailMessage:
+    def _build_message(
+        report: SessionEmailReport,
+        session,
+        snapshots,
+        inline_images: dict[str, bytes] | None = None,
+    ) -> EmailMessage:
+        inline_images = inline_images or {}
         base_url = report.public_dashboard_url.rstrip("/")
         session_url = f"{base_url}/sessions/{quote(session.session_id, safe='')}"
         all_flagged = [
@@ -155,14 +188,29 @@ class SessionReportMailer:
         integrity = compute_integrity_score(session)
         student_name = session.student.student_name if session.student else "Não identificado"
         student_id = session.student.student_id if session.student else "-"
+        started_at = session.started_at.astimezone(_REPORT_TIMEZONE)
+        started_at_label = started_at.strftime("%d/%m/%Y às %H:%M:%S")
 
         rows = []
         text_rows = []
-        for snapshot in snapshots:
+        related_images = []
+        for index, snapshot in enumerate(snapshots, start=1):
             label = _EVENT_LABELS.get(snapshot.event_type, snapshot.event_type)
             image_url = (
                 f"{session_url}/event-snapshots/{quote(snapshot.event_key, safe='')}"
             )
+            image = inline_images.get(snapshot.event_key)
+            if image:
+                cid = f"snapshot-{index}@proctoring"
+                image_html = (
+                    f'<a href="{html.escape(image_url)}">'
+                    f'<img src="cid:{cid}" alt="{html.escape(label)}" '
+                    'style="display:block;max-width:480px;width:100%;height:auto"></a><br>'
+                    f'<a href="{html.escape(image_url)}">Abrir imagem</a>'
+                )
+                related_images.append((cid, f"snapshot-{index}.jpg", image))
+            else:
+                image_html = f'<a href="{html.escape(image_url)}">Ver imagem</a>'
             relative_seconds = max(
                 0,
                 int((snapshot.event_timestamp - session.started_at).total_seconds()),
@@ -174,7 +222,7 @@ class SessionReportMailer:
                 f"<td>{html.escape(relative_time)}</td>"
                 f"<td>{html.escape(label)}</td>"
                 f"<td>{html.escape(snapshot.severity.value)}</td>"
-                f'<td><a href="{html.escape(image_url)}">Ver imagem</a></td>'
+                f"<td>{image_html}</td>"
                 "</tr>"
             )
             text_rows.append(
@@ -192,17 +240,18 @@ class SessionReportMailer:
           <p><strong>Turma:</strong> {html.escape(session.turma)}<br>
              <strong>Avaliação:</strong> {html.escape(session.assessment)}<br>
              <strong>Estação:</strong> {html.escape(session.station_id)}<br>
+             <strong>Início da prova:</strong> {html.escape(started_at_label)}<br>
              <strong>Índice de integridade:</strong> {integrity.score} ({html.escape(integrity.band)})</p>
           <p><strong>{critical_count}</strong> crítico(s) e
              <strong>{warning_count}</strong> alerta(s).</p>
           <h2>Resumo dos alertas</h2><ul>{summary_rows}</ul>
+          <p><a href="{html.escape(session_url)}" style="display:inline-block;padding:12px 18px;background:#287681;color:white;text-decoration:none;border-radius:6px">Abrir revisão completa</a></p>
           <h2>Imagens selecionadas</h2>
           <table style="border-collapse:collapse;width:100%" border="1" cellpadding="8">
             <thead><tr><th>Momento</th><th>Alerta</th><th>Severidade</th><th>Imagem</th></tr></thead>
             <tbody>{''.join(rows) or '<tr><td colspan="4">Nenhuma imagem disponível</td></tr>'}</tbody>
           </table>
           {f'<p>Mais {omitted_count} alerta(s) estão disponíveis na revisão completa.</p>' if omitted_count else ''}
-          <p><a href="{html.escape(session_url)}" style="display:inline-block;padding:12px 18px;background:#287681;color:white;text-decoration:none;border-radius:6px">Abrir revisão completa</a></p>
         </body></html>
         """
         text_body = "\n".join(
@@ -212,6 +261,7 @@ class SessionReportMailer:
                 f"Turma: {session.turma}",
                 f"Avaliação: {session.assessment}",
                 f"Estação: {session.station_id}",
+                f"Início da prova: {started_at_label}",
                 f"Índice de integridade: {integrity.score} ({integrity.band})",
                 f"Alertas: {critical_count} críticos, {warning_count} warnings",
                 *text_rows,
@@ -226,4 +276,14 @@ class SessionReportMailer:
         message["To"] = report.sender_email
         message.set_content(text_body)
         message.add_alternative(html_body, subtype="html")
+        html_part = message.get_payload()[-1]
+        for cid, filename, image in related_images:
+            html_part.add_related(
+                image,
+                maintype="image",
+                subtype="jpeg",
+                cid=f"<{cid}>",
+                filename=filename,
+                disposition="inline",
+            )
         return message

@@ -239,6 +239,12 @@ class DashboardStore:
                 EventSnapshotRecord.model_validate(row["payload"])
             )
 
+    def read_event_snapshot_image(self, snapshot: EventSnapshotRecord) -> bytes | None:
+        if not snapshot.s3_bucket or not snapshot.s3_key or self._s3 is None:
+            return None
+        response = self._s3.get_object(Bucket=snapshot.s3_bucket, Key=snapshot.s3_key)
+        return response["Body"].read()
+
     def get_notification_settings(self) -> NotificationSettings:
         with self._lock:
             row = self._db.execute(
