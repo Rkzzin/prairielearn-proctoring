@@ -300,14 +300,16 @@ def create_app(
         timeline = _build_timeline(session)
         event_snapshots = dashboard_store.list_event_snapshots(session_id)
         email_report = dashboard_store.get_email_report(session_id)
-        student_photo_url = None
+        student_photo_urls: list[str] = []
         if session.student is not None:
             try:
-                student_photo_url = request.app.state.s3_enrollment_service.student_photo_url(
-                    session.turma, session.student.student_id
+                student_photo_urls = await anyio.to_thread.run_sync(
+                    lambda: request.app.state.s3_enrollment_service.student_photo_url_candidates(
+                        session.turma, session.student.student_id
+                    )
                 )
             except Exception:
-                student_photo_url = None
+                student_photo_urls = []
         event_snapshot_cards = [
             {
                 "snapshot": snapshot,
@@ -327,7 +329,7 @@ def create_app(
             title=f"Sessão {session_id}",
             session=session,
             timeline=timeline,
-            student_photo_url=student_photo_url,
+            student_photo_urls=student_photo_urls,
             event_snapshots=event_snapshot_cards,
             event_snapshots_processing=any(
                 snapshot.status in {"queued", "processing"}

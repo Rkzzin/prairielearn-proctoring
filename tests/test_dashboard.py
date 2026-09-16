@@ -420,11 +420,11 @@ class FakeS3EnrollmentService:
     def list_turmas(self):
         return ["ES2025-T1", "ES2025-T2"]
 
-    def student_photo_url(self, turma: str, student_name: str):
+    def student_photo_url_candidates(self, turma: str, student_name: str):
         self.photo_calls.append((turma, student_name))
         if student_name == "felipehl":
-            return f"https://s3.example.com/fotos/{turma}/felipehl.jpg?sig=1"
-        return None
+            return [f"https://s3.example.com/fotos/{turma}/felipehl.jpg?sig=1"]
+        return []
 
     def enroll_turma(self, turma: str, *, force: bool = False):
         self.calls.append((turma, force))

@@ -52,8 +52,8 @@ class S3EnrollmentService:
     def list_turmas(self) -> list[str]:
         return self._s3_factory().list_photo_turmas()
 
-    def student_photo_url(self, turma: str, student_name: str) -> str | None:
-        return self._s3_factory().generate_student_photo_url(turma, student_name)
+    def student_photo_url_candidates(self, turma: str, student_name: str) -> list[str]:
+        return self._s3_factory().generate_student_photo_url_candidates(turma, student_name)
 
     def enroll_turma(self, turma: str, *, force: bool = False) -> S3EnrollmentSummary:
         turma = turma.strip()

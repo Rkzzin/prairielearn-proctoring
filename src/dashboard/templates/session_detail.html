@@ -3,8 +3,14 @@
 <section class="panel session-summary">
   <div class="session-summary-head">
     <div class="session-summary-heading">
-      {% if student_photo_url %}
-      <img class="student-photo" src="{{ student_photo_url }}" alt="Foto de {{ session.student.student_name if session.student else 'aluno' }}">
+      {% if student_photo_urls %}
+      <img
+        class="student-photo"
+        src="{{ student_photo_urls[0] }}"
+        data-photo-candidates='{{ student_photo_urls[1:] | tojson }}'
+        onerror="tryNextStudentPhoto(this)"
+        alt="Foto de {{ session.student.student_name if session.student else 'aluno' }}"
+      >
       {% endif %}
       <div>
         <p class="eyebrow">Revisão da avaliação</p>
@@ -223,6 +229,16 @@
 <script id="timeline-data" type="application/json">{{ timeline | tojson }}</script>
 <script>
 const timelineData = JSON.parse(document.getElementById('timeline-data').textContent);
+function tryNextStudentPhoto(img) {
+  const candidates = JSON.parse(img.dataset.photoCandidates || '[]');
+  if (!candidates.length) {
+    img.remove();
+    return;
+  }
+  const [next, ...rest] = candidates;
+  img.dataset.photoCandidates = JSON.stringify(rest);
+  img.src = next;
+}
 async function setReviewStatus(status, trigger) {
   const group = trigger.closest('.review-status-options');
   const error = document.getElementById('review-status-error');

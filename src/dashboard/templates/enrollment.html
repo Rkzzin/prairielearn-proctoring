@@ -27,18 +27,26 @@
   <form
     class="form-card"
     hx-post="/api/roster/upload"
+    hx-encoding="multipart/form-data"
     hx-target="#roster-upload-result"
     hx-swap="innerHTML"
   >
     <h2>Lista de alunos (roster)</h2>
     <p>CSV de gradebook do PrairieLearn (colunas UID e Name) — usado pra mostrar o nome do aluno junto do login e achar a foto dele no dashboard.</p>
+    {% if s3_error %}
+    <p class="empty">Não foi possível listar turmas no S3: {{ s3_error }}</p>
+    {% endif %}
     <label>Turma
-      <input type="text" name="turma" placeholder="Ex.: ES2025-T1" required>
+      <select name="turma" {% if not s3_turmas %}disabled{% endif %}>
+        {% for turma in s3_turmas %}
+        <option value="{{ turma }}">{{ turma }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>Arquivo CSV
       <input type="file" name="roster_csv" accept=".csv" required>
     </label>
-    <button type="submit">Importar lista</button>
+    <button type="submit" {% if not s3_turmas %}disabled{% endif %}>Importar lista</button>
     <div id="roster-upload-result"></div>
   </form>
 </section>
