@@ -14,6 +14,7 @@ from src.dashboard.app import (
     _event_counts,
     _format_duration,
     _format_relative_time,
+    _parse_roster_csv,
     _station_id_from_name,
     create_app,
 )
@@ -28,6 +29,7 @@ from src.dashboard.models import (
     RecordingAsset,
     SessionEventPayload,
     SessionRecord,
+    SessionReviewStatus,
     StationHeartbeat,
     StationStatus,
     StudentInfo,
@@ -413,9 +415,16 @@ def _station_headers(app, station_id: str, token: str = "test-token") -> dict[st
 class FakeS3EnrollmentService:
     def __init__(self):
         self.calls = []
+        self.photo_calls = []
 
     def list_turmas(self):
         return ["ES2025-T1", "ES2025-T2"]
+
+    def student_photo_url(self, turma: str, student_name: str):
+        self.photo_calls.append((turma, student_name))
+        if student_name == "felipehl":
+            return f"https://s3.example.com/fotos/{turma}/felipehl.jpg?sig=1"
+        return None
 
     def enroll_turma(self, turma: str, *, force: bool = False):
         self.calls.append((turma, force))
@@ -1045,6 +1054,34 @@ def test_station_id_from_name(name, expected):
     assert _station_id_from_name(name) == expected
 
 
+def test_parse_roster_csv_extracts_login_before_at_and_dedupes():
+    raw = (
+        "UID,Name,UIN,Role,Enrollment,Labels,Quiz-1\n"
+        "anacmm2@al.insper.edu.br,Ana Clara Minicheli Martinelli,uin-1,Student,joined,,100\n"
+        "arthursvs@al.insper.edu.br,Arthur Soria Vaz da Silva,uin-2,Student,joined,,100\n"
+        "arthursvs@al.insper.edu.br,Arthur Duplicado,uin-2,Student,joined,,100\n"
+        ",Sem UID,uin-3,Student,joined,,100\n"
+        "semnome@al.insper.edu.br,,uin-4,Student,joined,,100\n"
+    ).encode("utf-8")
+
+    entries = _parse_roster_csv(raw)
+
+    assert entries == [
+        ("anacmm2", "Ana Clara Minicheli Martinelli"),
+        ("arthursvs", "Arthur Soria Vaz da Silva"),
+    ]
+
+
+def test_parse_roster_csv_rejects_missing_columns():
+    with pytest.raises(ValueError, match="UID.*Name"):
+        _parse_roster_csv(b"Login,FullName\nfelipehl,Felipe\n")
+
+
+def test_parse_roster_csv_rejects_csv_with_no_valid_rows():
+    with pytest.raises(ValueError, match="Nenhum aluno"):
+        _parse_roster_csv(b"UID,Name\n,\n")
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_rejects_station_id_mismatch_between_header_and_body(tmp_path, dashboard_database_url):
     app = _make_app(tmp_path, dashboard_database_url)
@@ -1176,6 +1213,131 @@ async def test_s3_enrollment_endpoint_processes_turma_and_records_successes(tmp_
     assert enrollments[0].student_id == "alice"
     assert enrollments[0].source == "s3"
     assert enrollments[0].file_names == ["fotos/ES2025-T1/alice.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_review_status_endpoint_updates_session_and_rejects_unknown_session(
+    tmp_path, dashboard_database_url
+):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/sessions/sess-1/review-status",
+            json={"review_status": "REVIEWED"},
+        )
+        missing_response = await client.post(
+            "/api/sessions/missing/review-status",
+            json={"review_status": "REVIEWED"},
+        )
+        invalid_response = await client.post(
+            "/api/sessions/sess-1/review-status",
+            json={"review_status": "NOT_A_STATUS"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["review_status"] == "REVIEWED"
+    assert missing_response.status_code == 404
+    assert invalid_response.status_code == 422
+    assert app.state.store.get_session("sess-1").review_status == SessionReviewStatus.REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_roster_upload_endpoint_imports_csv_and_resolves_names_in_ui(
+    tmp_path, dashboard_database_url
+):
+    app = _make_app(tmp_path, dashboard_database_url)
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="felipehl", student_name="felipehl"),
+        )
+    )
+    csv_bytes = (
+        "UID,Name,UIN,Role,Enrollment,Labels\n"
+        "felipehl@al.insper.edu.br,Felipe Henrique Lima,uin-1,Student,joined,\n"
+    ).encode("utf-8")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        upload_response = await client.post(
+            "/api/roster/upload",
+            data={"turma": "ES2025-T1"},
+            files={"roster_csv": ("roster.csv", csv_bytes, "text/csv")},
+        )
+        sessions_partial = await client.get("/partials/sessions")
+        session_page = await client.get("/sessions/sess-1")
+
+    assert upload_response.status_code == 200
+    assert "1 aluno importado" in upload_response.text
+    assert "Felipe Henrique Lima" in sessions_partial.text
+    assert "(felipehl)" in sessions_partial.text
+    assert "Felipe Henrique Lima" in session_page.text
+
+
+@pytest.mark.asyncio
+async def test_roster_upload_endpoint_rejects_csv_without_expected_columns(
+    tmp_path, dashboard_database_url
+):
+    async with AsyncClient(transport=ASGITransport(app=_make_app(tmp_path, dashboard_database_url)), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/roster/upload",
+            data={"turma": "ES2025-T1"},
+            files={"roster_csv": ("roster.csv", b"Login,FullName\nfelipehl,Felipe\n", "text/csv")},
+        )
+
+    assert response.status_code == 200
+    assert "UID" in response.text
+
+
+@pytest.mark.asyncio
+async def test_session_review_shows_student_photo_from_s3_enrollment(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url)
+    service = FakeS3EnrollmentService()
+    app.state.s3_enrollment_service = service
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="felipehl", student_name="felipehl"),
+        )
+    )
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="sess-2",
+            station_id="nuc-02",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            student=StudentInfo(student_id="ghost", student_name="ghost"),
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        with_photo = await client.get("/sessions/sess-1")
+        without_photo = await client.get("/sessions/sess-2")
+
+    assert with_photo.status_code == 200
+    assert 'class="student-photo"' in with_photo.text
+    assert "https://s3.example.com/fotos/ES2025-T1/felipehl.jpg?sig=1" in with_photo.text
+    assert without_photo.status_code == 200
+    assert 'class="student-photo"' not in without_photo.text
+    assert service.photo_calls == [("ES2025-T1", "felipehl"), ("ES2025-T1", "ghost")]
 
 
 @pytest.mark.asyncio
@@ -1443,6 +1605,29 @@ def test_dashboard_store_persists_across_restarts(dashboard_database_url):
     assert snapshot["sessions"][0].session_id == "sess-1"
 
 
+def test_dashboard_store_import_roster_resolves_name_and_replaces_on_reupload(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+
+    imported = store.import_roster(
+        "ES2025-T1",
+        [("felipehl", "Felipe Henrique Lima"), ("lennyw", "Lenny Watanabe")],
+    )
+
+    assert imported == 2
+    assert store.roster_name("ES2025-T1", "felipehl") == "Felipe Henrique Lima"
+    assert store.roster_name("ES2025-T1", "FelipeHL") == "Felipe Henrique Lima"
+    assert store.roster_name("ES2025-T1", "unknown") is None
+    assert store.roster_name("OUTRA-TURMA", "felipehl") is None
+
+    store.import_roster("ES2025-T1", [("felipehl", "Felipe H. Lima Corrigido")])
+
+    assert store.roster_name("ES2025-T1", "felipehl") == "Felipe H. Lima Corrigido"
+    assert store.roster_name("ES2025-T1", "lennyw") is None
+
+    reloaded = DashboardStore(dashboard_database_url)
+    assert reloaded.roster_name("ES2025-T1", "felipehl") == "Felipe H. Lima Corrigido"
+
+
 def test_dashboard_store_run_enroll_enqueues_command_and_sets_queued_status(dashboard_database_url):
     store = DashboardStore(dashboard_database_url)
 
@@ -1621,6 +1806,40 @@ def test_finalize_session_preserves_block_timeout_cancellation(dashboard_databas
 
     assert finalized is not None
     assert finalized.status == StationStatus.TIMEOUT
+
+
+def test_session_record_defaults_to_needs_review():
+    session = SessionRecord(
+        session_id="sess-1",
+        station_id="nuc-01",
+        turma="ES2025-T1",
+        assessment="Quiz-03",
+        started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+    )
+
+    assert session.review_status == SessionReviewStatus.NEEDS_REVIEW
+
+
+def test_dashboard_store_sets_session_review_status(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    updated = store.set_session_review_status("sess-1", SessionReviewStatus.VIOLATION)
+    persisted = store.get_session("sess-1")
+
+    assert updated is not None
+    assert updated.review_status == SessionReviewStatus.VIOLATION
+    assert persisted is not None
+    assert persisted.review_status == SessionReviewStatus.VIOLATION
+    assert store.set_session_review_status("missing", SessionReviewStatus.REVIEWED) is None
 
 
 def test_session_record_migrates_legacy_cancelled_timeout_status():
@@ -1804,6 +2023,7 @@ def test_session_review_template_prioritizes_human_event_information():
     template_dir = Path(__file__).parents[1] / "src" / "dashboard" / "templates"
     env = Environment(loader=FileSystemLoader(template_dir))
     env.globals["integrity_score"] = compute_integrity_score
+    env.globals["roster_name"] = lambda turma, login: None
     template = env.get_template("session_detail.html")
 
     html = template.render(

@@ -22,4 +22,24 @@
     <div id="s3-enrollment-result"></div>
   </form>
 </section>
+
+<section class="panel">
+  <form
+    class="form-card"
+    hx-post="/api/roster/upload"
+    hx-target="#roster-upload-result"
+    hx-swap="innerHTML"
+  >
+    <h2>Lista de alunos (roster)</h2>
+    <p>CSV de gradebook do PrairieLearn (colunas UID e Name) — usado pra mostrar o nome do aluno junto do login e achar a foto dele no dashboard.</p>
+    <label>Turma
+      <input type="text" name="turma" placeholder="Ex.: ES2025-T1" required>
+    </label>
+    <label>Arquivo CSV
+      <input type="file" name="roster_csv" accept=".csv" required>
+    </label>
+    <button type="submit">Importar lista</button>
+    <div id="roster-upload-result"></div>
+  </form>
+</section>
 {% endblock %}

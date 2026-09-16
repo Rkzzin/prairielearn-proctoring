@@ -94,6 +94,13 @@
       Limpar sessões
     </button>
   </div>
+  <div class="timeline-filters session-status-filters" role="group" aria-label="Filtrar sessões por status de revisão">
+    <button type="button" class="filter-chip active" data-review-filter="ALL" aria-pressed="true" onclick="filterSessions('ALL', this)">Todas <span id="review-count-ALL">0</span></button>
+    <button type="button" class="filter-chip filter-needs-review" data-review-filter="NEEDS_REVIEW" aria-pressed="false" onclick="filterSessions('NEEDS_REVIEW', this)">Necessita revisão <span id="review-count-NEEDS_REVIEW">0</span></button>
+    <button type="button" class="filter-chip filter-under-review" data-review-filter="UNDER_REVIEW" aria-pressed="false" onclick="filterSessions('UNDER_REVIEW', this)">Em revisão <span id="review-count-UNDER_REVIEW">0</span></button>
+    <button type="button" class="filter-chip filter-reviewed" data-review-filter="REVIEWED" aria-pressed="false" onclick="filterSessions('REVIEWED', this)">Revisado <span id="review-count-REVIEWED">0</span></button>
+    <button type="button" class="filter-chip filter-violation" data-review-filter="VIOLATION" aria-pressed="false" onclick="filterSessions('VIOLATION', this)">Violação <span id="review-count-VIOLATION">0</span></button>
+  </div>
   <div
     id="sessions-panel"
     hx-get="/partials/sessions"
@@ -736,6 +743,44 @@ async function updateAndRebootStation(stationId, stationName) {
     htmx.ajax('GET', '/partials/stations', '#stations-panel');
   }
 }
+
+let currentSessionsFilter = 'ALL';
+
+function updateSessionFilterCounts() {
+  const rows = document.querySelectorAll('#sessions-panel tr[data-review-status]');
+  const counts = {ALL: rows.length, NEEDS_REVIEW: 0, UNDER_REVIEW: 0, REVIEWED: 0, VIOLATION: 0};
+  rows.forEach((row) => {
+    const status = row.dataset.reviewStatus;
+    if (status in counts) counts[status] += 1;
+  });
+  Object.entries(counts).forEach(([status, count]) => {
+    const el = document.getElementById(`review-count-${status}`);
+    if (el) el.textContent = count;
+  });
+}
+
+function applySessionsFilter() {
+  document.querySelectorAll('#sessions-panel tr[data-review-status]').forEach((row) => {
+    row.hidden = currentSessionsFilter !== 'ALL' && row.dataset.reviewStatus !== currentSessionsFilter;
+  });
+  updateSessionFilterCounts();
+}
+
+function filterSessions(status, trigger) {
+  currentSessionsFilter = status;
+  document.querySelectorAll('.session-status-filters .filter-chip').forEach((button) => {
+    const active = button === trigger;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  applySessionsFilter();
+}
+
+document.body.addEventListener('htmx:afterSwap', (event) => {
+  if (event.detail.target && event.detail.target.id === 'sessions-panel') {
+    applySessionsFilter();
+  }
+});
 
 async function clearKnownSessions() {
   const confirmed = window.confirm('Limpar o histórico local de sessões conhecidas deste dashboard? Isso não apaga arquivos no S3.');

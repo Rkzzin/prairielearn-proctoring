@@ -17,6 +17,7 @@ tmp-*
 encodings
 /data/dashboard/
 /data/sessions/
+*_gradebook.csv
 
 
 # Face recognition models

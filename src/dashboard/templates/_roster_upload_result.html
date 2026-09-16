@@ -1,0 +1,7 @@
+{% if error %}
+<p class="empty">{{ error }}</p>
+{% elif imported is not none %}
+<div class="notice">
+  <strong>{{ turma }}</strong>: {{ imported }} aluno{{ '' if imported == 1 else 's' }} importado{{ '' if imported == 1 else 's' }}.
+</div>
+{% endif %}

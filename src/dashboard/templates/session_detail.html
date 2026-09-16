@@ -2,17 +2,22 @@
 {% block content %}
 <section class="panel session-summary">
   <div class="session-summary-head">
-    <div>
-      <p class="eyebrow">Revisão da avaliação</p>
-      <h1>{{ session.assessment }}</h1>
-      <p>{{ session.turma }}</p>
+    <div class="session-summary-heading">
+      {% if student_photo_url %}
+      <img class="student-photo" src="{{ student_photo_url }}" alt="Foto de {{ session.student.student_name if session.student else 'aluno' }}">
+      {% endif %}
+      <div>
+        <p class="eyebrow">Revisão da avaliação</p>
+        <h1>{{ session.assessment }}</h1>
+        <p>{{ session.turma }}</p>
+      </div>
     </div>
     <span class="session-status session-status-{{ session.status.value|lower }}">{{ status_label }}</span>
   </div>
   <dl class="session-summary-grid">
     <div>
       <dt>Aluno</dt>
-      <dd>{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</dd>
+      <dd>{% if session.student %}{{ roster_name(session.turma, session.student.student_id) or session.student.student_name }}{% else %}—{% endif %}</dd>
     </div>
     <div>
       <dt>Login</dt>
@@ -27,6 +32,19 @@
       <dd>{{ duration_label }}</dd>
     </div>
   </dl>
+  <div class="review-status-control">
+    <span class="review-status-control-label">Status de revisão</span>
+    <div class="review-status-options" role="group" aria-label="Marcar status de revisão desta sessão">
+      {% for status, label in [("NEEDS_REVIEW", "Necessita revisão"), ("UNDER_REVIEW", "Em revisão"), ("REVIEWED", "Revisado"), ("VIOLATION", "Violação")] %}
+      <button
+        type="button"
+        class="review-status-chip review-status-{{ status|lower }}{{ ' active' if session.review_status.value == status else '' }}"
+        onclick="setReviewStatus('{{ status }}', this)"
+      >{{ label }}</button>
+      {% endfor %}
+    </div>
+    <p class="form-error" id="review-status-error" hidden></p>
+  </div>
   <div class="integrity-summary">
     <span class="integrity-badge integrity-band-{{ integrity.band|lower }} integrity-badge-large" title="{{ integrity.band_label }}">
       Índice de Integridade: {{ integrity.score }} · {{ integrity.band }}
@@ -205,6 +223,26 @@
 <script id="timeline-data" type="application/json">{{ timeline | tojson }}</script>
 <script>
 const timelineData = JSON.parse(document.getElementById('timeline-data').textContent);
+async function setReviewStatus(status, trigger) {
+  const group = trigger.closest('.review-status-options');
+  const error = document.getElementById('review-status-error');
+  error.hidden = true;
+  group.querySelectorAll('button').forEach((button) => { button.disabled = true; });
+  const response = await fetch('/api/sessions/{{ session.session_id }}/review-status', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({review_status: status})
+  });
+  group.querySelectorAll('button').forEach((button) => { button.disabled = false; });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    error.textContent = payload.detail || 'Não foi possível salvar o status de revisão.';
+    error.hidden = false;
+    return;
+  }
+  group.querySelectorAll('button').forEach((button) => { button.classList.remove('active'); });
+  trigger.classList.add('active');
+}
 async function processEventSnapshots() {
   const button = document.getElementById('event-snapshot-process');
   const status = document.getElementById('snapshot-process-status');

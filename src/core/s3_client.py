@@ -155,6 +155,24 @@ class S3Client:
                 continue
         return False
 
+    def generate_student_photo_url(
+        self, turma_id: str, student_name: str, *, expires_in: int = 3600
+    ) -> str | None:
+        """URL assinada pra foto de cadastro do aluno, se existir (qualquer extensão)."""
+        prefix = self.config.photos_prefix_for_turma(turma_id)
+        for ext in (".png", ".jpg", ".jpeg"):
+            key = f"{prefix}{student_name}{ext}"
+            try:
+                self._s3.head_object(Bucket=self.config.bucket, Key=key)
+            except ClientError:
+                continue
+            return self._s3.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": self.config.bucket, "Key": key},
+                ExpiresIn=expires_in,
+            )
+        return None
+
 # ──────────────────────────────────────────────
 #  Factory
 # ──────────────────────────────────────────────

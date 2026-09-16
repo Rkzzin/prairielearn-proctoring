@@ -25,6 +25,7 @@ from src.dashboard.models import (
     SessionEmailReport,
     SessionEventPayload,
     SessionRecord,
+    SessionReviewStatus,
     StationHeartbeat,
     StationRecord,
     StationStatus,
@@ -45,6 +46,7 @@ class DashboardStore:
         self._sessions: dict[str, SessionRecord] = {}
         self._enrollments: dict[str, EnrollmentRecord] = {}
         self._configs: list[ExamConfigPayload] = []
+        self._roster: dict[tuple[str, str], str] = {}
         self._subscribers: set[asyncio.Queue[dict[str, object]]] = set()
         self._lock = Lock()
         self._init_db()
@@ -610,6 +612,20 @@ class DashboardStore:
         self._broadcast()
         return result
 
+    def set_session_review_status(
+        self, session_id: str, review_status: SessionReviewStatus
+    ) -> SessionRecord | None:
+        with self._lock:
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            session.review_status = review_status
+            result = session.model_copy(deep=True)
+            self._save_session(session)
+
+        self._broadcast()
+        return result
+
     def append_events(self, session_id: str, events: list[SessionEventPayload]) -> SessionRecord | None:
         with self._lock:
             session = self._sessions.get(session_id)
@@ -917,6 +933,28 @@ class DashboardStore:
         self._broadcast()
         return result
 
+    def import_roster(self, turma: str, entries: list[tuple[str, str]]) -> int:
+        """Substitui o roster (login → nome) de uma turma pelo CSV importado."""
+        with self._lock:
+            self._db.execute("DELETE FROM roster_entries WHERE turma = %s", (turma,))
+            for login, student_name in entries:
+                self._db.execute(
+                    "INSERT INTO roster_entries (turma, login, student_name) VALUES (%s, %s, %s) "
+                    "ON CONFLICT (turma, login) DO UPDATE SET student_name = EXCLUDED.student_name",
+                    (turma, login, student_name),
+                )
+            self._db.commit()
+            self._roster = {key: value for key, value in self._roster.items() if key[0] != turma}
+            self._roster.update({(turma, login): student_name for login, student_name in entries})
+        self._broadcast()
+        return len(entries)
+
+    def roster_name(self, turma: str, login: str) -> str | None:
+        if not login:
+            return None
+        with self._lock:
+            return self._roster.get((turma, login.strip().lower()))
+
     def subscribe(self) -> asyncio.Queue[dict[str, object]]:
         queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
         self._subscribers.add(queue)
@@ -994,6 +1032,14 @@ class DashboardStore:
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
             """,
+            """
+            CREATE TABLE IF NOT EXISTS roster_entries (
+              turma TEXT NOT NULL,
+              login TEXT NOT NULL,
+              student_name TEXT NOT NULL,
+              PRIMARY KEY (turma, login)
+            )
+            """,
         ):
             self._db.execute(statement)
         self._db.commit()
@@ -1052,6 +1098,10 @@ class DashboardStore:
             ExamConfigPayload.model_validate(row["payload"])
             for row in self._db.execute("SELECT payload FROM configs ORDER BY id DESC")
         ]
+        self._roster = {
+            (row["turma"], row["login"]): row["student_name"]
+            for row in self._db.execute("SELECT turma, login, student_name FROM roster_entries")
+        }
 
     def _default_s3_client(self):
         if self._app_cfg is None:

@@ -32,6 +32,20 @@ class StationStatus(str, Enum):
     OFFLINE = "OFFLINE"
 
 
+class SessionReviewStatus(str, Enum):
+    """Status de revisão manual do professor — não confundir com ``StationStatus``,
+    que descreve a execução técnica da sessão (em andamento, concluída, etc.).
+
+    ``NEEDS_REVIEW`` é o estado inicial: toda sessão nasce assim até alguém marcar
+    que já olhou (``UNDER_REVIEW``/``REVIEWED``/``VIOLATION``).
+    """
+
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    UNDER_REVIEW = "UNDER_REVIEW"
+    REVIEWED = "REVIEWED"
+    VIOLATION = "VIOLATION"
+
+
 class CommandType(str, Enum):
     APPLY_CONFIG = "APPLY_CONFIG"
     SET_AUTOSTART = "SET_AUTOSTART"
@@ -122,6 +136,7 @@ class SessionRecord(BaseModel):
     timer_minutes: int = 45
     student: StudentInfo | None = None
     status: StationStatus = StationStatus.SESSION
+    review_status: SessionReviewStatus = SessionReviewStatus.NEEDS_REVIEW
     flags_count: int = 0
     events: list[SessionEventPayload] = Field(default_factory=list)
     recordings: list[RecordingAsset] = Field(default_factory=list)
@@ -277,6 +292,10 @@ class StationRecord(BaseModel):
         if reference - self.last_seen_at > timedelta(seconds=offline_after_sec):
             return StationStatus.OFFLINE
         return self.status
+
+
+class SessionReviewStatusPayload(BaseModel):
+    review_status: SessionReviewStatus
 
 
 class EnrollmentRecord(BaseModel):

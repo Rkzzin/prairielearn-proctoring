@@ -20,10 +20,12 @@ import anyio
 from fastapi import (
     Depends,
     FastAPI,
+    File,
     Form,
     HTTPException,
     Request,
     Response,
+    UploadFile,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -50,6 +52,7 @@ from src.dashboard.models import (
     NotificationSettings,
     SessionEventPayload,
     SessionRecord,
+    SessionReviewStatusPayload,
     StationCreatePayload,
     StationHeartbeat,
 )
@@ -95,6 +98,12 @@ _SESSION_STATUS_LABELS = {
     "BLOCKED": "Pausada",
     "UPLOADING": "Finalizando",
 }
+_REVIEW_STATUS_LABELS = {
+    "NEEDS_REVIEW": "Necessita revisão",
+    "UNDER_REVIEW": "Em revisão",
+    "REVIEWED": "Revisado",
+    "VIOLATION": "Violação",
+}
 
 
 def _is_station_route(method: str, path: str) -> bool:
@@ -123,10 +132,17 @@ def create_app(
     #: lista de sessões (_sessions.html) quanto no detalhe (session_detail.html)
     #: sem precisar recalcular/pré-carregar em cada rota que renderiza sessões.
     templates.env.globals["integrity_score"] = compute_integrity_score
+    templates.env.globals["review_status_label"] = lambda status: _REVIEW_STATUS_LABELS.get(
+        getattr(status, "value", status), str(status)
+    )
     dashboard_store = store or DashboardStore(
         app_config.dashboard.database_url,
         app_config=app_config,
     )
+    #: `roster_name(turma, login)` nos templates — resolve o login (ex.: "felipehl",
+    #: o mesmo identificador usado no enrollment facial via S3) pro nome real do
+    #: aluno importado via CSV do gradebook. Ver /api/roster/upload.
+    templates.env.globals["roster_name"] = dashboard_store.roster_name
     auth_username = app_config.dashboard.admin_user
     report_mailer = session_report_mailer or SessionReportMailer(store=dashboard_store)
     snapshot_processor = event_snapshot_processor or EventSnapshotProcessor(
@@ -284,6 +300,14 @@ def create_app(
         timeline = _build_timeline(session)
         event_snapshots = dashboard_store.list_event_snapshots(session_id)
         email_report = dashboard_store.get_email_report(session_id)
+        student_photo_url = None
+        if session.student is not None:
+            try:
+                student_photo_url = request.app.state.s3_enrollment_service.student_photo_url(
+                    session.turma, session.student.student_id
+                )
+            except Exception:
+                student_photo_url = None
         event_snapshot_cards = [
             {
                 "snapshot": snapshot,
@@ -303,6 +327,7 @@ def create_app(
             title=f"Sessão {session_id}",
             session=session,
             timeline=timeline,
+            student_photo_url=student_photo_url,
             event_snapshots=event_snapshot_cards,
             event_snapshots_processing=any(
                 snapshot.status in {"queued", "processing"}
@@ -568,6 +593,18 @@ def create_app(
         snapshot_processor.enqueue(session_id)
         return JSONResponse(session.model_dump(mode="json"))
 
+    @app.post("/api/sessions/{session_id}/review-status")
+    async def set_session_review_status(
+        request: Request,
+        session_id: str,
+        payload: SessionReviewStatusPayload,
+    ) -> JSONResponse:
+        require_same_origin(request)
+        session = dashboard_store.set_session_review_status(session_id, payload.review_status)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Sessão não encontrada.")
+        return JSONResponse(session.model_dump(mode="json"))
+
     @app.post("/api/sessions/{session_id}/event-snapshots/process")
     async def process_event_snapshots(request: Request, session_id: str) -> JSONResponse:
         require_same_origin(request)
@@ -723,6 +760,42 @@ def create_app(
             "_s3_enrollment_result.html",
             summary=summary,
             error=None,
+        )
+
+    @app.post("/api/roster/upload")
+    async def upload_roster(
+        request: Request,
+        turma: str = Form(...),
+        roster_csv: UploadFile = File(...),
+    ) -> HTMLResponse:
+        require_same_origin(request)
+        turma = turma.strip()
+        if not turma:
+            return render_template(
+                request,
+                "_roster_upload_result.html",
+                error="Informe a turma.",
+                imported=None,
+                turma=None,
+            )
+        raw = await roster_csv.read()
+        try:
+            entries = _parse_roster_csv(raw)
+        except ValueError as exc:
+            return render_template(
+                request,
+                "_roster_upload_result.html",
+                error=str(exc),
+                imported=None,
+                turma=turma,
+            )
+        imported = dashboard_store.import_roster(turma, entries)
+        return render_template(
+            request,
+            "_roster_upload_result.html",
+            error=None,
+            imported=imported,
+            turma=turma,
         )
 
     @app.websocket("/ws/stations")
@@ -897,6 +970,42 @@ def _recording_identity(asset) -> tuple[str | None, int | None]:
         elif "screen" in source or "tela" in source:
             stream, index = "screen", index if index is not None else 0
     return stream, index
+
+
+def _parse_roster_csv(raw: bytes) -> list[tuple[str, str]]:
+    """Lê um gradebook do PrairieLearn (colunas UID, Name, ...) e retorna (login, nome).
+
+    O login é o local-part do UID (email institucional) — o mesmo identificador
+    usado nas fotos de enrollment facial no S3 (ver src/core/s3_client.py).
+    """
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise ValueError("O arquivo precisa estar em UTF-8.") from exc
+
+    reader = csv.DictReader(StringIO(text))
+    fieldnames = reader.fieldnames or []
+    if "UID" not in fieldnames or "Name" not in fieldnames:
+        raise ValueError(
+            "CSV precisa ter as colunas 'UID' e 'Name' (exportação de gradebook do PrairieLearn)."
+        )
+
+    entries: list[tuple[str, str]] = []
+    seen_logins: set[str] = set()
+    for row in reader:
+        uid = (row.get("UID") or "").strip()
+        name = (row.get("Name") or "").strip()
+        if not uid or not name:
+            continue
+        login = uid.split("@", 1)[0].strip().lower()
+        if not login or login in seen_logins:
+            continue
+        seen_logins.add(login)
+        entries.append((login, name))
+
+    if not entries:
+        raise ValueError("Nenhum aluno válido encontrado no CSV.")
+    return entries
 
 
 def _build_events_csv(sessions: list[SessionRecord], turma: str | None = None) -> str:

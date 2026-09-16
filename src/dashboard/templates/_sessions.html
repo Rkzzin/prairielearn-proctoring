@@ -7,6 +7,7 @@
         <th>Estação</th>
         <th>Aluno</th>
         <th>Status</th>
+        <th>Revisão</th>
         <th>Integridade</th>
         <th>Flags</th>
         <th></th>
@@ -15,13 +16,23 @@
     <tbody>
       {% for session in sessions %}
       {% set integrity = integrity_score(session) %}
-      <tr>
+      <tr data-review-status="{{ session.review_status.value }}">
         <td data-label="Sessão">{{ session.assessment }}</td>
         <td data-label="Estação">{{ session.station_id }}</td>
-        <td data-label="Aluno">{% if session.student %}{{ session.student.student_name }}{% else %}—{% endif %}</td>
+        <td data-label="Aluno">
+          {% if session.student %}
+          {% set roster_display_name = roster_name(session.turma, session.student.student_id) %}
+          {% if roster_display_name %}{{ roster_display_name }} <span class="muted-login">({{ session.student.student_id }})</span>{% else %}{{ session.student.student_name }}{% endif %}
+          {% else %}—{% endif %}
+        </td>
         <td data-label="Status">
           <span class="session-table-status session-table-status-{{ session.status.value|lower }}">
             {{ "TIMEOUT" if session.status.value == "TIMEOUT" else session.status.value }}
+          </span>
+        </td>
+        <td data-label="Revisão">
+          <span class="review-status-badge review-status-{{ session.review_status.value|lower }}">
+            {{ review_status_label(session.review_status) }}
           </span>
         </td>
         <td data-label="Integridade">
