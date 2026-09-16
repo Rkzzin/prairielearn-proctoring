@@ -333,6 +333,7 @@ class SessionManager:
         self._runtime_proctor_cpu_set: set[int] | None = None
         self._session_secondary_camera_index: int | None = None
         self._session_environment_preview_enabled = False
+        self._apply_camera_selection(self._next_config)
 
     @property
     def state(self) -> SessionState:
@@ -375,6 +376,11 @@ class SessionManager:
             self._validate_camera_config(next_config)
             self._validate_liveness_config(next_config)
             self._next_config = next_config
+            camera_fields = {"primary_camera_index", "secondary_camera_index"}
+            if self._state == SessionState.IDLE and camera_fields & (
+                set(kwargs) | fields_to_clear
+            ):
+                self._apply_camera_selection(next_config)
             self._persist_config()
             return self.next_config
 

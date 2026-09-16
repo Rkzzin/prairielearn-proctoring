@@ -653,6 +653,21 @@ def test_configured_primary_camera_is_used_for_identification():
     manager.stop_session(reason="test")
 
 
+def test_idle_camera_selection_immediately_releases_old_device():
+    manager, *_rest, camera = _make_manager(
+        identify_results=[],
+        engine_states=[],
+        frames=[],
+    )
+    manager._camera.open_device()
+
+    manager.update_config(primary_camera_index=2, secondary_camera_index=0)
+
+    assert camera.released is True
+    assert manager._face_cfg.camera_index == 2
+    assert manager._session_secondary_camera_index == 0
+
+
 def test_camera_diagnostics_capture_all_reported_devices_with_ffmpeg(monkeypatch):
     manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
     commands = []
@@ -1951,15 +1966,20 @@ def test_session_config_is_restored_from_disk(tmp_path):
         timer_minutes=35,
         prairielearn_url="https://pl.test/exam",
         auto_start=True,
+        primary_camera_index=2,
+        secondary_camera_index=0,
     )
 
-    restored = SessionManager(app_config=app_config).next_config
+    restored_manager = SessionManager(app_config=app_config)
+    restored = restored_manager.next_config
 
     assert restored.turma_id == "ES2025-T1"
     assert restored.assessment == "Quiz-03"
     assert restored.timer_minutes == 35
     assert restored.prairielearn_url == "https://pl.test/exam"
     assert restored.auto_start is True
+    assert restored_manager._face_cfg.camera_index == 2
+    assert restored_manager._session_secondary_camera_index == 0
 
 
 def test_invalid_persisted_config_falls_back_to_defaults(tmp_path):
