@@ -94,8 +94,8 @@
       <button
         type="button"
         class="button-secondary"
-        {% if station_busy %}disabled title="Encerre a avaliação antes de atualizar o reconhecimento facial"{% endif %}
-        onclick="openEnrollModal('{{ station.station_id }}', '{{ station.station_name }}')"
+        {% if station_busy or not station.turma %}disabled title="{{ 'Encerre a avaliação antes de atualizar o reconhecimento facial' if station_busy else 'A estação ainda não informou a turma atual' }}"{% endif %}
+        onclick='runStationEnroll({{ station.station_id|tojson }}, {{ station.station_name|tojson }}, {{ (station.turma or "")|tojson }})'
       >
         Atualizar reconhecimento facial
       </button>

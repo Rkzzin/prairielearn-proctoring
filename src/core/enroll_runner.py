@@ -86,7 +86,10 @@ class EnrollRunner:
         failed: list[str] = []
         for index, turma_id in enumerate(turma_ids):
             with self._lock:
-                self._message = f"{index}/{len(turma_ids)} — processando '{turma_id}'"
+                self._message = (
+                    f"{index + 1}/{len(turma_ids)} — "
+                    f"python scripts/enroll.py --turma {turma_id} --force"
+                )
             try:
                 result = subprocess.run(
                     [self._python_bin, "scripts/enroll.py", "--turma", turma_id, "--force"],

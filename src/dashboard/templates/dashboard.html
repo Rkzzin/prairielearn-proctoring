@@ -684,6 +684,26 @@ function toggleAllEnrollTurmas(checkbox) {
   });
 }
 
+async function runStationEnroll(stationId, stationName, turma) {
+  if (!turma) return;
+  if (!window.confirm(`Executar python scripts/enroll.py --turma ${turma} --force em ${stationName}?`)) {
+    return;
+  }
+  const response = await fetch(`/api/stations/${stationId}/enroll`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({turma_ids: [turma]})
+  });
+  if (!response.ok) {
+    const payload = await response.json().catch(() => ({}));
+    window.alert('Não foi possível solicitar a atualização: ' + (payload.detail || `HTTP ${response.status}`));
+    return;
+  }
+  if (window.htmx) {
+    htmx.ajax('GET', '/partials/stations', '#stations-panel');
+  }
+}
+
 async function submitEnroll() {
   const errorEl = document.getElementById('enroll-turma-error');
   const submitButton = document.getElementById('enroll-submit');

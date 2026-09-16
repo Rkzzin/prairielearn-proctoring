@@ -495,8 +495,15 @@ class DashboardStore:
             if payload.auto_start_enabled is not None:
                 station.auto_start_enabled = payload.auto_start_enabled
             if payload.enroll_status is not None:
-                station.enroll_status = payload.enroll_status
-                station.enroll_message = payload.enroll_message
+                # The heartbeat delivering RUN_ENROLL was built before the NUC
+                # processed the response. Keep queued until the next heartbeat
+                # acknowledges running/done/error.
+                if not (
+                    station.enroll_status == "queued"
+                    and payload.enroll_status == "idle"
+                ):
+                    station.enroll_status = payload.enroll_status
+                    station.enroll_message = payload.enroll_message
             if payload.update_status is not None:
                 station.update_status = payload.update_status
                 station.update_message = payload.update_message

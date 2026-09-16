@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 from jinja2 import Environment, FileSystemLoader
+
 from src.core.config import AppConfig, DashboardConfig
 from src.core.states import known_station_statuses
 from src.dashboard.app import (
@@ -1637,6 +1638,39 @@ def test_dashboard_store_run_enroll_enqueues_command_and_sets_queued_status(dash
     assert command.payload["turma_ids"] == ["ES2025-T1", "ES2025-T2"]
     station = store.get_station("nuc-01")
     assert station.enroll_status == "queued"
+
+
+def test_queued_enroll_waits_for_station_acknowledgement(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    store.run_enroll("nuc-01", ["T2026-T2"])
+
+    store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.IDLE,
+            enroll_status="idle",
+            enroll_message="",
+        )
+    )
+
+    station = store.get_station("nuc-01")
+    assert station.enroll_status == "queued"
+    assert station.enroll_message == "1 turma(s) na fila"
+
+    store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01",
+            station_name="NUC Sala 1",
+            status=StationStatus.IDLE,
+            enroll_status="running",
+            enroll_message="python scripts/enroll.py --turma T2026-T2 --force",
+        )
+    )
+
+    station = store.get_station("nuc-01")
+    assert station.enroll_status == "running"
+    assert "--force" in station.enroll_message
 
 
 def test_dashboard_store_heartbeat_persists_enroll_status(dashboard_database_url):

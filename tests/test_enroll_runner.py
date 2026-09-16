@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 from src.core.enroll_runner import EnrollRunner
@@ -124,6 +124,10 @@ def test_start_spawns_a_background_thread_and_returns_immediately(monkeypatch):
         threading.Event().wait(0.01)
     assert started
     assert runner.status_dict()["enroll_status"] == "running"
+    assert (
+        runner.status_dict()["enroll_message"]
+        == "1/1 — python scripts/enroll.py --turma ES2026-T1 --force"
+    )
 
     release.set()
     runner._thread.join(timeout=5)
