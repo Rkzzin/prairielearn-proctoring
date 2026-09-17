@@ -113,6 +113,7 @@ _GNOME_EXTENSIONS_TO_DISABLE = [
 ]
 
 _XBINDKEYS_ALWAYS_BLOCKS = [
+    "b:3",
     "Alt + F4",
     "Alt + Tab",
     "Shift+Alt + Tab",

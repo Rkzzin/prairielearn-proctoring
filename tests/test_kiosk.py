@@ -710,6 +710,7 @@ def test_lockdown_can_allow_browser_navigation_shortcuts(monkeypatch, tmp_path):
     assert "Control + t" not in body
     assert "Control + l" not in body
     assert "Control + q" in body
+    assert "b:3" in body
 
     lockdown.disable()
 
