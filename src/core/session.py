@@ -1413,7 +1413,13 @@ class SessionManager:
             )
 
         if last_unrecognized_frame is not None:
-            ok, encoded = cv2.imencode(".jpg", last_unrecognized_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            height, width = last_unrecognized_frame.shape[:2]
+            if width > 640:
+                last_unrecognized_frame = cv2.resize(
+                    last_unrecognized_frame,
+                    (640, round(height * 640 / width)),
+                )
+            ok, encoded = cv2.imencode(".jpg", last_unrecognized_frame, [cv2.IMWRITE_JPEG_QUALITY, 80])
             if ok:
                 self._unrecognized_authentication = {
                     "turma": self._next_config.turma_id,
