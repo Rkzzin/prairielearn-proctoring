@@ -42,6 +42,7 @@ class EventType(str, Enum):
     ELECTRONIC_DEVICE_DETECTED = "ELECTRONIC_DEVICE_DETECTED"
     ELECTRONIC_DEVICE_CLEARED = "ELECTRONIC_DEVICE_CLEARED"
     LIVENESS_FAILED = "LIVENESS_FAILED"
+    UNRECOGNIZED_AUTHENTICATION = "UNRECOGNIZED_AUTHENTICATION"
     # A situação de bloqueio não foi corrigida dentro do prazo da sessão.
     BLOCK_TIMEOUT_CANCELLED = "BLOCK_TIMEOUT_CANCELLED"
     # Aluno retornou ao normal após bloqueio

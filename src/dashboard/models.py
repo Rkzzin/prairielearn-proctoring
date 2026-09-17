@@ -87,6 +87,7 @@ class EventSnapshotRecord(BaseModel):
     s3_key: str | None = None
     url: str | None = None
     error: str | None = None
+    local_path: str | None = None
 
 
 class NotificationSettings(BaseModel):
@@ -140,6 +141,7 @@ class SessionRecord(BaseModel):
     flags_count: int = 0
     events: list[SessionEventPayload] = Field(default_factory=list)
     recordings: list[RecordingAsset] = Field(default_factory=list)
+    category: str = "EXAM"
 
     @field_validator("status", mode="before")
     @classmethod
@@ -153,6 +155,13 @@ class SessionRecord(BaseModel):
         if self.started_at is None:
             return None
         return max(0, int((end - self.started_at).total_seconds()))
+
+
+class UnrecognizedAuthenticationPayload(BaseModel):
+    turma: str
+    assessment: str
+    attempted_at: datetime
+    image_base64: str = Field(min_length=1, max_length=700_000)
 
 
 class ExamConfigPayload(BaseModel):

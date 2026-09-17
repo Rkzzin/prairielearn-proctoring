@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from threading import Lock
 from uuid import uuid4
 
@@ -240,6 +241,9 @@ class DashboardStore:
             )
 
     def read_event_snapshot_image(self, snapshot: EventSnapshotRecord) -> bytes | None:
+        if snapshot.local_path and self._app_cfg is not None:
+            path = Path(self._app_cfg.data_dir) / snapshot.local_path
+            return path.read_bytes() if path.is_file() else None
         if not snapshot.s3_bucket or not snapshot.s3_key or self._s3 is None:
             return None
         response = self._s3.get_object(Bucket=snapshot.s3_bucket, Key=snapshot.s3_key)
@@ -601,6 +605,52 @@ class DashboardStore:
 
         self._broadcast()
         return result
+
+    def register_unrecognized_authentication(
+        self,
+        *,
+        station_id: str,
+        turma: str,
+        assessment: str,
+        attempted_at: datetime,
+        local_path: str,
+    ) -> SessionRecord:
+        session_id = f"auth-alert-{uuid4().hex}"
+        event_key = hashlib.sha256(session_id.encode("utf-8")).hexdigest()[:24]
+        event = SessionEventPayload(
+            timestamp=attempted_at,
+            event_type="UNRECOGNIZED_AUTHENTICATION",
+            severity=EventSeverity.CRITICAL,
+            details={"category": "AUTHENTICATION_ALERT"},
+        )
+        session = SessionRecord(
+            session_id=session_id,
+            station_id=station_id,
+            turma=turma,
+            assessment=assessment,
+            started_at=attempted_at,
+            ended_at=attempted_at,
+            status=StationStatus.TIMEOUT,
+            flags_count=1,
+            events=[event],
+            category="AUTHENTICATION_ALERT",
+        )
+        snapshot = EventSnapshotRecord(
+            session_id=session_id,
+            event_key=event_key,
+            event_timestamp=attempted_at,
+            event_type=event.event_type,
+            severity=event.severity,
+            status="ready",
+            local_path=local_path,
+        )
+        with self._lock:
+            self._sessions[session_id] = session
+            self._save_session(session)
+            self._save_event_snapshot(snapshot)
+            self._db.commit()
+        self._broadcast()
+        return session.model_copy(deep=True)
 
     def finalize_session(self, session_id: str, ended_at: datetime | None = None) -> SessionRecord | None:
         with self._lock:

@@ -55,6 +55,7 @@ from src.dashboard.models import (
     SessionReviewStatusPayload,
     StationCreatePayload,
     StationHeartbeat,
+    UnrecognizedAuthenticationPayload,
 )
 from src.dashboard.session_report_mailer import SessionReportMailer
 from src.dashboard.store import DashboardStore
@@ -66,6 +67,7 @@ _STATION_EXACT_ROUTES = {
     ("POST", "/api/heartbeats"),
     ("POST", "/api/sessions"),
     ("POST", "/api/camera-snapshots"),
+    ("POST", "/api/unrecognized-authentications"),
 }
 _STATION_SESSION_ACTION_RE = re.compile(r"^/api/sessions/[^/]+/(finalize|events)$")
 _EVENT_CLIP_CONTEXT_SECONDS = 5
@@ -88,6 +90,7 @@ _EVENT_REASON_LABELS = {
     "ELECTRONIC_DEVICE_DETECTED": "Celular ou notebook detectado",
     "ELECTRONIC_DEVICE_CLEARED": "Equipamento eletrônico removido",
     "LIVENESS_FAILED": "Tentativa reprovada na prova de vida",
+    "UNRECOGNIZED_AUTHENTICATION": "Tentativa de autenticação não reconhecida",
     "BLOCK_TIMEOUT_CANCELLED": "Avaliação cancelada: bloqueio não resolvido no prazo",
     "BROWSER_EXIT": "Avaliação pausada: navegador protegido encerrado",
 }
@@ -152,6 +155,8 @@ def create_app(
     )
     camera_snapshot_dir = Path(app_config.data_dir) / "dashboard-camera-snapshots"
     camera_snapshot_dir.mkdir(parents=True, exist_ok=True)
+    authentication_alert_dir = Path(app_config.data_dir) / "authentication-alerts"
+    authentication_alert_dir.mkdir(parents=True, exist_ok=True)
 
     app = FastAPI(title="Proctor Station Dashboard")
     app.mount(
@@ -504,6 +509,30 @@ def create_app(
             status_code=201,
         )
 
+    @app.post("/api/unrecognized-authentications")
+    async def unrecognized_authentication(
+        payload: UnrecognizedAuthenticationPayload,
+        authenticated_station_id: str = Depends(require_station_token),
+    ) -> JSONResponse:
+        try:
+            image = base64.b64decode(payload.image_base64, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise HTTPException(status_code=400, detail="Imagem base64 inválida.") from exc
+        if len(image) > 500_000 or not image.startswith(b"\xff\xd8"):
+            raise HTTPException(status_code=400, detail="A imagem deve ser um JPEG de até 500 KB.")
+        filename = f"auth-{secrets.token_hex(16)}.jpg"
+        path = authentication_alert_dir / filename
+        path.write_bytes(image)
+        session = dashboard_store.register_unrecognized_authentication(
+            station_id=authenticated_station_id,
+            turma=payload.turma,
+            assessment=payload.assessment,
+            attempted_at=payload.attempted_at,
+            local_path=f"authentication-alerts/{filename}",
+        )
+        report_mailer.enqueue(session.session_id)
+        return JSONResponse({"session_id": session.session_id}, status_code=201)
+
     @app.get("/api/configs")
     async def list_configs() -> JSONResponse:
         return JSONResponse(
@@ -623,7 +652,13 @@ def create_app(
         if not auth_username:
             raise HTTPException(status_code=404, detail="Imagem do evento não encontrada.")
         snapshot = dashboard_store.get_event_snapshot(session_id, event_key)
-        if snapshot is None or snapshot.status != "ready" or not snapshot.url:
+        if snapshot is None or snapshot.status != "ready":
+            raise HTTPException(status_code=404, detail="Imagem do evento não encontrada.")
+        if snapshot.local_path:
+            path = Path(app_config.data_dir) / snapshot.local_path
+            if path.is_file():
+                return FileResponse(path, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=30"})
+        if not snapshot.url:
             raise HTTPException(status_code=404, detail="Imagem do evento não encontrada.")
         return RedirectResponse(snapshot.url, status_code=302)
 

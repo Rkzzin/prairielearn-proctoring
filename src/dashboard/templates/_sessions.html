@@ -4,6 +4,7 @@
     <thead>
       <tr>
         <th>Sessão</th>
+        <th>Categoria</th>
         <th>Estação</th>
         <th>Aluno</th>
         <th>Status</th>
@@ -18,6 +19,7 @@
       {% set integrity = integrity_score(session) %}
       <tr data-review-status="{{ session.review_status.value }}">
         <td data-label="Sessão">{{ session.assessment }}</td>
+        <td data-label="Categoria">{{ "Autenticação não reconhecida" if session.category == "AUTHENTICATION_ALERT" else "Avaliação" }}</td>
         <td data-label="Estação">{{ session.station_id }}</td>
         <td data-label="Aluno">
           {% if session.student %}

@@ -15,6 +15,7 @@ Integra:
 from __future__ import annotations
 
 import json
+import base64
 import logging
 import subprocess
 import threading
@@ -302,6 +303,7 @@ class SessionManager:
         self._liveness = None
         self._last_liveness_result: dict[str, Any] | None = None
         self._station_events: list[dict[str, Any]] = []
+        self._unrecognized_authentication: dict[str, Any] | None = None
         self._device_monitor = None
         self._electronic_device_active_cameras: set[str] = set()
         self._engine = None
@@ -657,6 +659,18 @@ class SessionManager:
         if target is None:
             return None
         return build_session_payload(target=target, station_id=self._next_config.station_id)
+
+    def consume_unrecognized_authentication(self) -> dict[str, Any] | None:
+        """Retorna uma única vez a evidência de uma autenticação sem reconhecimento."""
+        with self._lock:
+            pending = self._unrecognized_authentication
+            self._unrecognized_authentication = None
+            return pending
+
+    def restore_unrecognized_authentication(self, pending: dict[str, Any]) -> None:
+        with self._lock:
+            if self._unrecognized_authentication is None:
+                self._unrecognized_authentication = pending
 
     def respond_to_pre_exam_confirmation(self, *, accepted: bool) -> None:
         """Recebe a decisão do overlay local sem bloquear a thread de início."""
@@ -1334,6 +1348,7 @@ class SessionManager:
 
         max_attempts = self._face_cfg.max_identification_attempts
         liveness_scores: list[float] = []
+        last_unrecognized_frame = None
         matched_result = None
         attempts = max_attempts if self._liveness is None else max_attempts * 2
         for _ in range(attempts):
@@ -1341,6 +1356,8 @@ class SessionManager:
             if not ret or frame is None:
                 continue
             result = self._recognizer.identify(frame)
+            if result.status.value == "NO_MATCH":
+                last_unrecognized_frame = frame.copy() if hasattr(frame, "copy") else None
             if result.is_match:
                 if self._liveness is None:
                     return result.student_id, result.student_name
@@ -1395,6 +1412,15 @@ class SessionManager:
                 f"mínimo {liveness_threshold:.2f})"
             )
 
+        if last_unrecognized_frame is not None:
+            ok, encoded = cv2.imencode(".jpg", last_unrecognized_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if ok:
+                self._unrecognized_authentication = {
+                    "turma": self._next_config.turma_id,
+                    "assessment": self._next_config.assessment,
+                    "attempted_at": datetime.now(timezone.utc).isoformat(),
+                    "image_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+                }
         raise SessionError(
             f"Aluno não identificado após {max_attempts} tentativas"
         )

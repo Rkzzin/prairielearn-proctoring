@@ -30,6 +30,7 @@ _EVENT_LABELS = {
     "DIFFERENT_USER_ALERT": "Usuário diferente detectado",
     "ELECTRONIC_DEVICE_DETECTED": "Celular ou notebook detectado",
     "BROWSER_EXIT_ALERT": "Navegador protegido foi fechado",
+    "UNRECOGNIZED_AUTHENTICATION": "Tentativa de autenticação não reconhecida",
 }
 
 

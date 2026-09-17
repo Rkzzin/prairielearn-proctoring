@@ -73,6 +73,7 @@ class DashboardHeartbeatWorker:
     def run_once(self) -> None:
         with self._client_factory() as client:
             self._sync_session(client)
+            self._sync_unrecognized_authentication(client)
             payload = self._build_heartbeat_payload()
             response = client.post("/api/heartbeats", json=payload)
             response.raise_for_status()
@@ -173,6 +174,15 @@ class DashboardHeartbeatWorker:
             client.post(f"/api/sessions/{session_id}/events", json=current["events"]).raise_for_status()
         client.post(f"/api/sessions/{session_id}/finalize").raise_for_status()
         self._finalized_sessions.add(session_id)
+
+    def _sync_unrecognized_authentication(self, client: httpx.Client) -> None:
+        pending = self._session_manager.consume_unrecognized_authentication()
+        if pending is not None:
+            try:
+                client.post("/api/unrecognized-authentications", json=pending).raise_for_status()
+            except Exception:
+                self._session_manager.restore_unrecognized_authentication(pending)
+                raise
 
     def _build_heartbeat_payload(self) -> dict[str, Any]:
         payload = self._session_manager.dashboard_snapshot()

@@ -22,6 +22,15 @@ class FakeSessionManager:
         # Interface pública que o worker consome (antes ele alcançava _app_cfg).
         self.data_dir = Path("/tmp/proctor-dashboard-sync")
         self.session_payload = None
+        self.identity_alert = None
+
+    def consume_unrecognized_authentication(self):
+        pending = self.identity_alert
+        self.identity_alert = None
+        return pending
+
+    def restore_unrecognized_authentication(self, pending):
+        self.identity_alert = pending
 
     def dashboard_snapshot(self):
         return {
@@ -113,6 +122,35 @@ def test_dashboard_worker_applies_config_and_stop_command():
     assert manager.applied_payloads[0]["assessment"] == "Quiz-03"
     assert manager.enter_mode_calls == 1
     assert manager.stop_reasons == ["dashboard_command"]
+
+
+def test_dashboard_worker_uploads_unrecognized_authentication_attempt():
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.url.path, json.loads(request.content.decode())))
+        return httpx.Response(200, json={"station": {"station_id": "nuc-01"}, "commands": []})
+
+    manager = FakeSessionManager()
+    manager.identity_alert = {
+        "turma": "T2026-T1",
+        "assessment": "Quiz-03",
+        "attempted_at": "2026-09-17T12:00:00+00:00",
+        "image_base64": "/9j/",
+    }
+    worker = DashboardHeartbeatWorker(
+        config=DashboardConfig(enabled=True, base_url="http://dashboard.test"),
+        session_manager=manager,
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(handler), base_url="http://dashboard.test"
+        ),
+    )
+
+    worker.run_once()
+
+    assert requests[0][0] == "/api/unrecognized-authentications"
+    assert requests[0][1]["assessment"] == "Quiz-03"
+    assert manager.identity_alert is None
 
 
 def test_dashboard_worker_dispatches_camera_snapshot_command():
