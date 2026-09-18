@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -101,10 +102,11 @@ def _feed(
     gaze_data: GazeData | None,
     *,
     person_present: bool | None = None,
+    people: tuple = (),
 ) -> ProctorState:
     """Injeta GazeData diretamente na FSM, sem passar pelo GazeEstimator."""
     engine._frame_count += 1
-    engine._transition(gaze_data, person_present=person_present)
+    engine._transition(gaze_data, person_present=person_present, people=people)
     return engine.state
 
 
@@ -427,6 +429,24 @@ class TestMultiFaceFSM:
 
         state = _feed(engine, _gaze(face_count=2))
         assert state != ProctorState.BLOCKED
+
+    def test_yolox_multiple_people_uses_shared_confirmation(self, tmp_path: Path):
+        engine = _make_engine(tmp_path, _make_config(gaze_dur=10.0))
+        people = (
+            SimpleNamespace(confidence=0.91, box=(10, 20, 30, 40)),
+            SimpleNamespace(confidence=0.88, box=(50, 20, 30, 40)),
+        )
+        now = [100.0]
+
+        with patch("src.proctor.engine.time.time", side_effect=lambda: now[0]):
+            _feed(engine, _gaze(), people=people)
+            now[0] = 110.0
+            state = _feed(engine, _gaze(), people=people)
+
+        assert state == ProctorState.BLOCKED
+        events = EventLogger.read_session(tmp_path / "sessions" / "TEST-001" / "events.jsonl")
+        assert events[-1].details["detector"] == "yolox"
+        assert events[-1].details["person_count"] == 2
 
 
 class TestDifferentUserFSM:

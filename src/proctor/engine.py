@@ -171,6 +171,7 @@ class ProctorEngine:
         frame: np.ndarray | None,
         *,
         person_present: bool | None = None,
+        people: tuple | None = None,
     ) -> ProctorState:
         """Processa um frame BGR e retorna o estado atual da FSM.
 
@@ -184,7 +185,7 @@ class ProctorEngine:
         """
         self._frame_count += 1
         gaze_data = self._gaze.process_frame(frame) if frame is not None else None
-        self._transition(gaze_data, person_present=person_present)
+        self._transition(gaze_data, person_present=person_present, people=people)
         return self.state
 
     def unblock(self) -> None:
@@ -262,11 +263,32 @@ class ProctorEngine:
         gaze_data: GazeData | None,
         *,
         person_present: bool | None = None,
+        people: tuple | None = None,
     ) -> None:
         """Aplica as transições da FSM com base nos dados de gaze."""
 
         # ── BLOCKED: só sai via unblock() ──────────
         if self.state == ProctorState.BLOCKED:
+            return
+
+        yolox_multiple_people = people is not None and len(people) >= 2
+        dlib_multiple_faces = gaze_data is not None and gaze_data.face_count > 1
+        if self._cfg.multi_face_block and (dlib_multiple_faces or yolox_multiple_people):
+            now = time.time()
+            if self._multi_face_start == 0.0:
+                self._multi_face_start = now
+            elif now - self._multi_face_start >= self._cfg.gaze_duration_sec:
+                details = {
+                    "detector": "yolox",
+                    "person_count": len(people or ()),
+                    "people": [
+                        {"confidence": person.confidence, "box": person.box}
+                        for person in people or ()
+                    ],
+                }
+                if dlib_multiple_faces:
+                    details = {"detector": "face", "face_count": gaze_data.face_count}
+                self._block(BlockReason.MULTI_FACE, details=details)
             return
 
         # ── Sem rosto ───────────────────────────────
@@ -281,14 +303,6 @@ class ProctorEngine:
         # Rosto voltou — resetar timer de ausência
         self._absence_start = 0.0
 
-        # ── Múltiplos rostos (bloqueio imediato) ────
-        if gaze_data.face_count > 1 and self._cfg.multi_face_block:
-            now = time.time()
-            if self._multi_face_start == 0.0:
-                self._multi_face_start = now
-            elif now - self._multi_face_start >= self._cfg.gaze_duration_sec:
-                self._block(BlockReason.MULTI_FACE)
-            return
         self._multi_face_start = 0.0
 
         # ── Análise de gaze ─────────────────────────

@@ -46,11 +46,16 @@ class ElectronicDeviceTransition:
 @dataclass(frozen=True)
 class YoloXInferenceResult:
     electronic_devices: tuple[ElectronicDeviceDetection, ...]
+    people: tuple[ElectronicDeviceDetection, ...] = ()
     person_confidence: float | None = None
 
     @property
     def person_present(self) -> bool:
         return self.person_confidence is not None
+
+    @property
+    def person_count(self) -> int:
+        return len(self.people)
 
 
 class YoloXElectronicDeviceDetector:
@@ -111,24 +116,20 @@ class YoloXElectronicDeviceDetector:
         class_scores = predictions[:, 4:5] * predictions[:, 5:]
         class_ids = np.argmax(class_scores, axis=1)
         scores = class_scores[np.arange(len(class_ids)), class_ids]
-        person_scores = scores[
-            (class_ids == PERSON_CLASS_ID) & (scores >= self._person_confidence_threshold)
+        person_indexes = [
+            index
+            for index, (class_id, score) in enumerate(zip(class_ids, scores, strict=True))
+            if int(class_id) == PERSON_CLASS_ID and float(score) >= self._person_confidence_threshold
         ]
-        person_confidence = (
-            round(float(np.max(person_scores)), 4) if len(person_scores) else None
-        )
         selected = [
             index
             for index, (class_id, score) in enumerate(zip(class_ids, scores, strict=True))
             if int(class_id) in TARGET_CLASSES and float(score) >= self._confidence_threshold
         ]
-        if not selected:
-            return YoloXInferenceResult((), person_confidence)
-
         boxes: list[list[int]] = []
         selected_scores: list[float] = []
         selected_classes: list[int] = []
-        for index in selected:
+        for index in [*selected, *person_indexes]:
             center_x, center_y, box_width, box_height = predictions[index, :4]
             boxes.append([
                 int((center_x - box_width / 2) / scale),
@@ -154,6 +155,23 @@ class YoloXElectronicDeviceDetector:
             )
             keep.extend(class_indexes[int(index)] for index in np.asarray(class_keep).reshape(-1))
 
+        person_offset = len(selected)
+        person_boxes = boxes[person_offset:]
+        person_scores = selected_scores[person_offset:]
+        person_keep = cv2.dnn.NMSBoxes(
+            person_boxes,
+            person_scores,
+            self._person_confidence_threshold,
+            self._nms_threshold,
+        ) if person_boxes else []
+        people = tuple(
+            ElectronicDeviceDetection(
+                label="pessoa",
+                confidence=round(person_scores[int(index)], 4),
+                box=tuple(person_boxes[int(index)]),
+            )
+            for index in np.asarray(person_keep).reshape(-1)
+        )
         return YoloXInferenceResult(
             electronic_devices=tuple(
                 ElectronicDeviceDetection(
@@ -163,7 +181,8 @@ class YoloXElectronicDeviceDetector:
                 )
                 for index in keep
             ),
-            person_confidence=person_confidence,
+            people=people,
+            person_confidence=max((person.confidence for person in people), default=None),
         )
 
     @classmethod
@@ -256,6 +275,7 @@ class ElectronicDeviceMonitor:
         self._primary_frame: np.ndarray | None = None
         self._primary_frame_at: float | None = None
         self._primary_person_present: bool | None = None
+        self._primary_people: tuple[ElectronicDeviceDetection, ...] = ()
         self._primary_person_frame_at: float | None = None
         self._frame_lock = threading.Lock()
         self._reader = (
@@ -296,6 +316,14 @@ class ElectronicDeviceMonitor:
             if self._clock() - self._primary_person_frame_at > self._person_presence_ttl_sec:
                 return None
             return self._primary_person_present
+
+    def latest_primary_people(self) -> tuple[ElectronicDeviceDetection, ...] | None:
+        with self._frame_lock:
+            if self._primary_person_frame_at is None:
+                return None
+            if self._clock() - self._primary_person_frame_at > self._person_presence_ttl_sec:
+                return None
+            return self._primary_people
 
     def drain_transitions(self) -> list[ElectronicDeviceTransition]:
         transitions = []
@@ -341,6 +369,7 @@ class ElectronicDeviceMonitor:
                             or frame_at >= self._primary_person_frame_at
                         ):
                             self._primary_person_present = inference.person_present
+                            self._primary_people = inference.people
                             self._primary_person_frame_at = frame_at
                 detections = list(inference.electronic_devices)
                 detections = [

@@ -104,6 +104,7 @@ class FakeEngine:
         self.critical_alerts = []
         self.updated_frames = []
         self.updated_person_presence = []
+        self.updated_people = []
         self.block_reason = type("Reason", (), {"value": "ABSENCE"})()
 
     def start(self):
@@ -112,9 +113,10 @@ class FakeEngine:
     def stop(self):
         self.stopped = True
 
-    def update(self, _frame, *, person_present=None):
+    def update(self, _frame, *, person_present=None, people=None):
         self.updated_frames.append(_frame)
         self.updated_person_presence.append(person_present)
+        self.updated_people.append(people)
         if self.states:
             return self.states.popleft()
         return ProctorState.NORMAL
@@ -296,6 +298,23 @@ def _make_manager(
     fake_overlay = FakeOverlay()
     fake_lockdown = FakeLockdown()
     fake_camera = FakeCamera(frames)
+
+    class FakeElectronicDeviceMonitor:
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def submit_primary(self, _frame):
+            pass
+
+        def drain_transitions(self):
+            return []
+
+    electronic_device_monitor_factory = (
+        electronic_device_monitor_factory or (lambda **_kwargs: FakeElectronicDeviceMonitor())
+    )
 
     manager = SessionManager(
         app_config=AppConfig(
@@ -1448,11 +1467,16 @@ def test_session_loop_forwards_person_presence_to_engine():
         frames=[],
     )
     submitted = []
+    people = (
+        ElectronicDeviceDetection("pessoa", 0.91, (10, 20, 30, 40)),
+        ElectronicDeviceDetection("pessoa", 0.88, (50, 20, 30, 40)),
+    )
     manager._engine = engine
     manager._device_monitor = SimpleNamespace(
         submit_primary=submitted.append,
         drain_transitions=lambda: [],
         latest_primary_person_present=lambda: True,
+        latest_primary_people=lambda: people,
     )
     manager._ensure_browser_running = lambda: True
 
@@ -1467,6 +1491,7 @@ def test_session_loop_forwards_person_presence_to_engine():
     assert submitted == ["session-frame"]
     assert engine.updated_frames == ["session-frame"]
     assert engine.updated_person_presence == [True]
+    assert engine.updated_people == [people]
 
 
 def test_preview_recovery_keeps_last_frame_visible():

@@ -2,6 +2,11 @@
   "blockedMessage": "Este site nao esta autorizado para esta prova.",
   "sites": [
     {
+      "host": "login.microsoft.com",
+      "label": "login.microsoft.com",
+      "url": "https://login.microsoft.com"
+    },
+    {
       "host": "login.microsoftonline.com",
       "label": "login.microsoftonline.com",
       "url": "https://login.microsoftonline.com"

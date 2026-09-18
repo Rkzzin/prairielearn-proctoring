@@ -38,6 +38,7 @@ def test_build_allowlist_config_includes_start_url_host_and_deduplicates():
     assert [site.host for site in config.sites] == [
         "cdn.example.edu",
         "example.edu",
+        "login.microsoft.com",
         "login.microsoftonline.com",
         "prairielearn.org",
         "us.prairielearn.com",
@@ -63,6 +64,7 @@ def test_write_extension_config_writes_small_runtime_file(tmp_path):
     assert payload["startUrl"] == "https://prairielearn.org/pl"
     assert {site["host"] for site in payload["sites"]} == {
         "prairielearn.org",
+        "login.microsoft.com",
         "login.microsoftonline.com",
         "us.prairielearn.com",
         "us.prairietest.com",
@@ -80,6 +82,7 @@ def test_build_chromium_policies_blocks_by_default_and_allows_sites():
 
     assert policies["URLBlocklist"] == ["*"]
     assert "https://prairielearn.org" in policies["URLAllowlist"]
+    assert "https://login.microsoft.com" in policies["URLAllowlist"]
     assert "https://login.microsoftonline.com" in policies["URLAllowlist"]
     assert "https://us.prairielearn.com" in policies["URLAllowlist"]
     assert "https://us.prairietest.com" in policies["URLAllowlist"]
@@ -98,6 +101,7 @@ def test_prairietest_start_allows_prairielearn_azure_login():
     config = build_allowlist_config(start_url="https://us.prairietest.com/", allowlist=[])
 
     assert {site.host for site in config.sites} == {
+        "login.microsoft.com",
         "login.microsoftonline.com",
         "us.prairielearn.com",
         "us.prairietest.com",

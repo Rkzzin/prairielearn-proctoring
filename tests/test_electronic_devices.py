@@ -32,6 +32,9 @@ def test_yolox_detector_returns_person_presence_separately_from_electronics():
     output[0, 1, :4] = [20, 20, np.log(20), np.log(30)]
     output[0, 1, 4] = 0.8
     output[0, 1, 5] = 0.9
+    output[0, 2, :4] = [60, 20, np.log(20), np.log(30)]
+    output[0, 2, 4] = 0.8
+    output[0, 2, 5] = 0.875
     net = FakeNet(output)
     detector = YoloXElectronicDeviceDetector(
         "unused.onnx",
@@ -46,6 +49,9 @@ def test_yolox_detector_returns_person_presence_separately_from_electronics():
     assert result.electronic_devices[0].confidence == 0.81
     assert result.person_present is True
     assert result.person_confidence == 0.72
+    assert result.person_count == 2
+    assert {person.confidence for person in result.people} == {0.72, 0.7}
+    assert len({person.box for person in result.people}) == 2
     assert net.forward_calls == 1
     assert net.input.shape == (1, 3, 640, 640)
 

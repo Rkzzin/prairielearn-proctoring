@@ -1059,7 +1059,8 @@ class SessionManager:
                 self._engine.start()
 
                 if (
-                    cfg.electronic_device_primary_enabled
+                    self._proctor_cfg.multi_face_block
+                    or cfg.electronic_device_primary_enabled
                     or cfg.electronic_device_secondary_enabled
                 ):
                     if cfg.electronic_device_secondary_enabled and self._capture is None:
@@ -1067,7 +1068,10 @@ class SessionManager:
                             "Detecção na câmera ambiente requer gravação ativa"
                         )
                     self._device_monitor = self._electronic_device_monitor_factory(
-                        primary_enabled=cfg.electronic_device_primary_enabled,
+                        primary_enabled=(
+                            self._proctor_cfg.multi_face_block
+                            or cfg.electronic_device_primary_enabled
+                        ),
                         secondary_enabled=cfg.electronic_device_secondary_enabled,
                         secondary_preview_url=(
                             self._capture.environment_preview_url
@@ -1212,7 +1216,16 @@ class SessionManager:
                 else None
             )
             person_present = presence_reader() if callable(presence_reader) else None
-            state = self._engine.update(frame, person_present=person_present)
+            people_reader = (
+                getattr(self._device_monitor, "latest_primary_people", None)
+                if self._device_monitor is not None
+                else None
+            )
+            people = people_reader() if callable(people_reader) else None
+            update_kwargs = {"person_present": person_present}
+            if people is not None:
+                update_kwargs["people"] = people
+            state = self._engine.update(frame, **update_kwargs)
             if state == ProctorState.BLOCKED:
                 self._handle_blocked()
             else:

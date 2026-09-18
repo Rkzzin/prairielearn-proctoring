@@ -199,6 +199,7 @@ def _implicit_hosts_for_start_host(host: str) -> list[str]:
         (".prairielearn.org", ".prairietest.com")
     ):
         return [
+            "login.microsoft.com",
             "login.microsoftonline.com",
             "us.prairielearn.com",
             "us.prairietest.com",
