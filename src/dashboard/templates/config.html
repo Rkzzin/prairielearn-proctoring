@@ -13,21 +13,17 @@
     <label>Provedor de envio
       <select name="delivery_provider" id="delivery-provider" onchange="syncMailProvider()">
         <option value="ses" {% if notification_settings.delivery_provider == 'ses' %}selected{% endif %}>AWS SES</option>
-        <option value="gmail" {% if notification_settings.delivery_provider == 'gmail' %}selected{% endif %}>Gmail (OAuth 2.0)</option>
+        <option value="gmail" {% if notification_settings.delivery_provider == 'gmail' %}selected{% endif %}>Gmail SMTP</option>
       </select>
     </label>
-    <section id="gmail-oauth-settings" {% if notification_settings.delivery_provider != 'gmail' %}hidden{% endif %}>
+    <section id="gmail-smtp-settings" {% if notification_settings.delivery_provider != 'gmail' %}hidden{% endif %}>
       <h3>Conta Gmail</h3>
-      {% if gmail_oauth_status.connected %}
-      <p>Conectada como <strong>{{ gmail_oauth_status.email }}</strong>{% if gmail_oauth_status.connected_at %} em {{ gmail_oauth_status.connected_at }}{% endif %}.</p>
-      <a class="button-secondary" href="/api/notification-settings/gmail/connect">Reconectar conta Google</a>
-      {% elif gmail_oauth_status.configured %}
-      <p>Ainda não conectada. Autorize exclusivamente <strong>corsiferrao@gmail.com</strong>.</p>
-      <a class="button-secondary" href="/api/notification-settings/gmail/connect">Conectar conta Google</a>
+      {% if gmail_smtp_configured %}
+      <p>Configurada para uso com <strong>corsiferrao@gmail.com</strong>.</p>
       {% else %}
-      <p class="form-error">Configure as credenciais OAuth do Google no ambiente do dashboard antes de conectar a conta.</p>
+      <p class="form-error">Configure a conta Gmail e a senha de app no ambiente do dashboard antes de ativar este provedor.</p>
       {% endif %}
-      <p><small>O dashboard guarda somente um refresh token cifrado. A senha da conta Google nunca é solicitada nem armazenada.</small></p>
+      <p><small>A senha de app fica somente no ambiente do servidor e nunca é exibida ou armazenada no banco.</small></p>
     </section>
     <label>Remetente
       <input type="email" name="sender_email" value="{{ notification_settings.sender_email }}" placeholder="proctoring@instituicao.edu.br">
@@ -140,7 +136,7 @@ async function saveNotificationSettings(event) {
 
 function syncMailProvider() {
   const gmail = document.getElementById('delivery-provider').value === 'gmail';
-  document.getElementById('gmail-oauth-settings').hidden = !gmail;
+  document.getElementById('gmail-smtp-settings').hidden = !gmail;
   document.getElementById('ses-region-field').hidden = gmail;
 }
 

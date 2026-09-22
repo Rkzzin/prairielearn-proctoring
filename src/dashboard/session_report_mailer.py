@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import html
 import logging
+import smtplib
+import ssl
 import threading
 from collections import Counter
 from email.message import EmailMessage
@@ -15,7 +17,6 @@ from zoneinfo import ZoneInfo
 import boto3
 
 from src.dashboard.integrity_score import compute_integrity_score
-from src.dashboard.gmail_oauth import GmailOAuth
 from src.dashboard.models import EventSeverity, EventSnapshotRecord, SessionEmailReport
 from src.dashboard.store import DashboardStore
 
@@ -43,13 +44,17 @@ class SessionReportMailer:
         *,
         store: DashboardStore,
         ses_client_factory=None,
-        gmail_oauth: GmailOAuth | None = None,
+        gmail_username: str | None = None,
+        gmail_app_password: str | None = None,
+        smtp_factory=None,
     ):
         self._store = store
         self._ses_client_factory = ses_client_factory or (
             lambda region: boto3.client("ses", region_name=region)
         )
-        self._gmail_oauth = gmail_oauth
+        self._gmail_username = gmail_username
+        self._gmail_app_password = gmail_app_password
+        self._smtp_factory = smtp_factory or smtplib.SMTP
         self._lock = threading.Lock()
         self._running: set[str] = set()
 
@@ -90,8 +95,10 @@ class SessionReportMailer:
     def _has_delivery_config(self, settings) -> bool:
         configured = bool(settings.sender_email and settings.recipient_emails)
         if settings.delivery_provider == "gmail":
-            return configured and self._gmail_oauth is not None and bool(
-                self._gmail_oauth.connection_status()["connected"]
+            return configured and bool(
+                self._gmail_username
+                and self._gmail_app_password
+                and settings.sender_email == self._gmail_username
             )
         return configured
 
@@ -152,15 +159,32 @@ class SessionReportMailer:
 
     def _send_message(self, report, message: EmailMessage) -> str:
         if report.delivery_provider == "gmail":
-            if self._gmail_oauth is None:
-                raise RuntimeError("O transporte Gmail não está configurado.")
-            return self._gmail_oauth.send(message)
+            return self._send_gmail(message)
         response = self._ses_client_factory(report.ses_region).send_raw_email(
             Source=report.sender_email,
             Destinations=report.recipient_emails,
             RawMessage={"Data": message.as_bytes()},
         )
         return str(response.get("MessageId") or "")
+
+    def _send_gmail(self, message: EmailMessage) -> str:
+        if not self._gmail_username or not self._gmail_app_password:
+            raise RuntimeError("Configure a conta Gmail e a senha de app no ambiente do dashboard.")
+        smtp = self._smtp_factory("smtp.gmail.com", 587, timeout=20)
+        try:
+            smtp.ehlo()
+            smtp.starttls(context=ssl.create_default_context())
+            smtp.ehlo()
+            smtp.login(self._gmail_username, self._gmail_app_password)
+            refused = smtp.send_message(message)
+            if refused:
+                raise RuntimeError("O Gmail recusou um ou mais destinatários.")
+            return message.get("Message-ID", "")
+        finally:
+            try:
+                smtp.quit()
+            except smtplib.SMTPException:
+                pass
 
     @staticmethod
     def _select_snapshots(

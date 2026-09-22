@@ -41,16 +41,27 @@ def test_snapshot_limit_prioritizes_critical_events_and_zero_selects_all():
     assert len(SessionReportMailer._select_snapshots(snapshots, 0)) == 3
 
 
-def test_mailer_uses_connected_gmail_transport_for_gmail_reports():
-    sent = []
+def test_mailer_uses_gmail_smtp_for_gmail_reports():
+    class SMTP:
+        def __init__(self):
+            self.login_args = None
+            self.sent = None
 
-    class Gmail:
-        def connection_status(self):
-            return {"connected": True}
+        def ehlo(self):
+            pass
 
-        def send(self, message):
-            sent.append(message)
-            return "gmail-message-id"
+        def starttls(self, *, context):
+            assert context is not None
+
+        def login(self, username, password):
+            self.login_args = (username, password)
+
+        def send_message(self, message):
+            self.sent = message
+            return {}
+
+        def quit(self):
+            pass
 
     report = SessionEmailReport(
         session_id="session-1",
@@ -62,14 +73,21 @@ def test_mailer_uses_connected_gmail_transport_for_gmail_reports():
         public_dashboard_url="https://dashboard.example.edu",
     )
     message = BytesParser(policy=policy.default).parsebytes(
-        b"From: corsiferrao@gmail.com\nTo: teacher@example.edu\n\nTeste"
+        b"From: corsiferrao@gmail.com\nTo: teacher@example.edu\nMessage-ID: <gmail-123>\n\nTeste"
     )
-    mailer = SessionReportMailer(store=object(), gmail_oauth=Gmail())
+    smtp = SMTP()
+    mailer = SessionReportMailer(
+        store=object(),
+        gmail_username="corsiferrao@gmail.com",
+        gmail_app_password="app-password",
+        smtp_factory=lambda *_args, **_kwargs: smtp,
+    )
 
     message_id = mailer._send_message(report, message)
 
-    assert message_id == "gmail-message-id"
-    assert sent == [message]
+    assert message_id == "<gmail-123>"
+    assert smtp.login_args == ("corsiferrao@gmail.com", "app-password")
+    assert smtp.sent is message
 
 
 def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
