@@ -14,6 +14,7 @@ from src.dashboard.app import (
     _build_timeline,
     _event_counts,
     _format_duration,
+    _format_session_datetime,
     _format_relative_time,
     _parse_roster_csv,
     _station_id_from_name,
@@ -75,6 +76,12 @@ def test_dashboard_exam_config_defaults_are_tolerant_but_keep_liveness_blocking(
     assert config.liveness_enabled is True
     assert config.liveness_average_threshold == 0.80
     assert config.liveness_shadow_mode is False
+
+
+def test_session_datetime_uses_sao_paulo_time():
+    value = datetime(2026, 9, 18, 15, 30, tzinfo=timezone.utc)
+
+    assert _format_session_datetime(value) == "18/09/2026 12:30"
 
 
 @pytest.mark.asyncio

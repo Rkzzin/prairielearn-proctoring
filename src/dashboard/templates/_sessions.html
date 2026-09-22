@@ -4,7 +4,8 @@
     <thead>
       <tr>
         <th>Sessão</th>
-        <th>Categoria</th>
+        <th>Realizada em</th>
+        <th>Duração</th>
         <th>Estação</th>
         <th>Aluno</th>
         <th>Status</th>
@@ -19,7 +20,8 @@
       {% set integrity = integrity_score(session) %}
       <tr data-review-status="{{ session.review_status.value }}">
         <td data-label="Sessão">{{ session.assessment }}</td>
-        <td data-label="Categoria">{{ "Autenticação não reconhecida" if session.category == "AUTHENTICATION_ALERT" else "Avaliação" }}</td>
+        <td data-label="Realizada em">{{ format_session_datetime(session.started_at) }}</td>
+        <td data-label="Duração">{{ format_duration(session.duration_seconds) }}</td>
         <td data-label="Estação">{{ session.station_id }}</td>
         <td data-label="Aluno">
           {% if session.student %}
@@ -45,8 +47,6 @@
         <td data-label="Flags">{{ session.flags_count }}</td>
         <td data-label="Ações">
           <a href="/sessions/{{ session.session_id }}">Revisar</a>
-          <span class="link-sep">·</span>
-          <a href="/api/reports/events.csv?turma={{ session.turma }}">CSV</a>
         </td>
       </tr>
       {% endfor %}

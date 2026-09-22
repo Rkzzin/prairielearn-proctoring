@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
 from urllib.parse import urlsplit
+from zoneinfo import ZoneInfo
 
 import anyio
 from fastapi import (
@@ -72,6 +73,7 @@ _STATION_EXACT_ROUTES = {
 _STATION_SESSION_ACTION_RE = re.compile(r"^/api/sessions/[^/]+/(finalize|events)$")
 _EVENT_CLIP_CONTEXT_SECONDS = 5
 _LEGACY_SEGMENT_DURATION_SECONDS = 300
+_DASHBOARD_TIMEZONE = ZoneInfo("America/Sao_Paulo")
 _EVENT_REASON_LABELS = {
     "SESSION_STARTED": "Avaliação iniciada",
     "SESSION_ENDED": "Avaliação finalizada",
@@ -138,6 +140,8 @@ def create_app(
     templates.env.globals["review_status_label"] = lambda status: _REVIEW_STATUS_LABELS.get(
         getattr(status, "value", status), str(status)
     )
+    templates.env.globals["format_duration"] = _format_duration
+    templates.env.globals["format_session_datetime"] = _format_session_datetime
     dashboard_store = store or DashboardStore(
         app_config.dashboard.database_url,
         app_config=app_config,
@@ -957,6 +961,10 @@ def _format_duration(seconds: int | None) -> str:
         parts.append(f"{minutes}min")
     parts.append(f"{seconds}s")
     return " ".join(parts)
+
+
+def _format_session_datetime(value: datetime) -> str:
+    return value.astimezone(_DASHBOARD_TIMEZONE).strftime("%d/%m/%Y %H:%M")
 
 
 def _build_event_clips(session: SessionRecord, event_offset: int) -> list[dict[str, object]]:
