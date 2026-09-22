@@ -437,6 +437,9 @@ th, td {
   display: grid;
   place-items: center;
 }
+.session-summary-nav-next {
+  border-left: 1px solid #dce6e8;
+}
 .session-summary-nav a,
 .session-summary-nav span {
   display: grid;
