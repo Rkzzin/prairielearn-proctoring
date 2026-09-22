@@ -331,7 +331,7 @@ class SessionReportMailer:
         message = EmailMessage()
         message["Subject"] = f"Relatório da avaliação - {session.assessment} - {student_name}"
         message["From"] = report.sender_email
-        message["To"] = report.sender_email
+        message["To"] = ", ".join(report.recipient_emails)
         message.set_content(text_body)
         message.add_alternative(html_body, subtype="html")
         html_part = message.get_payload()[-1]
