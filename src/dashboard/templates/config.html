@@ -5,12 +5,31 @@
     <div>
       <p class="eyebrow">Relatórios automáticos</p>
       <h2>Notificações por e-mail</h2>
-      <p>O dashboard envia pelo AWS SES depois que as imagens dos alertas forem processadas.</p>
+      <p>O dashboard envia depois que as imagens dos alertas forem processadas.</p>
     </div>
   </div>
   <form id="notification-settings-form" onsubmit="saveNotificationSettings(event)">
     <label class="checkbox"><input type="checkbox" name="enabled" {% if notification_settings.enabled %}checked{% endif %}> Enviar relatório para todas as avaliações finalizadas</label>
-    <label>Remetente verificado no AWS SES
+    <label>Provedor de envio
+      <select name="delivery_provider" id="delivery-provider" onchange="syncMailProvider()">
+        <option value="ses" {% if notification_settings.delivery_provider == 'ses' %}selected{% endif %}>AWS SES</option>
+        <option value="gmail" {% if notification_settings.delivery_provider == 'gmail' %}selected{% endif %}>Gmail (OAuth 2.0)</option>
+      </select>
+    </label>
+    <section id="gmail-oauth-settings" {% if notification_settings.delivery_provider != 'gmail' %}hidden{% endif %}>
+      <h3>Conta Gmail</h3>
+      {% if gmail_oauth_status.connected %}
+      <p>Conectada como <strong>{{ gmail_oauth_status.email }}</strong>{% if gmail_oauth_status.connected_at %} em {{ gmail_oauth_status.connected_at }}{% endif %}.</p>
+      <a class="button-secondary" href="/api/notification-settings/gmail/connect">Reconectar conta Google</a>
+      {% elif gmail_oauth_status.configured %}
+      <p>Ainda não conectada. Autorize exclusivamente <strong>corsiferrao@gmail.com</strong>.</p>
+      <a class="button-secondary" href="/api/notification-settings/gmail/connect">Conectar conta Google</a>
+      {% else %}
+      <p class="form-error">Configure as credenciais OAuth do Google no ambiente do dashboard antes de conectar a conta.</p>
+      {% endif %}
+      <p><small>O dashboard guarda somente um refresh token cifrado. A senha da conta Google nunca é solicitada nem armazenada.</small></p>
+    </section>
+    <label>Remetente
       <input type="email" name="sender_email" value="{{ notification_settings.sender_email }}" placeholder="proctoring@instituicao.edu.br">
     </label>
     <label>Destinatários, um por linha (máximo de 50)
@@ -21,12 +40,13 @@
         <input type="number" name="image_link_limit" min="0" max="100" value="{{ notification_settings.image_link_limit }}">
         <small>Use 0 para incluir links para todas; valores de 1 a 100 priorizam eventos críticos.</small>
       </label>
-      <label>Região AWS SES<input type="text" name="ses_region" value="{{ notification_settings.ses_region }}"></label>
+      <label id="ses-region-field">Região AWS SES<input type="text" name="ses_region" value="{{ notification_settings.ses_region }}"></label>
       <label>URL pública do dashboard<input type="url" name="public_dashboard_url" value="{{ notification_settings.public_dashboard_url }}"></label>
     </div>
     <p class="form-error" id="notification-settings-error" hidden></p>
     <p id="notification-settings-success" hidden>Configuração salva.</p>
     <button type="submit">Salvar notificações</button>
+    <button type="button" class="button-secondary" onclick="sendNotificationTest()">Enviar e-mail de teste</button>
   </form>
 </section>
 
@@ -95,6 +115,7 @@ async function saveNotificationSettings(event) {
   const success = document.getElementById('notification-settings-success');
   const payload = {
     enabled: data.get('enabled') === 'on',
+    delivery_provider: String(data.get('delivery_provider') || 'ses'),
     sender_email: String(data.get('sender_email') || ''),
     recipient_emails: String(data.get('recipient_emails') || '').split('\n').map(value => value.trim()).filter(Boolean),
     image_link_limit: Number(data.get('image_link_limit')),
@@ -116,6 +137,30 @@ async function saveNotificationSettings(event) {
   error.hidden = true;
   success.hidden = false;
 }
+
+function syncMailProvider() {
+  const gmail = document.getElementById('delivery-provider').value === 'gmail';
+  document.getElementById('gmail-oauth-settings').hidden = !gmail;
+  document.getElementById('ses-region-field').hidden = gmail;
+}
+
+async function sendNotificationTest() {
+  const error = document.getElementById('notification-settings-error');
+  const success = document.getElementById('notification-settings-success');
+  const response = await fetch('/api/notification-settings/test', {method: 'POST'});
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    error.textContent = body.detail || 'Não foi possível enviar o e-mail de teste.';
+    error.hidden = false;
+    success.hidden = true;
+    return;
+  }
+  error.hidden = true;
+  success.textContent = 'E-mail de teste enviado.';
+  success.hidden = false;
+}
+
+syncMailProvider();
 
 async function clearConfigs() {
   const confirmed = window.confirm('Limpar o histórico local de configurações distribuídas? Isso não afeta o que já foi aplicado nas estações.');

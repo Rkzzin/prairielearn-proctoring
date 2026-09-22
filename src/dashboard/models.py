@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -92,6 +93,7 @@ class EventSnapshotRecord(BaseModel):
 
 class NotificationSettings(BaseModel):
     enabled: bool = False
+    delivery_provider: Literal["ses", "gmail"] = "ses"
     sender_email: str = ""
     recipient_emails: list[str] = Field(default_factory=list, max_length=50)
     image_link_limit: int = Field(default=12, ge=0, le=100)
@@ -105,6 +107,7 @@ class SessionEmailReport(BaseModel):
     sender_email: str
     recipient_emails: list[str]
     image_link_limit: int
+    delivery_provider: Literal["ses", "gmail"] = "ses"
     ses_region: str
     public_dashboard_url: str
     attempts: int = 0

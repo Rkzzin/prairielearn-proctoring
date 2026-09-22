@@ -41,8 +41,39 @@ def test_snapshot_limit_prioritizes_critical_events_and_zero_selects_all():
     assert len(SessionReportMailer._select_snapshots(snapshots, 0)) == 3
 
 
+def test_mailer_uses_connected_gmail_transport_for_gmail_reports():
+    sent = []
+
+    class Gmail:
+        def connection_status(self):
+            return {"connected": True}
+
+        def send(self, message):
+            sent.append(message)
+            return "gmail-message-id"
+
+    report = SessionEmailReport(
+        session_id="session-1",
+        sender_email="corsiferrao@gmail.com",
+        recipient_emails=["teacher@example.edu"],
+        image_link_limit=12,
+        delivery_provider="gmail",
+        ses_region="sa-east-1",
+        public_dashboard_url="https://dashboard.example.edu",
+    )
+    message = BytesParser(policy=policy.default).parsebytes(
+        b"From: corsiferrao@gmail.com\nTo: teacher@example.edu\n\nTeste"
+    )
+    mailer = SessionReportMailer(store=object(), gmail_oauth=Gmail())
+
+    message_id = mailer._send_message(report, message)
+
+    assert message_id == "gmail-message-id"
+    assert sent == [message]
+
+
 def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
-    now = datetime.now(UTC)
+    now = datetime(2026, 9, 15, 21, 2, 3, tzinfo=UTC)
     events = [
         SessionEventPayload(
             timestamp=now,
@@ -95,6 +126,9 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         def list_event_snapshots(self, _session_id):
             return snapshots
 
+        def read_event_snapshot_image(self, _snapshot):
+            return b"jpeg-image"
+
         def finish_email_report(self, value, **kwargs):
             self.finished = (value, kwargs)
 
@@ -122,11 +156,25 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         for part in message.walk()
         if part.get_content_type() in {"text/plain", "text/html"}
     )
+    html_message = next(
+        part.get_content()
+        for part in message.walk()
+        if part.get_content_type() == "text/html"
+    )
     assert ses.request["Destinations"] == ["teacher@example.edu"]
     assert "Resumo da avaliação" in raw_message
+    assert "Início da prova: 15/09/2026 às 18:02:03" in raw_message
     assert "ELECTRONIC_DEVICE_DETECTED" not in raw_message
+    assert 'src="cid:snapshot-1@proctoring"' in raw_message
+    assert html_message.index("Abrir revisão completa") < html_message.index(
+        "Imagens selecionadas"
+    )
     assert (
         "https://dashboard.example.edu/sessions/session-1/event-snapshots/event-key"
         in raw_message
     )
+    image_parts = [part for part in message.walk() if part.get_content_type() == "image/jpeg"]
+    assert len(image_parts) == 1
+    assert image_parts[0].get_content() == b"jpeg-image"
+    assert image_parts[0]["Content-ID"] == "<snapshot-1@proctoring>"
     assert store.finished == (report, {"message_id": "ses-123"})
