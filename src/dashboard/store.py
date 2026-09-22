@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import boto3
 import psycopg
+from botocore.exceptions import ClientError
 from psycopg.rows import dict_row
 
 from src.dashboard.models import (
@@ -249,6 +250,21 @@ class DashboardStore:
             return None
         response = self._s3.get_object(Bucket=snapshot.s3_bucket, Key=snapshot.s3_key)
         return response["Body"].read()
+
+    def read_student_photo(self, turma: str, student_id: str) -> bytes | None:
+        if self._app_cfg is None or self._s3 is None:
+            return None
+        prefix = self._app_cfg.s3.photos_prefix_for_turma(turma)
+        for extension in (".png", ".jpg", ".jpeg"):
+            try:
+                response = self._s3.get_object(
+                    Bucket=self._app_cfg.s3.bucket,
+                    Key=f"{prefix}{student_id}{extension}",
+                )
+                return response["Body"].read()
+            except ClientError:
+                continue
+        return None
 
     def get_notification_settings(self) -> NotificationSettings:
         with self._lock:
