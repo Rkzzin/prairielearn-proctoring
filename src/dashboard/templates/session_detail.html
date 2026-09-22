@@ -113,7 +113,7 @@
     <div>
       <p class="eyebrow">Evidências visuais</p>
       <h2>Fotos dos alertas</h2>
-      <p>Frames da câmera principal no momento de cada evento crítico ou de atenção.</p>
+      <p>Frames das câmeras principal e ambiente no momento de cada evento crítico ou de atenção.</p>
     </div>
     {% if session.ended_at %}
     <button
@@ -133,20 +133,34 @@
     {% for card in event_snapshots %}
     {% set snapshot = card.snapshot %}
     <article class="event-snapshot-card severity-{{ snapshot.severity.value|lower }}">
-      {% if snapshot.url %}
-      <a href="{{ snapshot.url }}" target="_blank" rel="noopener">
-        <img src="{{ snapshot.url }}" alt="{{ card.reason }} em {{ card.relative_time }}" loading="lazy">
-      </a>
-      {% else %}
-      <div class="event-snapshot-placeholder">
-        {% if snapshot.status == "failed" %}Imagem indisponível{% else %}Processando imagem{% endif %}
+      <div class="event-snapshot-images">
+        <div>
+          <span>Câmera principal</span>
+          {% if snapshot.url %}
+          <a href="{{ snapshot.url }}" target="_blank" rel="noopener">
+            <img src="{{ snapshot.url }}" alt="Câmera principal: {{ card.reason }} em {{ card.relative_time }}" loading="lazy">
+          </a>
+          {% else %}
+          <div class="event-snapshot-placeholder">
+            {% if snapshot.status == "failed" %}Imagem indisponível{% else %}Processando imagem{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        {% if snapshot.environment_url %}
+        <div>
+          <span>Câmera ambiente</span>
+          <a href="{{ snapshot.environment_url }}" target="_blank" rel="noopener">
+            <img src="{{ snapshot.environment_url }}" alt="Câmera ambiente: {{ card.reason }} em {{ card.relative_time }}" loading="lazy">
+          </a>
+        </div>
+        {% endif %}
       </div>
-      {% endif %}
       <div class="event-snapshot-copy">
         <time>{{ card.relative_time }}</time>
         <strong>{{ card.reason }}</strong>
         <span>{{ "Crítico" if snapshot.severity.value == "CRITICAL" else "Alerta" }}</span>
         {% if snapshot.error %}<small>{{ snapshot.error }}</small>{% endif %}
+        {% if snapshot.environment_error %}<small>Câmera ambiente: {{ snapshot.environment_error }}</small>{% endif %}
       </div>
     </article>
     {% endfor %}

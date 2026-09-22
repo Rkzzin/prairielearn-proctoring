@@ -87,6 +87,10 @@ class EventSnapshotRecord(BaseModel):
     s3_bucket: str | None = None
     s3_key: str | None = None
     url: str | None = None
+    environment_s3_bucket: str | None = None
+    environment_s3_key: str | None = None
+    environment_url: str | None = None
+    environment_error: str | None = None
     error: str | None = None
     local_path: str | None = None
 
