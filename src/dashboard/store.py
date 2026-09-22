@@ -153,22 +153,28 @@ class DashboardStore:
     def retry_event_snapshots(self, session_id: str) -> int:
         self.queue_event_snapshots(session_id)
         with self._lock:
+            session = self._sessions.get(session_id)
+            has_environment_recording = bool(
+                session
+                and any(self._is_environment(asset) for asset in session.recordings)
+            )
             rows = self._db.execute(
                 "SELECT event_key, payload FROM event_snapshots WHERE session_id = %s",
                 (session_id,),
             ).fetchall()
+            queued = 0
             for row in rows:
                 snapshot = EventSnapshotRecord.model_validate(row["payload"])
-                if snapshot.status == "ready":
+                if snapshot.status == "ready" and (
+                    not has_environment_recording or snapshot.environment_s3_key
+                ):
                     continue
                 snapshot.status = "queued"
                 snapshot.error = None
                 self._save_event_snapshot(snapshot)
+                queued += 1
             self._db.commit()
-            return sum(
-                EventSnapshotRecord.model_validate(row["payload"]).status != "ready"
-                for row in rows
-            )
+            return queued
 
     def claim_event_snapshots(self, session_id: str) -> list[EventSnapshotRecord]:
         with self._lock:
@@ -205,12 +211,18 @@ class DashboardStore:
         *,
         s3_bucket: str | None = None,
         s3_key: str | None = None,
+        environment_s3_bucket: str | None = None,
+        environment_s3_key: str | None = None,
+        environment_error: str | None = None,
         error: str | None = None,
     ) -> None:
         with self._lock:
             snapshot.status = "failed" if error else "ready"
             snapshot.s3_bucket = s3_bucket
             snapshot.s3_key = s3_key
+            snapshot.environment_s3_bucket = environment_s3_bucket
+            snapshot.environment_s3_key = environment_s3_key
+            snapshot.environment_error = environment_error
             snapshot.error = error
             self._save_event_snapshot(snapshot)
             self._db.commit()
@@ -1253,7 +1265,31 @@ class DashboardStore:
                 )
             except Exception:
                 pass
+        if (
+            hydrated.environment_s3_bucket
+            and hydrated.environment_s3_key
+            and self._s3 is not None
+        ):
+            try:
+                hydrated.environment_url = self._s3.generate_presigned_url(
+                    "get_object",
+                    Params={
+                        "Bucket": hydrated.environment_s3_bucket,
+                        "Key": hydrated.environment_s3_key,
+                    },
+                    ExpiresIn=3600,
+                )
+            except Exception:
+                pass
         return hydrated
+
+    @staticmethod
+    def _is_environment(asset) -> bool:
+        return asset.stream == "environment" or (
+            asset.stream is None
+            and bool(asset.s3_key)
+            and Path(asset.s3_key or "").name.startswith("environment_")
+        )
 
     def _hydrate_asset(self, asset):
         if asset.url or not asset.s3_bucket or not asset.s3_key or self._s3 is None:

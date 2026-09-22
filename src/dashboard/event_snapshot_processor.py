@@ -88,6 +88,10 @@ class EventSnapshotProcessor:
             (asset for asset in session.recordings if self._is_webcam(asset)),
             key=lambda asset: asset.start_offset_seconds or 0.0,
         )
+        environment_assets = sorted(
+            (asset for asset in session.recordings if self._is_environment(asset)),
+            key=lambda asset: asset.start_offset_seconds or 0.0,
+        )
         session_started_event = next(
             (event for event in session.events if event.event_type == "SESSION_STARTED"),
             None,
@@ -100,8 +104,10 @@ class EventSnapshotProcessor:
             prefix="proctor-event-snapshots-",
             dir=self._temp_root,
         ) as temp_dir:
-            source = Path(temp_dir) / "segment.mp4"
+            source = Path(temp_dir) / "webcam-segment.mp4"
+            environment_source = Path(temp_dir) / "environment-segment.mp4"
             current_s3_key = None
+            current_environment_s3_key = None
             for snapshot in sorted(snapshots, key=lambda item: item.event_timestamp):
                 try:
                     offset = max(
@@ -129,10 +135,62 @@ class EventSnapshotProcessor:
                         output_key,
                         ExtraArgs={"ContentType": "image/jpeg"},
                     )
+                    environment_fields = {}
+                    environment_asset = self._asset_for_offset(environment_assets, offset)
+                    if (
+                        environment_asset is not None
+                        and environment_asset.s3_bucket
+                        and environment_asset.s3_key
+                    ):
+                        try:
+                            if environment_asset.s3_key != current_environment_s3_key:
+                                environment_source.unlink(missing_ok=True)
+                                current_environment_s3_key = None
+                                self._s3.download_file(
+                                    environment_asset.s3_bucket,
+                                    environment_asset.s3_key,
+                                    str(environment_source),
+                                )
+                                current_environment_s3_key = environment_asset.s3_key
+                            environment_image_path = (
+                                Path(temp_dir) / f"{snapshot.event_key}-environment.jpg"
+                            )
+                            environment_offset = max(
+                                0.0,
+                                offset - (environment_asset.start_offset_seconds or 0.0),
+                            )
+                            self._extract_frame(
+                                environment_source,
+                                environment_offset,
+                                environment_image_path,
+                            )
+                            environment_output_key = (
+                                f"{self._app_config.s3.recordings_prefix}/{session.session_id}/"
+                                f"event-snapshots/{snapshot.event_key}-environment.jpg"
+                            )
+                            self._s3.upload_file(
+                                str(environment_image_path),
+                                self._app_config.s3.bucket,
+                                environment_output_key,
+                                ExtraArgs={"ContentType": "image/jpeg"},
+                            )
+                            environment_fields = {
+                                "environment_s3_bucket": self._app_config.s3.bucket,
+                                "environment_s3_key": environment_output_key,
+                            }
+                            environment_image_path.unlink(missing_ok=True)
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "Imagem ambiente do evento %s não foi gerada: %s",
+                                snapshot.event_key,
+                                exc,
+                            )
+                            environment_fields = {"environment_error": str(exc)[:500]}
                     self._store.finish_event_snapshot(
                         snapshot,
                         s3_bucket=self._app_config.s3.bucket,
                         s3_key=output_key,
+                        **environment_fields,
                     )
                     image_path.unlink(missing_ok=True)
                 except Exception as exc:  # noqa: BLE001
@@ -155,6 +213,14 @@ class EventSnapshotProcessor:
             asset.stream is None
             and bool(asset.s3_key)
             and Path(asset.s3_key or "").name.startswith("webcam_")
+        )
+
+    @staticmethod
+    def _is_environment(asset: RecordingAsset) -> bool:
+        return asset.stream == "environment" or (
+            asset.stream is None
+            and bool(asset.s3_key)
+            and Path(asset.s3_key or "").name.startswith("environment_")
         )
 
     @staticmethod

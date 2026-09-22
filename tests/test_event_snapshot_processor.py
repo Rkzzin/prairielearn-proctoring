@@ -143,6 +143,74 @@ def test_processor_marks_snapshot_failed_without_webcam_recording(tmp_path):
     assert store.finished[0][1]["error"] == "gravação da câmera principal indisponível"
 
 
+def test_processor_extracts_paired_environment_snapshot(tmp_path):
+    now = datetime.now(timezone.utc)
+    session = SessionRecord(
+        session_id="session-1",
+        station_id="nuc-1",
+        turma="T1",
+        assessment="Quiz",
+        started_at=now,
+        ended_at=now,
+        status=StationStatus.COMPLETED,
+        recordings=[
+            RecordingAsset(
+                label="Câmera principal",
+                stream="webcam",
+                s3_bucket="recordings",
+                s3_key="webcam_000.mp4",
+                duration_seconds=300,
+            ),
+            RecordingAsset(
+                label="Câmera ambiente",
+                stream="environment",
+                s3_bucket="recordings",
+                s3_key="environment_000.mp4",
+                duration_seconds=300,
+            ),
+        ],
+    )
+    snapshot = EventSnapshotRecord(
+        session_id=session.session_id,
+        event_key="event-1",
+        event_timestamp=now + timedelta(seconds=7),
+        event_type="GAZE_ALERT",
+        severity=EventSeverity.CRITICAL,
+    )
+    store = FakeStore()
+    s3 = FakeS3()
+    processor = EventSnapshotProcessor(
+        store=store,
+        app_config=AppConfig(data_dir=tmp_path),
+        s3_client=s3,
+    )
+    extracted = []
+
+    def extract_frame(source, offset, destination):
+        extracted.append((source.name, offset))
+        destination.write_bytes(b"image")
+
+    processor._extract_frame = extract_frame
+    processor._process(session, [snapshot])
+
+    assert extracted == [
+        ("webcam-segment.mp4", 7.0),
+        ("environment-segment.mp4", 7.0),
+    ]
+    assert s3.downloads == [
+        ("recordings", "webcam_000.mp4"),
+        ("recordings", "environment_000.mp4"),
+    ]
+    assert s3.uploads[1] == (
+        "proctor-station",
+        "gravacoes/session-1/event-snapshots/event-1-environment.jpg",
+        {"ContentType": "image/jpeg"},
+    )
+    assert store.finished[0][1]["environment_s3_key"] == (
+        "gravacoes/session-1/event-snapshots/event-1-environment.jpg"
+    )
+
+
 def test_processor_keeps_only_one_downloaded_segment(tmp_path):
     now = datetime.now(timezone.utc)
     session = SessionRecord(
