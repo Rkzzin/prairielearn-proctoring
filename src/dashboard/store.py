@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -1073,18 +1072,6 @@ class DashboardStore:
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS google_oauth_connections (
-              id SMALLINT PRIMARY KEY CHECK (id = 1),
-              payload JSONB NOT NULL
-            )
-            """,
-            """
-            CREATE TABLE IF NOT EXISTS google_oauth_states (
-              state TEXT PRIMARY KEY,
-              expires_at TIMESTAMPTZ NOT NULL
-            )
-            """,
-            """
             CREATE TABLE IF NOT EXISTS enrollments (
               enrollment_id TEXT PRIMARY KEY,
               payload JSONB NOT NULL
@@ -1121,41 +1108,6 @@ class DashboardStore:
         ):
             self._db.execute(statement)
         self._db.commit()
-
-    def create_google_oauth_state(self, state: str, expires_at: datetime) -> None:
-        with self._lock:
-            self._db.execute("DELETE FROM google_oauth_states WHERE expires_at <= now()")
-            self._db.execute(
-                "INSERT INTO google_oauth_states (state, expires_at) VALUES (%s, %s)",
-                (state, expires_at),
-            )
-            self._db.commit()
-
-    def consume_google_oauth_state(self, state: str) -> bool:
-        with self._lock:
-            row = self._db.execute(
-                "DELETE FROM google_oauth_states WHERE state = %s AND expires_at > now() "
-                "RETURNING state",
-                (state,),
-            ).fetchone()
-            self._db.commit()
-        return row is not None
-
-    def save_google_oauth_connection(self, payload: dict[str, object]) -> None:
-        with self._lock:
-            self._db.execute(
-                "INSERT INTO google_oauth_connections (id, payload) VALUES (1, %s::jsonb) "
-                "ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload",
-                (json.dumps(payload),),
-            )
-            self._db.commit()
-
-    def get_google_oauth_connection(self) -> dict[str, object] | None:
-        with self._lock:
-            row = self._db.execute(
-                "SELECT payload FROM google_oauth_connections WHERE id = 1"
-            ).fetchone()
-        return dict(row["payload"]) if row else None
 
     def get_credential_hash(self, username: str) -> str | None:
         with self._lock:

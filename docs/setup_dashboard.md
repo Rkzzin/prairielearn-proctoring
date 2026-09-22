@@ -137,40 +137,20 @@ e-mail** e informe:
 Não grave credenciais AWS nessa tela. Elas continuam no `.env` ou, de
 preferência, numa IAM Role associada à instância.
 
-### 5.2. Preparar o Gmail OAuth para relatórios
+### 5.2. Preparar o Gmail SMTP para relatórios
 
-Use este fluxo quando a conta remetente não oferece senha de app. Ele autoriza
-somente `corsiferrao@gmail.com`; a senha Google nunca passa pelo dashboard.
+No `.env` do dashboard, configure a conta remetente e a senha de app criada
+na segurança da conta Google. Não use a senha comum da conta e não grave essa
+senha no banco ou na tela do dashboard.
 
-1. No [Google Cloud Console](https://console.cloud.google.com/), crie ou
-   selecione um projeto e habilite a **Gmail API**.
-2. Configure a tela de consentimento OAuth e adicione
-   `corsiferrao@gmail.com` como usuário de teste enquanto o app não estiver em
-   produção.
-3. Crie uma credencial OAuth do tipo **Aplicativo da Web** e cadastre a URL
-   exata `https://<dominio-do-dashboard>/api/notification-settings/gmail/callback`
-   em **Authorized redirect URIs**.
-4. No `.env` do dashboard, adicione as credenciais emitidas e uma chave Fernet
-   nova. Gere a chave uma única vez no servidor:
+```dotenv
+PROCTOR_DASHBOARD_GMAIL_SMTP_USERNAME=corsiferrao@gmail.com
+PROCTOR_DASHBOARD_GMAIL_SMTP_APP_PASSWORD=<senha-de-app>
+```
 
-   ```bash
-   venv/bin/python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-   ```
-
-   ```dotenv
-   PROCTOR_DASHBOARD_GOOGLE_OAUTH_CLIENT_ID=<client-id>
-   PROCTOR_DASHBOARD_GOOGLE_OAUTH_CLIENT_SECRET=<client-secret>
-   PROCTOR_DASHBOARD_GOOGLE_OAUTH_REDIRECT_URI=https://<dominio-do-dashboard>/api/notification-settings/gmail/callback
-   PROCTOR_DASHBOARD_GOOGLE_OAUTH_ENCRYPTION_KEY=<chave-fernet-gerada>
-   ```
-
-5. Reinicie `proctor-dashboard.service`, abra **Configuração → Notificações por
-   e-mail**, selecione **Gmail (OAuth 2.0)** e clique em **Conectar conta
-   Google**. Confirme `corsiferrao@gmail.com`, salve a configuração e envie um
-   e-mail de teste.
-
-O refresh token fica cifrado no Postgres com a chave Fernet. Preserve essa
-chave: trocá-la sem reconectar a conta impede a leitura do token existente.
+Reinicie `proctor-dashboard.service`, abra **Configuração → Notificações por
+e-mail**, selecione **Gmail SMTP**, use `corsiferrao@gmail.com` como remetente,
+salve a configuração e envie um e-mail de teste.
 
 ## 6. Instalar o serviço systemd (script)
 
