@@ -408,6 +408,10 @@ async def test_finished_session_queues_and_renders_event_snapshot_grid(
     assert detail.status_code == 200
     assert 'class="event-snapshot-grid"' in detail.text
     assert detail.text.count('class="event-snapshot-card') == 2
+    assert 'aria-label="Filtrar fotos por severidade"' in detail.text
+    assert "Informações técnicas" not in detail.text
+    assert "ID da sessão" in detail.text
+    assert "Relatório por e-mail" not in detail.text
     assert "Processar imagens dos alertas" in detail.text
     assert response.status_code == 202
     assert response.json() == {"status": "queued", "queued": 2}
@@ -2147,9 +2151,9 @@ def test_session_review_template_prioritizes_human_event_information():
     assert "Ver vídeos do evento" in html
     assert "Expandir todos os vídeos" in html
     assert "Gravações completas" in html
-    assert "Informações técnicas" in html
+    assert "ID da sessão" in html
+    assert "Informações técnicas" not in html
     assert html.index("Gravações completas") < html.index("Timeline de eventos")
-    assert html.index("Informações técnicas") < html.index("Timeline de eventos")
     assert "GAZE_WARNING" not in html
     assert "raw_metric_secret" not in html
 

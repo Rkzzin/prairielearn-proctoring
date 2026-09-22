@@ -544,11 +544,6 @@ th, td {
   gap: 4px;
   align-items: flex-start;
 }
-.integrity-caption {
-  color: var(--muted);
-  font-size: 0.85rem;
-  margin: 0;
-}
 .session-summary-grid {
   display: grid;
   grid-template-columns: 44px repeat(4, minmax(0, 1fr)) 44px;
@@ -577,6 +572,12 @@ th, td {
   overflow-wrap: anywhere;
   font-size: 0.96rem;
   font-weight: 700;
+}
+.session-technical-grid {
+  margin-top: 12px;
+}
+.snapshot-filters {
+  margin-top: 14px;
 }
 .session-event-summary {
   margin: 10px 0 0 !important;

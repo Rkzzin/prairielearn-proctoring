@@ -56,6 +56,12 @@
       {% endif %}
     </div>
   </dl>
+  <dl class="meta session-technical-grid">
+    <div><dt>ID da sessão</dt><dd>{{ session.session_id }}</dd></div>
+    <div><dt>Estação</dt><dd>{{ session.station_id }}</dd></div>
+    <div><dt>Status interno</dt><dd>{{ session.status.value }}</dd></div>
+    <div><dt>Eventos sinalizados</dt><dd>{{ session.flags_count }}</dd></div>
+  </dl>
   <div class="review-status-control">
     <span class="review-status-control-label">Status de revisão</span>
     <div class="review-status-options" role="group" aria-label="Marcar status de revisão desta sessão">
@@ -73,12 +79,6 @@
     <span class="integrity-badge integrity-band-{{ integrity.band|lower }} integrity-badge-large" title="{{ integrity.band_label }}">
       Índice de Integridade: {{ integrity.score }} · {{ integrity.band }}
     </span>
-    <p class="integrity-caption">
-      {{ integrity.band_label }}.
-      {% if integrity.blocked_seconds > 0 %}{{ integrity.blocked_seconds }}s bloqueado de {{ integrity.duration_seconds }}s totais.{% endif %}
-      {% if integrity.capped_by_timeout %}Sessão encerrada por bloqueio não resolvido (timeout) — score limitado.{% endif %}
-      Não é a nota da prova — é um sinal de triagem pra priorizar revisão manual.
-    </p>
   </div>
   <p class="session-event-summary">
     <strong>{{ event_counts.CRITICAL }}</strong> crítico{% if event_counts.CRITICAL != 1 %}s{% endif %}
@@ -113,19 +113,6 @@
   {% endif %}
 </details>
 
-<details class="panel review-details technical-details">
-  <summary>
-    <strong>Informações técnicas</strong>
-    <span class="details-chevron" aria-hidden="true">⌄</span>
-  </summary>
-  <dl class="meta">
-    <div><dt>ID da sessão</dt><dd>{{ session.session_id }}</dd></div>
-    <div><dt>Estação</dt><dd>{{ session.station_id }}</dd></div>
-    <div><dt>Status interno</dt><dd>{{ session.status.value }}</dd></div>
-    <div><dt>Eventos sinalizados</dt><dd>{{ session.flags_count }}</dd></div>
-  </dl>
-</details>
-
 <section class="panel event-snapshot-review">
   <div class="panel-header">
     <div>
@@ -147,10 +134,15 @@
   </div>
   <p class="snapshot-process-status" id="snapshot-process-status"></p>
   {% if event_snapshots %}
+  <div class="timeline-filters snapshot-filters" role="group" aria-label="Filtrar fotos por severidade">
+    <button type="button" class="filter-chip snapshot-filter-chip active" data-filter="ALL" aria-pressed="true" onclick="filterEventSnapshots('ALL', this)">Todos <span>{{ event_counts.CRITICAL + event_counts.WARNING }}</span></button>
+    <button type="button" class="filter-chip filter-critical snapshot-filter-chip" data-filter="CRITICAL" aria-pressed="false" onclick="filterEventSnapshots('CRITICAL', this)">Críticos <span>{{ event_counts.CRITICAL }}</span></button>
+    <button type="button" class="filter-chip filter-warning snapshot-filter-chip" data-filter="WARNING" aria-pressed="false" onclick="filterEventSnapshots('WARNING', this)">Alertas <span>{{ event_counts.WARNING }}</span></button>
+  </div>
   <div class="event-snapshot-grid">
     {% for card in event_snapshots %}
     {% set snapshot = card.snapshot %}
-    <article class="event-snapshot-card severity-{{ snapshot.severity.value|lower }}">
+    <article class="event-snapshot-card severity-{{ snapshot.severity.value|lower }}" data-severity="{{ snapshot.severity.value }}">
       <div class="event-snapshot-images">
         <div>
           <span>Câmera principal</span>
@@ -183,32 +175,11 @@
     </article>
     {% endfor %}
   </div>
+  <p class="empty" id="snapshot-filter-empty" hidden>Nenhuma foto encontrada neste filtro.</p>
   {% else %}
   <p class="empty">As imagens ainda não foram processadas para esta sessão.</p>
   {% endif %}
 </section>
-
-{% if session.ended_at %}
-<section class="panel session-email-report">
-  <div class="panel-header">
-    <div>
-      <p class="eyebrow">Distribuição</p>
-      <h2>Relatório por e-mail</h2>
-      {% if email_report %}
-      <p>Status: <strong>{{ email_report.status }}</strong>{% if email_report.sent_at %} · enviado em {{ email_report.sent_at.isoformat() }}{% endif %}</p>
-      <p>Destinatários: {{ email_report.recipient_emails|join(', ') }}</p>
-      {% if email_report.error %}<p class="form-error">{{ email_report.error }}</p>{% endif %}
-      {% else %}
-      <p>O relatório ainda não foi enviado.</p>
-      {% endif %}
-    </div>
-    <button type="button" class="button-secondary event-snapshot-process" id="email-report-send" onclick="sendEmailReport()">
-      {{ "Reenviar relatório" if email_report and email_report.status == "sent" else "Enviar relatório" }}
-    </button>
-  </div>
-  <p id="email-report-status"></p>
-</section>
-{% endif %}
 
 <section class="panel event-review">
   <div class="panel-header">
@@ -309,24 +280,6 @@ async function processEventSnapshots() {
   status.textContent = 'Processamento iniciado. Atualizando a página...';
   window.setTimeout(() => window.location.reload(), 2500);
 }
-async function sendEmailReport() {
-  const button = document.getElementById('email-report-send');
-  const status = document.getElementById('email-report-status');
-  button.disabled = true;
-  button.textContent = 'Enfileirando relatório...';
-  const response = await fetch('/api/sessions/{{ session.session_id }}/email-report/send', {
-    method: 'POST'
-  });
-  if (!response.ok) {
-    const payload = await response.json().catch(() => ({}));
-    status.textContent = payload.detail || 'Não foi possível enviar o relatório.';
-    button.disabled = false;
-    button.textContent = 'Enviar relatório';
-    return;
-  }
-  status.textContent = 'Relatório enfileirado para envio.';
-  window.setTimeout(() => window.location.reload(), 2000);
-}
 const sessionStart = document.getElementById('session-start');
 if (sessionStart) {
   const startedAt = new Date(sessionStart.dateTime);
@@ -349,12 +302,28 @@ function filterTimeline(severity, trigger) {
       event.querySelectorAll('video').forEach((video) => video.pause());
     }
   });
-  document.querySelectorAll('.filter-chip').forEach((button) => {
+  document.querySelectorAll('.event-review .filter-chip').forEach((button) => {
     const active = button === trigger;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   });
   const empty = document.getElementById('timeline-filter-empty');
+  if (empty) empty.hidden = visible !== 0;
+}
+
+function filterEventSnapshots(severity, trigger) {
+  let visible = 0;
+  document.querySelectorAll('.event-snapshot-card').forEach((card) => {
+    const matches = severity === 'ALL' || card.dataset.severity === severity;
+    card.hidden = !matches;
+    if (matches) visible += 1;
+  });
+  document.querySelectorAll('.snapshot-filter-chip').forEach((button) => {
+    const active = button === trigger;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const empty = document.getElementById('snapshot-filter-empty');
   if (empty) empty.hidden = visible !== 0;
 }
 
