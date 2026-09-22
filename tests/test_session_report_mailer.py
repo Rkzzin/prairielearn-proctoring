@@ -180,6 +180,7 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         if part.get_content_type() == "text/html"
     )
     assert ses.request["Destinations"] == ["teacher@example.edu"]
+    assert message["To"] == "teacher@example.edu"
     assert "Resumo da avaliação" in raw_message
     assert "Início da prova: 15/09/2026 às 18:02:03" in raw_message
     assert "ELECTRONIC_DEVICE_DETECTED" not in raw_message
