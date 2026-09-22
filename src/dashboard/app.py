@@ -315,6 +315,7 @@ def create_app(
         if session is None:
             return HTMLResponse("Sessão não encontrada.", status_code=404)
         timeline = _build_timeline(session)
+        previous_session, next_session = dashboard_store.adjacent_sessions(session_id)
         event_snapshots = dashboard_store.list_event_snapshots(session_id)
         email_report = dashboard_store.get_email_report(session_id)
         student_photo_urls: list[str] = []
@@ -345,6 +346,8 @@ def create_app(
             "session_detail.html",
             title=f"Sessão {session_id}",
             session=session,
+            previous_session=previous_session,
+            next_session=next_session,
             timeline=timeline,
             student_photo_urls=student_photo_urls,
             event_snapshots=event_snapshot_cards,

@@ -433,6 +433,39 @@ th, td {
   gap: 14px;
   min-width: 0;
 }
+.session-review-navigation {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 10px;
+}
+.session-nav-arrow {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--surface-strong);
+}
+.session-nav-arrow:hover {
+  border-color: var(--accent);
+  background: #e3f1f2;
+}
+.session-nav-arrow.disabled {
+  color: #aebdc1;
+  background: #f7fafb;
+}
+.session-nav-arrow svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
 .student-photo {
   width: 64px;
   height: 64px;
@@ -987,6 +1020,14 @@ video {
   }
 }
 @media (max-width: 540px) {
+  .session-review-navigation {
+    grid-template-columns: 40px minmax(0, 1fr) 40px;
+    gap: 6px;
+  }
+  .session-nav-arrow {
+    width: 40px;
+    height: 40px;
+  }
   .session-summary-head {
     align-items: start;
     flex-direction: column;

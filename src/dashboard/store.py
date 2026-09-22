@@ -121,6 +121,24 @@ class DashboardStore:
             session = self._sessions.get(session_id)
             return self._hydrate_session(session) if session else None
 
+    def adjacent_sessions(
+        self,
+        session_id: str,
+    ) -> tuple[SessionRecord | None, SessionRecord | None]:
+        """Return the chronologically adjacent sessions without hydrating recordings."""
+        with self._lock:
+            sessions = sorted(self._sessions.values(), key=lambda session: session.started_at)
+            for index, session in enumerate(sessions):
+                if session.session_id != session_id:
+                    continue
+                previous = sessions[index - 1] if index else None
+                following = sessions[index + 1] if index + 1 < len(sessions) else None
+                return (
+                    previous.model_copy(deep=True) if previous else None,
+                    following.model_copy(deep=True) if following else None,
+                )
+        return None, None
+
     def queue_event_snapshots(self, session_id: str) -> int:
         with self._lock:
             session = self._sessions.get(session_id)

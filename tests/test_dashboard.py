@@ -1260,6 +1260,31 @@ async def test_review_status_endpoint_updates_session_and_rejects_unknown_sessio
 
 
 @pytest.mark.asyncio
+async def test_session_review_links_to_chronologically_adjacent_sessions(
+    tmp_path, dashboard_database_url
+):
+    app = _make_app(tmp_path, dashboard_database_url)
+    started_at = datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc)
+    for offset, session_id in enumerate(("older", "current", "newer")):
+        app.state.store.register_session(
+            SessionRecord(
+                session_id=session_id,
+                station_id="nuc-01",
+                turma="ES2025-T1",
+                assessment=session_id,
+                started_at=started_at + timedelta(minutes=offset),
+            )
+        )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.get("/sessions/current")
+
+    assert response.status_code == 200
+    assert 'href="/sessions/older"' in response.text
+    assert 'href="/sessions/newer"' in response.text
+
+
+@pytest.mark.asyncio
 async def test_roster_upload_endpoint_imports_csv_and_resolves_names_in_ui(
     tmp_path, dashboard_database_url
 ):

@@ -1,24 +1,54 @@
 {% extends "base.html" %}
 {% block content %}
 <section class="panel session-summary">
-  <div class="session-summary-head">
-    <div class="session-summary-heading">
-      {% if student_photo_urls %}
-      <img
-        class="student-photo"
-        src="{{ student_photo_urls[0] }}"
-        data-photo-candidates='{{ student_photo_urls[1:] | tojson }}'
-        onerror="tryNextStudentPhoto(this)"
-        alt="Foto de {{ session.student.student_name if session.student else 'aluno' }}"
-      >
-      {% endif %}
-      <div>
-        <p class="eyebrow">Revisão da avaliação</p>
-        <h1>{{ session.assessment }}</h1>
-        <p>{{ session.turma }}</p>
+  <div class="session-review-navigation">
+    {% if previous_session %}
+    <a
+      class="session-nav-arrow"
+      href="/sessions/{{ previous_session.session_id }}"
+      aria-label="Sessão anterior"
+      title="Sessão anterior: {{ previous_session.assessment }}"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14 5-7 7 7 7"/></svg>
+    </a>
+    {% else %}
+    <span class="session-nav-arrow disabled" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m14 5-7 7 7 7"/></svg>
+    </span>
+    {% endif %}
+    <div class="session-summary-head">
+      <div class="session-summary-heading">
+        {% if student_photo_urls %}
+        <img
+          class="student-photo"
+          src="{{ student_photo_urls[0] }}"
+          data-photo-candidates='{{ student_photo_urls[1:] | tojson }}'
+          onerror="tryNextStudentPhoto(this)"
+          alt="Foto de {{ session.student.student_name if session.student else 'aluno' }}"
+        >
+        {% endif %}
+        <div>
+          <p class="eyebrow">Revisão da avaliação</p>
+          <h1>{{ session.assessment }}</h1>
+          <p>{{ session.turma }}</p>
+        </div>
       </div>
+      <span class="session-status session-status-{{ session.status.value|lower }}">{{ status_label }}</span>
     </div>
-    <span class="session-status session-status-{{ session.status.value|lower }}">{{ status_label }}</span>
+    {% if next_session %}
+    <a
+      class="session-nav-arrow"
+      href="/sessions/{{ next_session.session_id }}"
+      aria-label="Próxima sessão"
+      title="Próxima sessão: {{ next_session.assessment }}"
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 5 7 7-7 7"/></svg>
+    </a>
+    {% else %}
+    <span class="session-nav-arrow disabled" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="m10 5 7 7-7 7"/></svg>
+    </span>
+    {% endif %}
   </div>
   <dl class="session-summary-grid">
     <div>
