@@ -1883,6 +1883,44 @@ def test_dashboard_store_sets_session_review_status(dashboard_database_url):
     assert store.set_session_review_status("missing", SessionReviewStatus.REVIEWED) is None
 
 
+def test_dashboard_snapshot_does_not_sign_recording_urls(dashboard_database_url):
+    class S3:
+        def __init__(self):
+            self.calls = 0
+
+        def generate_presigned_url(self, *_args, **_kwargs):
+            self.calls += 1
+            return "https://example.test/recording"
+
+    s3 = S3()
+    store = DashboardStore(
+        dashboard_database_url,
+        app_config=AppConfig(),
+        s3_client=s3,
+    )
+    store.register_session(
+        SessionRecord(
+            session_id="sess-1",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+            recordings=[
+                RecordingAsset(
+                    label="Câmera principal",
+                    s3_bucket="recordings",
+                    s3_key="sessions/sess-1/webcam_000.mp4",
+                )
+            ],
+        )
+    )
+
+    snapshot = store.snapshot()
+
+    assert s3.calls == 0
+    assert snapshot["sessions"][0].recordings[0].url is None
+
+
 def test_session_record_migrates_legacy_cancelled_timeout_status():
     session = SessionRecord.model_validate(
         {

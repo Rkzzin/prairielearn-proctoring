@@ -62,7 +62,9 @@ class DashboardStore:
                 for station in sorted(self._stations.values(), key=lambda item: item.station_id)
             ]
             sessions = sorted(
-                (self._hydrate_session(session) for session in self._sessions.values()),
+                # The dashboard overview never renders recording URLs. Signing every
+                # recording here makes each heartbeat and status change depend on S3.
+                (session.model_copy(deep=True) for session in self._sessions.values()),
                 key=lambda item: item.started_at,
                 reverse=True,
             )
@@ -1058,6 +1060,8 @@ class DashboardStore:
         self._subscribers.discard(queue)
 
     def _broadcast(self) -> None:
+        if not self._subscribers:
+            return
         payload = self.snapshot()
         for queue in list(self._subscribers):
             try:
