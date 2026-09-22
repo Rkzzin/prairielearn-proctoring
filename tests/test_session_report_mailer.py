@@ -1,6 +1,9 @@
 from datetime import UTC, datetime, timedelta
 from email import policy
 from email.parser import BytesParser
+from io import BytesIO
+
+from PIL import Image
 
 from src.dashboard.models import (
     EventSeverity,
@@ -90,6 +93,37 @@ def test_mailer_uses_gmail_smtp_for_gmail_reports():
     assert smtp.sent is message
 
 
+def test_mailer_explains_when_alert_images_do_not_fit_in_report():
+    now = datetime.now(UTC)
+    session = SessionRecord(
+        session_id="session-1",
+        station_id="nuc-01",
+        turma="T1",
+        assessment="Quiz",
+        started_at=now,
+        student=StudentInfo(student_id="alice1", student_name="Alice"),
+    )
+    report = SessionEmailReport(
+        session_id=session.session_id,
+        sender_email="proctor@example.edu",
+        recipient_emails=["teacher@example.edu"],
+        image_link_limit=1,
+        ses_region="sa-east-1",
+        public_dashboard_url="https://dashboard.example.edu",
+    )
+
+    message = SessionReportMailer._build_message(
+        report,
+        session,
+        [],
+        available_snapshot_count=2,
+    )
+
+    html_message = message.get_payload()[-1].get_content()
+    assert "Foram mostradas 0 de 2 imagem(ns) de alerta." in html_message
+    assert "Há mais 2 alerta(s) disponível(is) na revisão completa." in html_message
+
+
 def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     now = datetime(2026, 9, 15, 21, 2, 3, tzinfo=UTC)
     events = [
@@ -147,6 +181,11 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         def read_event_snapshot_image(self, _snapshot):
             return b"jpeg-image"
 
+        def read_student_photo(self, _turma, _student_id):
+            output = BytesIO()
+            Image.new("RGB", (1, 1), "white").save(output, format="PNG")
+            return output.getvalue()
+
         def finish_email_report(self, value, **kwargs):
             self.finished = (value, kwargs)
 
@@ -182,9 +221,13 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     assert ses.request["Destinations"] == ["teacher@example.edu"]
     assert message["To"] == "teacher@example.edu"
     assert "Resumo da avaliação" in raw_message
+    assert "Nome do aluno: Alice" in raw_message
+    assert "Usuário: alice1" in raw_message
     assert "Início da prova: 15/09/2026 às 18:02:03" in raw_message
     assert "ELECTRONIC_DEVICE_DETECTED" not in raw_message
     assert 'src="cid:snapshot-1@proctoring"' in raw_message
+    assert 'src="cid:student-photo@proctoring"' in raw_message
+    assert "Foram mostradas todas as 1 imagem(ns) de alerta disponíveis." in raw_message
     assert html_message.index("Abrir revisão completa") < html_message.index(
         "Imagens selecionadas"
     )
@@ -193,7 +236,8 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         in raw_message
     )
     image_parts = [part for part in message.walk() if part.get_content_type() == "image/jpeg"]
-    assert len(image_parts) == 1
-    assert image_parts[0].get_content() == b"jpeg-image"
-    assert image_parts[0]["Content-ID"] == "<snapshot-1@proctoring>"
+    assert len(image_parts) == 2
+    assert image_parts[0]["Content-ID"] == "<student-photo@proctoring>"
+    assert image_parts[1].get_content() == b"jpeg-image"
+    assert image_parts[1]["Content-ID"] == "<snapshot-1@proctoring>"
     assert store.finished == (report, {"message_id": "ses-123"})

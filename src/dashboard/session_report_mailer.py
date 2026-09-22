@@ -10,11 +10,13 @@ import threading
 from collections import Counter
 from email.message import EmailMessage
 from email.utils import make_msgid
+from io import BytesIO
 from types import SimpleNamespace
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import boto3
+from PIL import Image
 
 from src.dashboard.integrity_score import compute_integrity_score
 from src.dashboard.models import EventSeverity, EventSnapshotRecord, SessionEmailReport
@@ -121,12 +123,23 @@ class SessionReportMailer:
             session = self._store.get_session(session_id)
             if report is None or session is None:
                 return
-            snapshots = self._select_snapshots(
-                self._store.list_event_snapshots(session_id),
-                report.image_link_limit,
+            available_snapshots = self._store.list_event_snapshots(session_id)
+            snapshots = self._select_snapshots(available_snapshots, report.image_link_limit)
+            student_photo = self._load_student_photo(session)
+            inline_images = self._load_inline_images(
+                snapshots,
+                max_bytes=_MAX_INLINE_IMAGE_BYTES - len(student_photo or b""),
             )
-            inline_images = self._load_inline_images(snapshots)
-            message = self._build_message(report, session, snapshots, inline_images)
+            message = self._build_message(
+                report,
+                session,
+                snapshots,
+                inline_images,
+                student_photo=student_photo,
+                available_snapshot_count=sum(
+                    snapshot.status == "ready" for snapshot in available_snapshots
+                ),
+            )
             message_id = self._send_message(report, message)
             self._store.finish_email_report(
                 report,
@@ -203,6 +216,8 @@ class SessionReportMailer:
     def _load_inline_images(
         self,
         snapshots: list[EventSnapshotRecord],
+        *,
+        max_bytes: int,
     ) -> dict[str, bytes]:
         images: dict[str, bytes] = {}
         total_bytes = 0
@@ -216,11 +231,32 @@ class SessionReportMailer:
                     exc_info=True,
                 )
                 continue
-            if not image or total_bytes + len(image) > _MAX_INLINE_IMAGE_BYTES:
+            if not image or total_bytes + len(image) > max(0, max_bytes):
                 continue
             images[snapshot.event_key] = image
             total_bytes += len(image)
         return images
+
+    def _load_student_photo(self, session) -> bytes | None:
+        if session.student is None:
+            return None
+        try:
+            image = self._store.read_student_photo(session.turma, session.student.student_id)
+            if not image:
+                return None
+            with Image.open(BytesIO(image)) as source:
+                source = source.convert("RGB")
+                source.thumbnail((480, 480))
+                output = BytesIO()
+                source.save(output, format="JPEG", quality=85, optimize=True)
+            return output.getvalue()
+        except Exception:
+            logger.warning(
+                "Falha ao carregar foto cadastrada para a sessão %s",
+                session.session_id,
+                exc_info=True,
+            )
+            return None
 
     @staticmethod
     def _build_message(
@@ -228,6 +264,9 @@ class SessionReportMailer:
         session,
         snapshots,
         inline_images: dict[str, bytes] | None = None,
+        *,
+        student_photo: bytes | None = None,
+        available_snapshot_count: int | None = None,
     ) -> EmailMessage:
         inline_images = inline_images or {}
         base_url = report.public_dashboard_url.rstrip("/")
@@ -241,7 +280,10 @@ class SessionReportMailer:
             event.severity == EventSeverity.CRITICAL for event in all_flagged
         )
         warning_count = len(all_flagged) - critical_count
-        omitted_count = max(0, len(all_flagged) - len(snapshots))
+        available_snapshot_count = (
+            len(snapshots) if available_snapshot_count is None else available_snapshot_count
+        )
+        omitted_count = max(0, available_snapshot_count - len(snapshots))
         counts = Counter(event.event_type for event in all_flagged)
         integrity = compute_integrity_score(session)
         student_name = session.student.student_name if session.student else "Não identificado"
@@ -252,6 +294,14 @@ class SessionReportMailer:
         rows = []
         text_rows = []
         related_images = []
+        student_photo_html = ""
+        if student_photo:
+            student_photo_html = (
+                '<p><strong>Foto cadastrada</strong><br>'
+                '<img src="cid:student-photo@proctoring" alt="Foto cadastrada do aluno" '
+                'style="display:block;max-width:180px;width:100%;height:auto;border-radius:6px"></p>'
+            )
+            related_images.append(("student-photo@proctoring", "foto-cadastrada.jpg", student_photo))
         for index, snapshot in enumerate(snapshots, start=1):
             label = _EVENT_LABELS.get(snapshot.event_type, snapshot.event_type)
             image_url = (
@@ -291,10 +341,20 @@ class SessionReportMailer:
             f"<li>{html.escape(_EVENT_LABELS.get(event_type, event_type))}: {count}</li>"
             for event_type, count in sorted(counts.items())
         ) or "<li>Nenhum alerta registrado</li>"
+        image_summary = (
+            f"Foram mostradas todas as {available_snapshot_count} imagem(ns) de alerta disponíveis."
+            if omitted_count == 0
+            else (
+                f"Foram mostradas {len(snapshots)} de {available_snapshot_count} imagem(ns) de alerta. "
+                f"Há mais {omitted_count} alerta(s) disponível(is) na revisão completa."
+            )
+        )
         html_body = f"""
         <html><body style="font-family:Arial,sans-serif;color:#1d2a33">
           <h1>Resumo da avaliação</h1>
-          <p><strong>Aluno:</strong> {html.escape(student_name)} ({html.escape(student_id)})</p>
+           <p><strong>Nome do aluno:</strong> {html.escape(student_name)}<br>
+              <strong>Usuário:</strong> {html.escape(student_id)}</p>
+           {student_photo_html}
           <p><strong>Turma:</strong> {html.escape(session.turma)}<br>
              <strong>Avaliação:</strong> {html.escape(session.assessment)}<br>
              <strong>Estação:</strong> {html.escape(session.station_id)}<br>
@@ -309,13 +369,14 @@ class SessionReportMailer:
             <thead><tr><th>Momento</th><th>Alerta</th><th>Severidade</th><th>Imagem</th></tr></thead>
             <tbody>{''.join(rows) or '<tr><td colspan="4">Nenhuma imagem disponível</td></tr>'}</tbody>
           </table>
-          {f'<p>Mais {omitted_count} alerta(s) estão disponíveis na revisão completa.</p>' if omitted_count else ''}
+          <p>{html.escape(image_summary)}</p>
         </body></html>
         """
         text_body = "\n".join(
             [
                 "Resumo da avaliação",
-                f"Aluno: {student_name} ({student_id})",
+                f"Nome do aluno: {student_name}",
+                f"Usuário: {student_id}",
                 f"Turma: {session.turma}",
                 f"Avaliação: {session.assessment}",
                 f"Estação: {session.station_id}",
@@ -323,13 +384,15 @@ class SessionReportMailer:
                 f"Índice de integridade: {integrity.score} ({integrity.band})",
                 f"Alertas: {critical_count} críticos, {warning_count} warnings",
                 *text_rows,
-                f"Alertas adicionais na revisão: {omitted_count}",
+                f"Resumo das imagens: {image_summary}",
                 f"Revisão completa: {session_url}",
             ]
         )
 
         message = EmailMessage()
-        message["Subject"] = f"Relatório da avaliação - {session.assessment} - {student_name}"
+        message["Subject"] = (
+            f"Relatório da avaliação - {session.assessment} - {student_name} ({student_id})"
+        )
         message["From"] = report.sender_email
         message["To"] = ", ".join(report.recipient_emails)
         message.set_content(text_body)
