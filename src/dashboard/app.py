@@ -43,6 +43,7 @@ from src.core.config import AppConfig
 from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
 from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.event_snapshot_processor import EventSnapshotProcessor
+from src.dashboard.gmail_oauth import GmailOAuth, GmailOAuthError
 from src.dashboard.integrity_score import compute_integrity_score
 from src.dashboard.models import (
     CameraSnapshotPayload,
@@ -147,7 +148,11 @@ def create_app(
     #: aluno importado via CSV do gradebook. Ver /api/roster/upload.
     templates.env.globals["roster_name"] = dashboard_store.roster_name
     auth_username = app_config.dashboard.admin_user
-    report_mailer = session_report_mailer or SessionReportMailer(store=dashboard_store)
+    gmail_oauth = GmailOAuth(store=dashboard_store, dashboard_config=app_config.dashboard)
+    report_mailer = session_report_mailer or SessionReportMailer(
+        store=dashboard_store,
+        gmail_oauth=gmail_oauth,
+    )
     snapshot_processor = event_snapshot_processor or EventSnapshotProcessor(
         store=dashboard_store,
         app_config=app_config,
@@ -169,6 +174,7 @@ def create_app(
     app.state.s3_enrollment_service = S3EnrollmentService(app_config)
     app.state.event_snapshot_processor = snapshot_processor
     app.state.session_report_mailer = report_mailer
+    app.state.gmail_oauth = gmail_oauth
     snapshot_processor.resume_pending()
     if auth_username:
         for session_id in dashboard_store.waiting_email_report_ids():
@@ -257,6 +263,7 @@ def create_app(
             "config.html",
             title="Configurações distribuídas",
             notification_settings=dashboard_store.get_notification_settings(),
+            gmail_oauth_status=gmail_oauth.connection_status(),
             **snapshot,
         )
 
@@ -724,7 +731,7 @@ def create_app(
             or not email_pattern.fullmatch(sender)
             or not recipients
             or any(not email_pattern.fullmatch(email) for email in recipients)
-            or not payload.ses_region.strip()
+            or (payload.delivery_provider == "ses" and not payload.ses_region.strip())
             or parsed_public_url.scheme != "https"
             or not parsed_public_url.hostname
             or parsed_public_url.username is not None
@@ -735,9 +742,16 @@ def create_app(
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "Informe remetente, destinatários, região SES e URL pública HTTPS válidos."
+                    "Informe remetente, destinatários e URL pública HTTPS válidos."
                 ),
             )
+        if payload.enabled and payload.delivery_provider == "gmail":
+            status = gmail_oauth.connection_status()
+            if not status["connected"] or sender != status["email"]:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Conecte corsiferrao@gmail.com e use-o como remetente antes de ativar o Gmail.",
+                )
         normalized = payload.model_copy(
             update={
                 "sender_email": sender,
@@ -748,6 +762,35 @@ def create_app(
         )
         saved = dashboard_store.save_notification_settings(normalized)
         return JSONResponse(saved.model_dump(mode="json"))
+
+    @app.get("/api/notification-settings/gmail/connect")
+    async def connect_gmail() -> RedirectResponse:
+        try:
+            return RedirectResponse(gmail_oauth.authorization_url(), status_code=303)
+        except GmailOAuthError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/api/notification-settings/gmail/callback")
+    async def gmail_callback(code: str | None = None, state: str | None = None, error: str | None = None):
+        if error:
+            return HTMLResponse(f"Autorização Google cancelada: {error}", status_code=400)
+        if not code or not state:
+            return HTMLResponse("Resposta de autorização Google inválida.", status_code=400)
+        try:
+            await anyio.to_thread.run_sync(lambda: gmail_oauth.connect(code=code, state=state))
+        except GmailOAuthError as exc:
+            return HTMLResponse(str(exc), status_code=400)
+        return RedirectResponse("/config?gmail=connected", status_code=303)
+
+    @app.post("/api/notification-settings/test")
+    async def test_notification_settings(request: Request) -> JSONResponse:
+        require_same_origin(request)
+        settings = dashboard_store.get_notification_settings()
+        try:
+            await anyio.to_thread.run_sync(report_mailer.send_test, settings)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return JSONResponse({"status": "sent"})
 
     @app.post("/api/sessions/{session_id}/events")
     async def append_session_events(

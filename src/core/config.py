@@ -375,6 +375,22 @@ class DashboardConfig(BaseSettings):
             "autenticar quando `enabled=true`."
         ),
     )
+    google_oauth_client_id: str | None = Field(
+        default=None,
+        description="Client ID OAuth 2.0 do Google usado pelo envio Gmail do dashboard.",
+    )
+    google_oauth_client_secret: str | None = Field(
+        default=None,
+        description="Client secret OAuth 2.0 do Google; nunca persista no banco ou na interface.",
+    )
+    google_oauth_redirect_uri: str | None = Field(
+        default=None,
+        description="URL HTTPS de callback cadastrada no Google Cloud para o dashboard.",
+    )
+    google_oauth_encryption_key: str | None = Field(
+        default=None,
+        description="Chave Fernet que cifra o refresh token OAuth do Gmail no banco.",
+    )
 
     model_config = SettingsConfigDict(
         env_prefix="PROCTOR_DASHBOARD_",

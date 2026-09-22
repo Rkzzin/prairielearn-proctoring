@@ -7,12 +7,15 @@ import logging
 import threading
 from collections import Counter
 from email.message import EmailMessage
+from email.utils import make_msgid
+from types import SimpleNamespace
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 import boto3
 
 from src.dashboard.integrity_score import compute_integrity_score
+from src.dashboard.gmail_oauth import GmailOAuth
 from src.dashboard.models import EventSeverity, EventSnapshotRecord, SessionEmailReport
 from src.dashboard.store import DashboardStore
 
@@ -40,11 +43,13 @@ class SessionReportMailer:
         *,
         store: DashboardStore,
         ses_client_factory=None,
+        gmail_oauth: GmailOAuth | None = None,
     ):
         self._store = store
         self._ses_client_factory = ses_client_factory or (
             lambda region: boto3.client("ses", region_name=region)
         )
+        self._gmail_oauth = gmail_oauth
         self._lock = threading.Lock()
         self._running: set[str] = set()
 
@@ -79,13 +84,16 @@ class SessionReportMailer:
         for session_id in self._store.pending_email_report_ids():
             self._start(session_id)
 
-    @staticmethod
-    def _valid_settings(settings) -> bool:
-        return bool(
-            settings.enabled
-            and settings.sender_email
-            and settings.recipient_emails
-        )
+    def _valid_settings(self, settings) -> bool:
+        return settings.enabled and self._has_delivery_config(settings)
+
+    def _has_delivery_config(self, settings) -> bool:
+        configured = bool(settings.sender_email and settings.recipient_emails)
+        if settings.delivery_provider == "gmail":
+            return configured and self._gmail_oauth is not None and bool(
+                self._gmail_oauth.connection_status()["connected"]
+            )
+        return configured
 
     def _start(self, session_id: str) -> None:
         with self._lock:
@@ -112,14 +120,10 @@ class SessionReportMailer:
             )
             inline_images = self._load_inline_images(snapshots)
             message = self._build_message(report, session, snapshots, inline_images)
-            response = self._ses_client_factory(report.ses_region).send_raw_email(
-                Source=report.sender_email,
-                Destinations=report.recipient_emails,
-                RawMessage={"Data": message.as_bytes()},
-            )
+            message_id = self._send_message(report, message)
             self._store.finish_email_report(
                 report,
-                message_id=str(response.get("MessageId") or ""),
+                message_id=message_id,
             )
         except Exception as exc:
             logger.exception("Falha ao enviar relatório da sessão %s", session_id)
@@ -128,6 +132,35 @@ class SessionReportMailer:
         finally:
             with self._lock:
                 self._running.discard(session_id)
+
+    def send_test(self, settings) -> None:
+        if not self._has_delivery_config(settings):
+            raise RuntimeError("Configure e conecte o provedor de e-mail antes do teste.")
+        message = EmailMessage()
+        message["Subject"] = "Teste de e-mail do Proctoring"
+        message["From"] = settings.sender_email
+        message["To"] = ", ".join(settings.recipient_emails)
+        message["Message-ID"] = make_msgid(domain="proctoring.local")
+        message.set_content("O envio de e-mail do dashboard está configurado corretamente.")
+        report = SimpleNamespace(
+            delivery_provider=settings.delivery_provider,
+            ses_region=settings.ses_region,
+            sender_email=settings.sender_email,
+            recipient_emails=settings.recipient_emails,
+        )
+        self._send_message(report, message)
+
+    def _send_message(self, report, message: EmailMessage) -> str:
+        if report.delivery_provider == "gmail":
+            if self._gmail_oauth is None:
+                raise RuntimeError("O transporte Gmail não está configurado.")
+            return self._gmail_oauth.send(message)
+        response = self._ses_client_factory(report.ses_region).send_raw_email(
+            Source=report.sender_email,
+            Destinations=report.recipient_emails,
+            RawMessage={"Data": message.as_bytes()},
+        )
+        return str(response.get("MessageId") or "")
 
     @staticmethod
     def _select_snapshots(
