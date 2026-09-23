@@ -1045,6 +1045,7 @@ class SessionManager:
                     self._open_preview_camera(self._capture.preview_url)
                     self._start_preview_watchdog()
                     self._apply_runtime_cpu_affinity()
+                self._set_connected_displays_to_max_brightness()
                 self._lockdown.enable()
                 if self._kiosk is not None and not getattr(self._kiosk, "is_running", False):
                     self._kiosk.start(cfg.prairielearn_url, allowlist=cfg.allowlist)
@@ -1124,6 +1125,55 @@ class SessionManager:
                 elif self._mode == StationMode.WAITING_STUDENT:
                     self._show_waiting_overlay()
                 raise
+
+    def _set_connected_displays_to_max_brightness(self) -> None:
+        """Restores full X11 brightness for every monitor used in an exam."""
+        try:
+            result = subprocess.run(
+                ["xrandr", "--display", self._rec_cfg.display, "--query"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Não foi possível consultar o brilho dos monitores: %s", exc)
+            return
+        if result.returncode != 0:
+            logger.warning("xrandr falhou ao consultar monitores: %s", result.stderr.strip())
+            return
+
+        outputs = [
+            line.split(maxsplit=1)[0]
+            for line in result.stdout.splitlines()
+            if " connected" in line
+        ]
+        for output in outputs:
+            try:
+                result = subprocess.run(
+                    [
+                        "xrandr",
+                        "--display",
+                        self._rec_cfg.display,
+                        "--output",
+                        output,
+                        "--brightness",
+                        "1",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    check=False,
+                )
+            except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+                logger.warning("Não foi possível ajustar brilho de %s: %s", output, exc)
+                continue
+            if result.returncode != 0:
+                logger.warning(
+                    "xrandr falhou ao ajustar brilho de %s: %s",
+                    output,
+                    result.stderr.strip(),
+                )
 
     def stop_session(self, *, reason: str = "manual") -> dict[str, Any]:
         with self._lock:

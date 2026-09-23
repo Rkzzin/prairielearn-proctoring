@@ -348,6 +348,47 @@ def _make_manager(
     return manager, fake_recognizer, fake_engine, fake_capture, fake_uploader, fake_kiosk, fake_overlay, fake_lockdown, fake_camera
 
 
+def test_session_manager_sets_all_connected_displays_to_max_brightness(monkeypatch):
+    manager, *_ = _make_manager(identify_results=[], engine_states=[], frames=[])
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        if "--query" in command:
+            return SimpleNamespace(
+                returncode=0,
+                stdout="HDMI-1 connected 1920x1080\nDP-1 disconnected\neDP-1 connected\n",
+                stderr="",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr("src.core.session.subprocess.run", run)
+
+    manager._set_connected_displays_to_max_brightness()
+
+    assert commands == [
+        ["xrandr", "--display", ":0", "--query"],
+        [
+            "xrandr",
+            "--display",
+            ":0",
+            "--output",
+            "HDMI-1",
+            "--brightness",
+            "1",
+        ],
+        [
+            "xrandr",
+            "--display",
+            ":0",
+            "--output",
+            "eDP-1",
+            "--brightness",
+            "1",
+        ],
+    ]
+
+
 def test_session_manager_start_and_stop_manual_session():
     manager, recognizer, engine, capture, uploader, kiosk, overlay, lockdown, camera = _make_manager(
         identify_results=[
