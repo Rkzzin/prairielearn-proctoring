@@ -1127,7 +1127,22 @@ class SessionManager:
                 raise
 
     def _set_connected_displays_to_max_brightness(self) -> None:
-        """Restores full X11 brightness for every monitor used in an exam."""
+        """Restores physical and X11 brightness for every monitor used in an exam."""
+        try:
+            hardware_result = subprocess.run(
+                ["sudo", "-n", "/usr/local/sbin/proctor-set-display-brightness"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if hardware_result.returncode != 0:
+                logger.warning(
+                    "Não foi possível ajustar o backlight físico: %s",
+                    hardware_result.stderr.strip(),
+                )
+        except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+            logger.warning("Não foi possível ajustar o backlight físico: %s", exc)
         try:
             result = subprocess.run(
                 ["xrandr", "--display", self._rec_cfg.display, "--query"],

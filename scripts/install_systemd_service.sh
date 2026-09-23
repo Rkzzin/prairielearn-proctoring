@@ -24,6 +24,8 @@ RUN_UID="$(id -u "$RUN_USER")"
 XAUTHORITY_PATH="/run/user/$RUN_UID/gdm/Xauthority"
 UNIT_PATH="/etc/systemd/system/$SERVICE_NAME"
 SUDOERS_PATH="/etc/sudoers.d/proctor-dashboard-reboot"
+BRIGHTNESS_HELPER="/usr/local/sbin/proctor-set-display-brightness"
+BRIGHTNESS_SUDOERS_PATH="/etc/sudoers.d/proctor-display-brightness"
 TMP_UNIT="$(mktemp)"
 
 if [[ ! -x "$PYTHON_BIN" ]]; then
@@ -45,6 +47,11 @@ chown -R "$RUN_USER":"$RUN_USER" "$DATA_DIR"
 printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl reboot\n' "$RUN_USER" >"$SUDOERS_PATH"
 chmod 440 "$SUDOERS_PATH"
 visudo -cf "$SUDOERS_PATH"
+
+install -m 755 "$PROJECT_DIR/scripts/proctor_set_display_brightness.sh" "$BRIGHTNESS_HELPER"
+printf '%s ALL=(root) NOPASSWD: %s\n' "$RUN_USER" "$BRIGHTNESS_HELPER" >"$BRIGHTNESS_SUDOERS_PATH"
+chmod 440 "$BRIGHTNESS_SUDOERS_PATH"
+visudo -cf "$BRIGHTNESS_SUDOERS_PATH"
 
 cat >"$TMP_UNIT" <<EOF
 [Unit]

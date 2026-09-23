@@ -367,6 +367,7 @@ def test_session_manager_sets_all_connected_displays_to_max_brightness(monkeypat
     manager._set_connected_displays_to_max_brightness()
 
     assert commands == [
+        ["sudo", "-n", "/usr/local/sbin/proctor-set-display-brightness"],
         ["xrandr", "--display", ":0", "--query"],
         [
             "xrandr",
