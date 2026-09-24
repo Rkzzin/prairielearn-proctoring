@@ -158,6 +158,17 @@ input, textarea, select, button {
   padding: 10px 12px;
   font: inherit;
 }
+/* Esconde as setinhas nativas de <input type="number"> — quebravam o
+   alinhamento visual com os campos de texto ao lado (ex.: grid de
+   notificações em /config). O valor ainda pode ser digitado normalmente. */
+input[type="number"] {
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
 button {
   cursor: pointer;
   background: var(--accent);
