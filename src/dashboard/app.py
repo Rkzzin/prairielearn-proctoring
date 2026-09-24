@@ -6,12 +6,11 @@ import base64
 import binascii
 import csv
 import hashlib
-import hmac
 import json
 import re
 import secrets
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -41,7 +40,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from src.core.config import AppConfig
-from src.dashboard.auth import hash_password, parse_basic_auth, verify_password
+from src.dashboard.auth import (
+    SESSION_COOKIE_NAME,
+    generate_session_token,
+    hash_password,
+    hash_session_token,
+    verify_password,
+)
 from src.dashboard.enrollment_service import S3EnrollmentError, S3EnrollmentService
 from src.dashboard.event_snapshot_processor import EventSnapshotProcessor
 from src.dashboard.integrity_score import compute_integrity_score
@@ -187,27 +192,29 @@ def create_app(
 
     if auth_username:
         admin_password = app_config.dashboard.admin_password
-        if admin_password and dashboard_store.get_credential_hash(auth_username) is None:
-            dashboard_store.ensure_credential(auth_username, hash_password(admin_password))
+        if admin_password and dashboard_store.get_dashboard_user_credential(auth_username) is None:
+            dashboard_store.ensure_dashboard_user(
+                auth_username,
+                hash_password(admin_password),
+                app_config.dashboard.admin_display_name or auth_username,
+            )
 
         @app.middleware("http")
-        async def require_basic_auth(request: Request, call_next):
+        async def require_session_cookie(request: Request, call_next):
             if _is_station_route(request.method, request.url.path):
                 return await call_next(request)
+            if request.url.path in {"/login", "/logout"} or request.url.path.startswith("/static/"):
+                return await call_next(request)
 
-            stored_hash = dashboard_store.get_credential_hash(auth_username)
-            credentials = parse_basic_auth(request.headers.get("authorization"))
-            authenticated = (
-                stored_hash is not None
-                and credentials is not None
-                and hmac.compare_digest(credentials[0], auth_username)
-                and verify_password(credentials[1], stored_hash)
-            )
-            if not authenticated:
-                return Response(
-                    status_code=401,
-                    headers={"WWW-Authenticate": 'Basic realm="proctor-dashboard"'},
+            token = request.cookies.get(SESSION_COOKIE_NAME)
+            session = dashboard_store.get_dashboard_session(hash_session_token(token)) if token else None
+            if session is None:
+                if request.url.path.startswith("/api/") or request.url.path.startswith("/partials/"):
+                    return JSONResponse({"detail": "Login necessário."}, status_code=401)
+                return RedirectResponse(
+                    f"/login?next={request.url.path}", status_code=303
                 )
+            request.state.dashboard_user = session
             return await call_next(request)
 
     async def require_station_token(request: Request) -> str:
@@ -245,6 +252,53 @@ def create_app(
             name=template_name,
             context=context,
         )
+
+    @app.get("/login", response_class=HTMLResponse)
+    async def login_page(request: Request, next: str = "/", error: str | None = None) -> HTMLResponse:
+        if not auth_username:
+            return RedirectResponse("/", status_code=303)
+        return render_template(request, "login.html", title="Login", next=next, error=error)
+
+    @app.post("/login")
+    async def login_submit(
+        request: Request,
+        username: str = Form(...),
+        password: str = Form(...),
+        next: str = Form("/"),
+    ) -> Response:
+        if not auth_username:
+            return RedirectResponse("/", status_code=303)
+        credential = dashboard_store.get_dashboard_user_credential(username.strip())
+        authenticated = credential is not None and verify_password(password, credential["password_hash"])
+        if not authenticated:
+            return RedirectResponse(
+                f"/login?next={next}&error=1", status_code=303
+            )
+        token = generate_session_token()
+        #: 12h — cobre um dia de plantão sem forçar login de novo no meio da
+        #: correção; expira sozinho depois disso, sem rota de "lembrar-me".
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=12)
+        dashboard_store.create_dashboard_session(hash_session_token(token), username.strip(), expires_at)
+        response = RedirectResponse(next or "/", status_code=303)
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            token,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+            max_age=int(timedelta(hours=12).total_seconds()),
+            path="/",
+        )
+        return response
+
+    @app.post("/logout")
+    async def logout(request: Request) -> Response:
+        token = request.cookies.get(SESSION_COOKIE_NAME)
+        if token:
+            dashboard_store.delete_dashboard_session(hash_session_token(token))
+        response = RedirectResponse("/login", status_code=303)
+        response.delete_cookie(SESSION_COOKIE_NAME, path="/")
+        return response
 
     @app.get("/", response_class=HTMLResponse)
     async def dashboard_home(request: Request) -> HTMLResponse:
@@ -661,7 +715,12 @@ def create_app(
         payload: SessionReviewStatusPayload,
     ) -> JSONResponse:
         require_same_origin(request)
-        session = dashboard_store.set_session_review_status(session_id, payload.review_status)
+        reviewer = getattr(request.state, "dashboard_user", None)
+        session = dashboard_store.set_session_review_status(
+            session_id,
+            payload.review_status,
+            reviewed_by=reviewer["display_name"] if reviewer else None,
+        )
         if session is None:
             raise HTTPException(status_code=404, detail="Sessão não encontrada.")
         return JSONResponse(session.model_dump(mode="json"))
@@ -889,17 +948,14 @@ def create_app(
     async def stations_websocket(websocket: WebSocket) -> None:
         origin = websocket.headers.get("origin")
         host = websocket.headers.get("host")
-        stored_hash = dashboard_store.get_credential_hash(auth_username) if auth_username else None
-        credentials = parse_basic_auth(websocket.headers.get("authorization"))
+        token = websocket.cookies.get(SESSION_COOKIE_NAME)
+        session = dashboard_store.get_dashboard_session(hash_session_token(token)) if token else None
         if (
             not auth_username
             or not origin
             or not host
             or not re.fullmatch(rf"https?://{re.escape(host)}", origin.rstrip("/"))
-            or stored_hash is None
-            or credentials is None
-            or not hmac.compare_digest(credentials[0], auth_username)
-            or not verify_password(credentials[1], stored_hash)
+            or session is None
         ):
             await websocket.close(code=1008)
             return

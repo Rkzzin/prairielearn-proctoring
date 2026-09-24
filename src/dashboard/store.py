@@ -770,13 +770,27 @@ class DashboardStore:
         return result
 
     def set_session_review_status(
-        self, session_id: str, review_status: SessionReviewStatus
+        self,
+        session_id: str,
+        review_status: SessionReviewStatus,
+        *,
+        reviewed_by: str | None = None,
     ) -> SessionRecord | None:
+        """Grava o status de revisão e, se informado, quem revisou.
+
+        `reviewed_by` é o `display_name` do usuário logado (ver
+        `get_dashboard_session`) — None quando o dashboard roda sem nenhum
+        usuário autenticado (não deveria acontecer em produção, mas a rota
+        não trava por causa disso).
+        """
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
             session.review_status = review_status
+            if reviewed_by is not None:
+                session.reviewed_by = reviewed_by
+                session.reviewed_at = datetime.now(timezone.utc)
             result = session.model_copy(deep=True)
             self._save_session(session)
 
@@ -1178,12 +1192,6 @@ class DashboardStore:
             )
             """,
             """
-            CREATE TABLE IF NOT EXISTS credentials (
-              username TEXT PRIMARY KEY,
-              password_hash TEXT NOT NULL
-            )
-            """,
-            """
             CREATE TABLE IF NOT EXISTS station_tokens (
               station_id TEXT PRIMARY KEY,
               token_hash TEXT NOT NULL,
@@ -1199,26 +1207,113 @@ class DashboardStore:
               PRIMARY KEY (turma, login)
             )
             """,
+            #: Cadastro fechado: só entra aqui via
+            #: `scripts/manage_dashboard_user.py` (ou o seed do primeiro
+            #: usuário a partir do `.env`, ver `create_app`). Sem rota de
+            #: signup e sem coluna de permissão — todo usuário cadastrado
+            #: enxerga e faz tudo que o painel oferece.
+            """
+            CREATE TABLE IF NOT EXISTS dashboard_users (
+              username TEXT PRIMARY KEY,
+              password_hash TEXT NOT NULL,
+              display_name TEXT NOT NULL,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+            """,
+            #: Sessão de cookie do login do painel — só o hash do token vai
+            #: pro cookie; `token_hash` aqui é o que se compara. Expira por
+            #: `expires_at`, checado em `get_dashboard_session`.
+            """
+            CREATE TABLE IF NOT EXISTS dashboard_sessions (
+              token_hash TEXT PRIMARY KEY,
+              username TEXT NOT NULL REFERENCES dashboard_users (username) ON DELETE CASCADE,
+              created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+              expires_at TIMESTAMPTZ NOT NULL
+            )
+            """,
         ):
             self._db.execute(statement)
         self._db.commit()
 
-    def get_credential_hash(self, username: str) -> str | None:
-        with self._lock:
-            row = self._db.execute(
-                "SELECT password_hash FROM credentials WHERE username = %s",
-                (username,),
-            ).fetchone()
-        return row["password_hash"] if row else None
+    def ensure_dashboard_user(self, username: str, password_hash: str, display_name: str) -> None:
+        """Semeia o primeiro usuário do painel a partir do `.env` (ver `create_app`).
 
-    def ensure_credential(self, username: str, password_hash: str) -> None:
-        """Insere a credencial só se `username` ainda não existir (não sobrescreve)."""
+        Só insere se `username` ainda não existir — não sobrescreve senha nem
+        nome de exibição de um usuário já cadastrado (cadastro é fechado,
+        gerido por `scripts/manage_dashboard_user.py` depois do primeiro boot).
+        """
         with self._lock:
             self._db.execute(
-                "INSERT INTO credentials (username, password_hash) VALUES (%s, %s) "
-                "ON CONFLICT (username) DO NOTHING",
-                (username, password_hash),
+                "INSERT INTO dashboard_users (username, password_hash, display_name) "
+                "VALUES (%s, %s, %s) ON CONFLICT (username) DO NOTHING",
+                (username, password_hash, display_name),
             )
+            self._db.commit()
+
+    def upsert_dashboard_user(self, username: str, password_hash: str, display_name: str) -> None:
+        """Cria ou atualiza um usuário do painel — usado por `manage_dashboard_user.py`."""
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO dashboard_users (username, password_hash, display_name) "
+                "VALUES (%s, %s, %s) ON CONFLICT (username) DO UPDATE SET "
+                "password_hash = EXCLUDED.password_hash, display_name = EXCLUDED.display_name",
+                (username, password_hash, display_name),
+            )
+            self._db.commit()
+
+    def delete_dashboard_user(self, username: str) -> bool:
+        """Remove o usuário (e suas sessões de cookie, via `ON DELETE CASCADE`)."""
+        with self._lock:
+            cursor = self._db.execute("DELETE FROM dashboard_users WHERE username = %s", (username,))
+            self._db.commit()
+            return cursor.rowcount > 0
+
+    def get_dashboard_user_credential(self, username: str) -> dict[str, str] | None:
+        """Retorna `{password_hash, display_name}` de um usuário cadastrado, ou None."""
+        with self._lock:
+            row = self._db.execute(
+                "SELECT password_hash, display_name FROM dashboard_users WHERE username = %s",
+                (username,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_dashboard_users(self) -> list[dict[str, str]]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT username, display_name FROM dashboard_users ORDER BY username"
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_dashboard_session(
+        self, token_hash: str, username: str, expires_at: datetime
+    ) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO dashboard_sessions (token_hash, username, expires_at) "
+                "VALUES (%s, %s, %s)",
+                (token_hash, username, expires_at),
+            )
+            self._db.commit()
+
+    def get_dashboard_session(self, token_hash: str) -> dict[str, str] | None:
+        """Resolve um cookie de sessão válido (não expirado) pro usuário logado.
+
+        Retorna `{username, display_name}`, ou None se o token não existir,
+        já tiver expirado, ou o usuário correspondente já não existir mais
+        (`ON DELETE CASCADE` cobre isso, mas a checagem de `expires_at` não).
+        """
+        with self._lock:
+            row = self._db.execute(
+                "SELECT s.username, u.display_name FROM dashboard_sessions s "
+                "JOIN dashboard_users u ON u.username = s.username "
+                "WHERE s.token_hash = %s AND s.expires_at > now()",
+                (token_hash,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def delete_dashboard_session(self, token_hash: str) -> None:
+        with self._lock:
+            self._db.execute("DELETE FROM dashboard_sessions WHERE token_hash = %s", (token_hash,))
             self._db.commit()
 
     def get_station_token_hash(self, station_id: str) -> str | None:

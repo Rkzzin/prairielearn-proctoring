@@ -103,18 +103,33 @@ PROCTOR_S3_REGION=sa-east-1
 PROCTOR_DASHBOARD_DATABASE_URL=postgresql://proctor_dashboard:<senha>@127.0.0.1:5432/proctor_dashboard
 
 # OBRIGATÓRIO — sem isto o painel fica acessível sem senha para qualquer um
-# que descubra o IP/porta. É só o login do professor — as NUCs usam um
-# token próprio (passo 8), não esta senha.
+# que descubra o IP/porta. É o login do PRIMEIRO usuário, cadastrado no
+# primeiro boot — as NUCs usam um token próprio (passo 8), não esta senha.
 PROCTOR_DASHBOARD_ADMIN_USER=professor
 PROCTOR_DASHBOARD_ADMIN_PASSWORD=<escolha uma senha forte>
+PROCTOR_DASHBOARD_ADMIN_DISPLAY_NAME=Professor
 ```
 
 A senha é hasheada (PBKDF2) e gravada no Postgres do dashboard **no primeiro
 boot do serviço**. Depois disso, `PROCTOR_DASHBOARD_ADMIN_PASSWORD` pode ser
-removida do `.env` — só o hash no banco importa a partir daí. Trocar a senha
-depois exige apagar a linha correspondente na tabela `credentials` (ex:
-`DELETE FROM credentials WHERE username = 'professor';` via `psql`) e
-reiniciar o serviço (não existe rota de "trocar senha" na UI ainda).
+removida do `.env` — só o hash no banco importa a partir daí.
+
+O login do painel usa cookie de sessão (não mais Basic Auth): a tela
+`/login` autentica contra a tabela `dashboard_users`, válida por 12h. O
+cadastro é fechado — não existe rota de signup — cada usuário adicional é
+cadastrado por quem tem acesso à máquina do dashboard:
+
+```bash
+cd ~/proctor-station
+venv/bin/python scripts/manage_dashboard_user.py add felipehl --display-name "Felipe Henrique"
+venv/bin/python scripts/manage_dashboard_user.py list
+venv/bin/python scripts/manage_dashboard_user.py remove felipehl
+```
+
+O nome de exibição informado (`--display-name`) é o que aparece em "Revisado
+por ..." no detalhe da sessão, depois que aquele usuário marca uma sessão
+como revisada/violação. Trocar a senha de um usuário existente é rodar o
+mesmo `add` de novo (sobrescreve senha e nome).
 
 ### 5.1. Preparar o AWS SES para relatórios
 
@@ -173,8 +188,7 @@ rápido — não use isso em produção sem TLS na frente).
 
 ```bash
 systemctl status proctor-dashboard --no-pager
-curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8010/       # espera 401 sem credencial
-curl -sS -o /dev/null -w '%{http_code}\n' -u professor:<senha> http://127.0.0.1:8010/   # espera 200
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8010/       # espera 303 (redireciona pro /login)
 ```
 
 Isso confirma que a app subiu — mas ela só escuta local. De fora da máquina,

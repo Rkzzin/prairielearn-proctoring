@@ -343,9 +343,12 @@ class DashboardConfig(BaseSettings):
     admin_user: str | None = Field(
         default=None,
         description=(
-            "Login do professor no painel (Basic Auth). Só o dashboard usa — "
-            "semeia a credencial (hash) no banco no primeiro boot. A NUC não usa "
-            "mais isso pra autenticar heartbeat/comando, ver `station_token`."
+            "Login do primeiro usuário do painel, semeado no primeiro boot. Só o "
+            "dashboard usa — a NUC não usa mais isso pra autenticar "
+            "heartbeat/comando, ver `station_token`. Depois do primeiro boot, "
+            "novos usuários são cadastrados via "
+            "`scripts/manage_dashboard_user.py` (cadastro fechado, sem signup "
+            "na UI)."
         ),
     )
     admin_password: str | None = Field(
@@ -354,6 +357,13 @@ class DashboardConfig(BaseSettings):
             "Senha em texto puro só nesta variável de ambiente. No dashboard vira "
             "hash no banco no primeiro boot; pode ser removida do .env depois. "
             "Não tem efeito na NUC."
+        ),
+    )
+    admin_display_name: str | None = Field(
+        default=None,
+        description=(
+            "Nome de exibição do primeiro usuário (aparece em 'Revisado por "
+            "...'). Se vazio, usa `admin_user` como nome de exibição."
         ),
     )
     database_url: str | None = Field(

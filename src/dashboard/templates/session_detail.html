@@ -74,6 +74,11 @@
       {% endfor %}
     </div>
     <p class="form-error" id="review-status-error" hidden></p>
+    {% if session.reviewed_by %}
+    <p class="session-reviewed-by" id="review-status-author">Revisado por {{ session.reviewed_by }} em {{ format_session_datetime(session.reviewed_at) }}</p>
+    {% else %}
+    <p class="session-reviewed-by" id="review-status-author" hidden></p>
+    {% endif %}
   </div>
   <div class="integrity-summary">
     <span class="integrity-badge integrity-band-{{ integrity.band|lower }} integrity-badge-large" title="{{ integrity.band_label }}">
@@ -263,6 +268,12 @@ async function setReviewStatus(status, trigger) {
   }
   group.querySelectorAll('button').forEach((button) => { button.classList.remove('active'); });
   trigger.classList.add('active');
+  const payload = await response.json();
+  const author = document.getElementById('review-status-author');
+  if (payload.reviewed_by) {
+    author.hidden = false;
+    author.textContent = `Revisado por ${payload.reviewed_by} em ${new Date(payload.reviewed_at).toLocaleString('pt-BR')}`;
+  }
 }
 async function processEventSnapshots() {
   const button = document.getElementById('event-snapshot-process');

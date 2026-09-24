@@ -145,6 +145,11 @@ class SessionRecord(BaseModel):
     student: StudentInfo | None = None
     status: StationStatus = StationStatus.SESSION
     review_status: SessionReviewStatus = SessionReviewStatus.NEEDS_REVIEW
+    #: Quem marcou o `review_status` atual — `display_name` do usuário logado
+    #: no dashboard, não o `username`. None enquanto ninguém revisou (estado
+    #: inicial) ou se o dashboard rodar sem login (nenhum usuário cadastrado).
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
     flags_count: int = 0
     events: list[SessionEventPayload] = Field(default_factory=list)
     recordings: list[RecordingAsset] = Field(default_factory=list)
@@ -312,6 +317,19 @@ class StationRecord(BaseModel):
 
 class SessionReviewStatusPayload(BaseModel):
     review_status: SessionReviewStatus
+
+
+class DashboardUser(BaseModel):
+    """Usuário do painel — cadastro fechado: só existe quem foi inserido em
+
+    `dashboard_users` via `scripts/manage_dashboard_user.py` (ou, para o
+    primeiro usuário, semeado a partir de `PROCTOR_DASHBOARD_ADMIN_USER`).
+    Não existe rota de signup nem níveis de permissão: todo usuário
+    cadastrado enxerga e faz tudo que o painel oferece.
+    """
+
+    username: str
+    display_name: str
 
 
 class EnrollmentRecord(BaseModel):

@@ -44,6 +44,30 @@ code {
   display: flex;
   gap: 18px;
   flex-wrap: wrap;
+  align-items: center;
+}
+.logout-form { margin: 0; }
+.logout-button {
+  background: none;
+  border: 1px solid var(--muted, #666);
+  color: inherit;
+  padding: 4px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+.logout-button:hover { border-color: currentColor; }
+.login-layout {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 80vh;
+}
+.login-panel { width: min(360px, 90vw); }
+.session-reviewed-by {
+  color: var(--muted, #666);
+  font-size: 0.85rem;
+  margin-top: 4px;
 }
 .layout {
   display: grid;

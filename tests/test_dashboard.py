@@ -89,6 +89,7 @@ async def test_notification_settings_persist_email_list_and_unlimited_images(
     tmp_path, dashboard_database_url
 ):
     app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app)
     payload = {
         "enabled": True,
         "sender_email": "Proctor@Example.edu ",
@@ -102,7 +103,7 @@ async def test_notification_settings_persist_email_list_and_unlimited_images(
         response = await client.post(
             "/api/notification-settings",
             json=payload,
-            auth=("prof", "secret"),
+            cookies=cookies,
         )
 
     assert response.status_code == 200
@@ -132,6 +133,7 @@ async def test_notification_settings_require_admin_auth_and_valid_https_url(
         no_auth_config = await client.post("/api/notification-settings", json=payload)
 
     app_with_auth = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app_with_auth)
     async with AsyncClient(
         transport=ASGITransport(app=app_with_auth), base_url="http://testserver"
     ) as client:
@@ -141,7 +143,7 @@ async def test_notification_settings_require_admin_auth_and_valid_https_url(
                 **payload,
                 "public_dashboard_url": "https://dashboard.example.edu?token=unsafe",
             },
-            auth=("prof", "secret"),
+            cookies=cookies,
         )
         too_many_recipients = await client.post(
             "/api/notification-settings",
@@ -150,7 +152,7 @@ async def test_notification_settings_require_admin_auth_and_valid_https_url(
                 "public_dashboard_url": "https://dashboard.example.edu",
                 "recipient_emails": [f"teacher-{index}@example.edu" for index in range(51)],
             },
-            auth=("prof", "secret"),
+            cookies=cookies,
         )
 
     assert no_auth_config.status_code == 422
@@ -273,7 +275,7 @@ async def test_manual_email_report_uses_configured_mailer(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         response = await client.post(
             "/api/sessions/session-email/email-report/send",
-            auth=("prof", "secret"),
+            cookies=await _login(app),
         )
 
     assert response.status_code == 202
@@ -333,7 +335,7 @@ async def test_manual_email_report_waits_for_event_snapshots(
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         response = await client.post(
             "/api/sessions/email-waiting-images/email-report/send",
-            auth=("prof", "secret"),
+            cookies=await _login(app),
         )
 
     assert response.status_code == 409
@@ -419,6 +421,22 @@ def _station_headers(app, station_id: str, token: str = "test-token") -> dict[st
     return {"X-Station-Id": station_id, "X-Station-Token": token}
 
 
+async def _login(app, username: str = "prof", password: str = "secret") -> dict[str, str]:
+    """Faz login via `/login` e retorna os cookies pra usar em requisições autenticadas.
+
+    O `_make_app(admin_auth=True)` semeia justamente `prof`/`secret` como
+    primeiro usuário (ver `create_app`/`ensure_dashboard_user`), então os
+    defaults aqui casam com o `_make_app` sem precisar repetir em todo teste.
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/login",
+            data={"username": username, "password": password, "next": "/"},
+        )
+        assert response.status_code == 303, response.text
+        return {"proctor_dashboard_session": response.cookies["proctor_dashboard_session"]}
+
+
 class FakeS3EnrollmentService:
     def __init__(self):
         self.calls = []
@@ -470,7 +488,7 @@ async def test_dashboard_has_no_auth_when_admin_user_unset(tmp_path, dashboard_d
 
 
 @pytest.mark.asyncio
-async def test_dashboard_requires_basic_auth_when_admin_user_set(tmp_path, dashboard_database_url):
+async def test_dashboard_requires_session_cookie_when_admin_user_set(tmp_path, dashboard_database_url):
     config = AppConfig(
         data_dir=tmp_path,
         dashboard={
@@ -482,17 +500,34 @@ async def test_dashboard_requires_basic_auth_when_admin_user_set(tmp_path, dashb
     app = create_app(config=config)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         unauthenticated = await client.get("/")
-        assert unauthenticated.status_code == 401
-        assert unauthenticated.headers["www-authenticate"].startswith("Basic")
+        assert unauthenticated.status_code == 303
+        assert unauthenticated.headers["location"].startswith("/login")
 
-        wrong_password = await client.get("/", auth=("prof", "senha-errada"))
-        assert wrong_password.status_code == 401
+        wrong_password = await client.post(
+            "/login", data={"username": "prof", "password": "senha-errada", "next": "/"}
+        )
+        assert wrong_password.status_code == 303
+        assert wrong_password.headers["location"].startswith("/login?next=/&error=1")
 
-        wrong_user = await client.get("/", auth=("outro", "senha-forte"))
-        assert wrong_user.status_code == 401
+        wrong_user = await client.post(
+            "/login", data={"username": "outro", "password": "senha-forte", "next": "/"}
+        )
+        assert wrong_user.status_code == 303
+        assert wrong_user.headers["location"].startswith("/login?next=/&error=1")
 
-        authenticated = await client.get("/", auth=("prof", "senha-forte"))
+        login_response = await client.post(
+            "/login", data={"username": "prof", "password": "senha-forte", "next": "/"}
+        )
+        assert login_response.status_code == 303
+        assert "proctor_dashboard_session" in login_response.cookies
+
+        authenticated = await client.get("/")
         assert authenticated.status_code == 200
+
+        logout_response = await client.post("/logout")
+        assert logout_response.status_code == 303
+        after_logout = await client.get("/")
+        assert after_logout.status_code == 303
 
 
 @pytest.mark.asyncio
@@ -546,7 +581,7 @@ async def test_camera_check_queues_idle_station_and_skips_active_session(tmp_pat
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
-        auth=("prof", "secret"),
+        cookies=await _login(app),
     ) as client:
         response = await client.post("/api/camera-checks")
 
@@ -579,7 +614,7 @@ async def test_electronic_calibration_reuses_camera_snapshot_command(
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
-        auth=("prof", "secret"),
+        cookies=await _login(app),
     ) as client:
         response = await client.post("/api/electronic-device-calibration")
 
@@ -607,7 +642,7 @@ async def test_station_uploads_camera_snapshot_and_gallery_displays_it(tmp_path,
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
-        auth=("prof", "secret"),
+        cookies=await _login(app),
     ) as client:
         queued = (await client.post("/api/camera-checks")).json()
         batch_id = queued["batch_id"]
@@ -1172,7 +1207,7 @@ async def test_station_token_does_not_authenticate_professor_routes(tmp_path, da
         home_response = await client.get("/", headers=station_headers)
         clear_response = await client.post("/api/sessions/clear", headers=station_headers)
 
-    assert home_response.status_code == 401
+    assert home_response.status_code == 303
     assert clear_response.status_code == 401
 
 
@@ -1272,6 +1307,43 @@ async def test_review_status_endpoint_updates_session_and_rejects_unknown_sessio
     assert missing_response.status_code == 404
     assert invalid_response.status_code == 422
     assert app.state.store.get_session("sess-1").review_status == SessionReviewStatus.REVIEWED
+
+
+@pytest.mark.asyncio
+async def test_review_status_records_reviewer_display_name(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="sess-reviewed",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://testserver",
+        cookies=await _login(app),
+    ) as client:
+        response = await client.post(
+            "/api/sessions/sess-reviewed/review-status",
+            json={"review_status": "VIOLATION"},
+        )
+        detail_page = await client.get("/sessions/sess-reviewed")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["review_status"] == "VIOLATION"
+    # "prof" é o `admin_display_name` default do primeiro usuário em _make_app
+    # (não informado, cai pro próprio `username` — ver `create_app`).
+    assert body["reviewed_by"] == "prof"
+    assert body["reviewed_at"] is not None
+    session = app.state.store.get_session("sess-reviewed")
+    assert session.reviewed_by == "prof"
+    assert session.reviewed_at is not None
+    assert "Revisado por prof" in detail_page.text
 
 
 @pytest.mark.asyncio
@@ -2222,3 +2294,78 @@ def test_format_relative_time(seconds, expected):
 )
 def test_format_duration(seconds, expected):
     assert _format_duration(seconds) == expected
+
+
+@pytest.mark.asyncio
+async def test_login_rejects_username_not_in_closed_user_table(tmp_path, dashboard_database_url):
+    """Cadastro é fechado: sem rota de signup, login de quem não foi cadastrado falha."""
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/login",
+            data={"username": "gente-nao-cadastrada", "password": "qualquer-coisa", "next": "/"},
+        )
+
+    assert response.status_code == 303
+    assert response.headers["location"].startswith("/login?next=/&error=1")
+    assert "proctor_dashboard_session" not in response.cookies
+
+
+@pytest.mark.asyncio
+async def test_second_dashboard_user_can_log_in_and_review_with_own_display_name(
+    tmp_path, dashboard_database_url
+):
+    """Segundo usuário cadastrado (via `DashboardStore`, equivalente ao CLI
+
+    `manage_dashboard_user.py`) loga e assina revisões com o próprio nome —
+    não existe rota HTTP de cadastro, cadastro é sempre via acesso à máquina.
+    """
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    app.state.store.upsert_dashboard_user(
+        "rkzzin", hash_password("outra-senha-forte"), "Rafael Kzzin"
+    )
+    app.state.store.register_session(
+        SessionRecord(
+            session_id="sess-second-reviewer",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+        )
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        login_response = await client.post(
+            "/login",
+            data={"username": "rkzzin", "password": "outra-senha-forte", "next": "/"},
+        )
+        assert login_response.status_code == 303
+        cookies = {"proctor_dashboard_session": login_response.cookies["proctor_dashboard_session"]}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", cookies=cookies
+    ) as client:
+        review_response = await client.post(
+            "/api/sessions/sess-second-reviewer/review-status",
+            json={"review_status": "REVIEWED"},
+        )
+
+    assert review_response.status_code == 200
+    assert review_response.json()["reviewed_by"] == "Rafael Kzzin"
+
+
+@pytest.mark.asyncio
+async def test_logout_invalidates_session_cookie(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", cookies=cookies
+    ) as client:
+        before_logout = await client.get("/")
+        await client.post("/logout")
+        after_logout = await client.get("/")
+
+    assert before_logout.status_code == 200
+    assert after_logout.status_code == 303
