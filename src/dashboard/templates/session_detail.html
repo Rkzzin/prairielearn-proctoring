@@ -144,7 +144,7 @@
   <div class="event-snapshot-grid">
     {% for card in event_snapshots %}
     {% set snapshot = card.snapshot %}
-    <article class="event-snapshot-card severity-{{ snapshot.severity.value|lower }}" data-severity="{{ 'PERIODIC' if snapshot.event_type == 'PERIODIC_FRAME' else snapshot.severity.value }}">
+    <article class="event-snapshot-card severity-{{ snapshot.severity.value|lower }}{% if snapshot.event_type == 'AUTHENTICATION_FRAME' %} authentication-frame{% endif %}" data-severity="{{ 'PERIODIC' if snapshot.event_type == 'PERIODIC_FRAME' else snapshot.severity.value }}">
       <div class="event-snapshot-images">
         <div>
           <span>Câmera principal</span>
