@@ -935,10 +935,16 @@ th, td {
   border-radius: 50%;
   color: #287681;
   background: #eaf4f5;
-  font-family: Arial, sans-serif;
-  font-size: 1.3rem;
-  line-height: 1;
+  flex-shrink: 0;
   transition: transform 160ms ease;
+}
+.details-chevron::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 6px solid currentColor;
 }
 .review-details[open] .details-chevron {
   transform: rotate(180deg);

@@ -3,7 +3,7 @@
 <details class="panel review-details">
   <summary>
     <strong>Resumo</strong>
-    <span class="details-chevron" aria-hidden="true">⌄</span>
+    <span class="details-chevron" aria-hidden="true"></span>
   </summary>
   <section class="hero">
     <div class="hero-card">
@@ -38,7 +38,7 @@
   <details class="review-details">
     <summary>
       <strong>Ver estações</strong>
-      <span class="details-chevron" aria-hidden="true">⌄</span>
+      <span class="details-chevron" aria-hidden="true"></span>
     </summary>
     <div
       id="stations-panel"
@@ -63,7 +63,7 @@
   <details class="review-details">
     <summary>
       <strong>Ver fotos</strong>
-      <span class="details-chevron" aria-hidden="true">⌄</span>
+      <span class="details-chevron" aria-hidden="true"></span>
     </summary>
     <div
       id="camera-gallery-panel"
@@ -119,13 +119,13 @@
   <form class="form-card" id="create-user-form" onsubmit="createDashboardUser(event)">
     <h3>Cadastrar novo usuário</h3>
     <label>Login (sem espaços)
-      <input type="text" name="username" maxlength="100" placeholder="Ex.: rkzzin" required>
+      <input type="text" name="username" maxlength="100" placeholder="professorfulano" required>
     </label>
     <label>Nome de exibição
-      <input type="text" name="display_name" maxlength="150" placeholder="Ex.: Rafael Kzzin" required>
+      <input type="text" name="display_name" maxlength="150" placeholder="Professor Fulano" required>
     </label>
     <label>Senha (mín. 8 caracteres)
-      <input type="password" name="password" minlength="8" maxlength="200" required autocomplete="new-password">
+      <input type="password" name="password" minlength="8" maxlength="200" placeholder="senha" required autocomplete="new-password">
     </label>
     <p class="form-error" id="create-user-error" hidden></p>
     <div class="modal-actions">
