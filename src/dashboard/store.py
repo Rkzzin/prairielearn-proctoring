@@ -149,9 +149,19 @@ class DashboardStore:
             if session is None or session.ended_at is None:
                 return 0
             queued = 0
-            for event in session.events:
-                if event.severity not in {EventSeverity.WARNING, EventSeverity.CRITICAL}:
-                    continue
+            snapshot_events = [
+                SessionEventPayload(
+                    timestamp=session.started_at,
+                    event_type="AUTHENTICATION_FRAME",
+                    severity=EventSeverity.INFO,
+                ),
+                *(
+                    event
+                    for event in session.events
+                    if event.severity in {EventSeverity.WARNING, EventSeverity.CRITICAL}
+                ),
+            ]
+            for event in snapshot_events:
                 identity = (
                     f"{session_id}|{event.timestamp.isoformat()}|"
                     f"{event.event_type}|{event.frame_number}"

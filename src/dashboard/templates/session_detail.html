@@ -135,9 +135,10 @@
   <p class="snapshot-process-status" id="snapshot-process-status"></p>
   {% if event_snapshots %}
   <div class="timeline-filters snapshot-filters" role="group" aria-label="Filtrar fotos por severidade">
-    <button type="button" class="filter-chip snapshot-filter-chip active" data-filter="ALL" aria-pressed="true" onclick="filterEventSnapshots('ALL', this)">Todos <span>{{ event_counts.CRITICAL + event_counts.WARNING }}</span></button>
-    <button type="button" class="filter-chip filter-critical snapshot-filter-chip" data-filter="CRITICAL" aria-pressed="false" onclick="filterEventSnapshots('CRITICAL', this)">Críticos <span>{{ event_counts.CRITICAL }}</span></button>
-    <button type="button" class="filter-chip filter-warning snapshot-filter-chip" data-filter="WARNING" aria-pressed="false" onclick="filterEventSnapshots('WARNING', this)">Alertas <span>{{ event_counts.WARNING }}</span></button>
+    <button type="button" class="filter-chip snapshot-filter-chip active" data-filter="ALL" aria-pressed="true" onclick="filterEventSnapshots('ALL', this)">Todos <span>{{ event_snapshot_counts.CRITICAL + event_snapshot_counts.WARNING + event_snapshot_counts.INFO }}</span></button>
+    <button type="button" class="filter-chip filter-critical snapshot-filter-chip" data-filter="CRITICAL" aria-pressed="false" onclick="filterEventSnapshots('CRITICAL', this)">Críticos <span>{{ event_snapshot_counts.CRITICAL }}</span></button>
+    <button type="button" class="filter-chip filter-warning snapshot-filter-chip" data-filter="WARNING" aria-pressed="false" onclick="filterEventSnapshots('WARNING', this)">Alertas <span>{{ event_snapshot_counts.WARNING }}</span></button>
+    <button type="button" class="filter-chip filter-info snapshot-filter-chip" data-filter="INFO" aria-pressed="false" onclick="filterEventSnapshots('INFO', this)">Informativos <span>{{ event_snapshot_counts.INFO }}</span></button>
   </div>
   <div class="event-snapshot-grid">
     {% for card in event_snapshots %}
@@ -168,7 +169,7 @@
       <div class="event-snapshot-copy">
         <time>{{ card.relative_time }}</time>
         <strong>{{ card.reason }}</strong>
-        <span>{{ "Crítico" if snapshot.severity.value == "CRITICAL" else "Alerta" }}</span>
+        <span>{% if snapshot.severity.value == "CRITICAL" %}Crítico{% elif snapshot.severity.value == "WARNING" %}Alerta{% else %}Informativo{% endif %}</span>
         {% if snapshot.error %}<small>{{ snapshot.error }}</small>{% endif %}
         {% if snapshot.environment_error %}<small>Câmera ambiente: {{ snapshot.environment_error }}</small>{% endif %}
       </div>

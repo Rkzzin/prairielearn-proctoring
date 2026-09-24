@@ -92,6 +92,7 @@ _EVENT_REASON_LABELS = {
     "ELECTRONIC_DEVICE_DETECTED": "Celular ou notebook detectado",
     "ELECTRONIC_DEVICE_CLEARED": "Equipamento eletrônico removido",
     "LIVENESS_FAILED": "Tentativa reprovada na prova de vida",
+    "AUTHENTICATION_FRAME": "Autenticação do aluno",
     "UNRECOGNIZED_AUTHENTICATION": "Tentativa de autenticação não reconhecida",
     "BLOCK_TIMEOUT_CANCELLED": "Avaliação cancelada: bloqueio não resolvido no prazo",
     "BROWSER_EXIT": "Avaliação pausada: navegador protegido encerrado",
@@ -341,6 +342,10 @@ def create_app(
             }
             for snapshot in event_snapshots
         ]
+        event_snapshot_counts = {
+            severity: sum(snapshot.severity.value == severity for snapshot in event_snapshots)
+            for severity in ("CRITICAL", "WARNING", "INFO")
+        }
         return render_template(
             request,
             "session_detail.html",
@@ -351,6 +356,7 @@ def create_app(
             timeline=timeline,
             student_photo_urls=student_photo_urls,
             event_snapshots=event_snapshot_cards,
+            event_snapshot_counts=event_snapshot_counts,
             event_snapshots_processing=any(
                 snapshot.status in {"queued", "processing"}
                 for snapshot in event_snapshots
@@ -625,7 +631,7 @@ def create_app(
         is_new_session = not dashboard_store.has_session(payload.session_id)
         session = dashboard_store.register_session(payload)
         if is_new_session:
-            report_mailer.enqueue(session.session_id)
+            report_mailer.prepare(session.session_id)
         return JSONResponse(session.model_dump(mode="json"), status_code=201)
 
     @app.post("/api/sessions/{session_id}/finalize")

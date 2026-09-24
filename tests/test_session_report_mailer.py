@@ -159,6 +159,12 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     )
     snapshots = [
         _snapshot(
+            "authentication-key",
+            "AUTHENTICATION_FRAME",
+            EventSeverity.INFO,
+            now,
+        ),
+        _snapshot(
             "event-key",
             "ELECTRONIC_DEVICE_DETECTED",
             EventSeverity.CRITICAL,
@@ -227,7 +233,8 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     assert "ELECTRONIC_DEVICE_DETECTED" not in raw_message
     assert 'src="cid:snapshot-1@proctoring"' in raw_message
     assert 'src="cid:student-photo@proctoring"' in raw_message
-    assert "Foram mostradas todas as 1 imagem(ns) de alerta disponíveis." in raw_message
+    assert "Autenticação do aluno" in raw_message
+    assert "Foram mostradas todas as 2 imagem(ns) de alerta disponíveis." in raw_message
     assert html_message.index("Abrir revisão completa") < html_message.index(
         "Imagens selecionadas"
     )
@@ -236,8 +243,10 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         in raw_message
     )
     image_parts = [part for part in message.walk() if part.get_content_type() == "image/jpeg"]
-    assert len(image_parts) == 2
+    assert len(image_parts) == 3
     assert image_parts[0]["Content-ID"] == "<student-photo@proctoring>"
     assert image_parts[1].get_content() == b"jpeg-image"
     assert image_parts[1]["Content-ID"] == "<snapshot-1@proctoring>"
+    assert image_parts[2].get_content() == b"jpeg-image"
+    assert image_parts[2]["Content-ID"] == "<snapshot-2@proctoring>"
     assert store.finished == (report, {"message_id": "ses-123"})

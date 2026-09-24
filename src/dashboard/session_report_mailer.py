@@ -37,6 +37,7 @@ _EVENT_LABELS = {
     "ELECTRONIC_DEVICE_DETECTED": "Celular ou notebook detectado",
     "BROWSER_EXIT_ALERT": "Navegador protegido foi fechado",
     "UNRECOGNIZED_AUTHENTICATION": "Tentativa de autenticação não reconhecida",
+    "AUTHENTICATION_FRAME": "Autenticação do aluno",
 }
 
 
@@ -207,6 +208,7 @@ class SessionReportMailer:
         ready = [snapshot for snapshot in snapshots if snapshot.status == "ready"]
         ready.sort(
             key=lambda snapshot: (
+                0 if snapshot.event_type == "AUTHENTICATION_FRAME" else 1,
                 0 if snapshot.severity == EventSeverity.CRITICAL else 1,
                 snapshot.event_timestamp,
             )

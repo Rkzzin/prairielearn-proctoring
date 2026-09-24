@@ -390,7 +390,7 @@ async def test_finished_session_queues_and_renders_event_snapshot_grid(
         ],
     )
     app.state.store.register_session(session)
-    assert app.state.store.queue_event_snapshots(session.session_id) == 2
+    assert app.state.store.queue_event_snapshots(session.session_id) == 3
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         detail = await client.get(f"/sessions/{session.session_id}")
@@ -400,7 +400,9 @@ async def test_finished_session_queues_and_renders_event_snapshot_grid(
 
     assert detail.status_code == 200
     assert 'class="event-snapshot-grid"' in detail.text
-    assert detail.text.count('class="event-snapshot-card') == 2
+    assert detail.text.count('class="event-snapshot-card') == 3
+    assert "Autenticação do aluno" in detail.text
+    assert "Informativos <span>1</span>" in detail.text
     assert 'aria-label="Filtrar fotos por severidade"' in detail.text
     assert "Informações técnicas" not in detail.text
     assert "ID da sessão" in detail.text
@@ -828,8 +830,8 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
         def resume_pending(self):
             pass
 
-        def enqueue(self, session_id, *, force=False):
-            self.calls.append((session_id, force))
+        def prepare(self, session_id):
+            self.calls.append(session_id)
             return True
 
     mailer = FakeMailer()
@@ -886,7 +888,7 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
         assert "sess-1,nuc-01,ES2025-T1,Quiz-03,123,Alice" in csv_text
         assert "GAZE_LEFT" in csv_text
 
-    assert mailer.calls == [("sess-1", False)]
+    assert mailer.calls == ["sess-1"]
 
 
 @pytest.mark.asyncio
