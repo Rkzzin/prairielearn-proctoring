@@ -156,6 +156,14 @@ class DashboardStore:
                     severity=EventSeverity.INFO,
                 ),
                 *(
+                    SessionEventPayload(
+                        timestamp=session.started_at + timedelta(seconds=offset),
+                        event_type="PERIODIC_FRAME",
+                        severity=EventSeverity.INFO,
+                    )
+                    for offset in range(60, (session.duration_seconds or 0) + 1, 60)
+                ),
+                *(
                     event
                     for event in session.events
                     if event.severity in {EventSeverity.WARNING, EventSeverity.CRITICAL}

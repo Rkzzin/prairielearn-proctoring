@@ -38,6 +38,7 @@ _EVENT_LABELS = {
     "BROWSER_EXIT_ALERT": "Navegador protegido foi fechado",
     "UNRECOGNIZED_AUTHENTICATION": "Tentativa de autenticação não reconhecida",
     "AUTHENTICATION_FRAME": "Autenticação do aluno",
+    "PERIODIC_FRAME": "Evidência periódica",
 }
 
 
@@ -124,7 +125,11 @@ class SessionReportMailer:
             session = self._store.get_session(session_id)
             if report is None or session is None:
                 return
-            available_snapshots = self._store.list_event_snapshots(session_id)
+            available_snapshots = [
+                snapshot
+                for snapshot in self._store.list_event_snapshots(session_id)
+                if snapshot.event_type != "PERIODIC_FRAME"
+            ]
             snapshots = self._select_snapshots(available_snapshots, report.image_link_limit)
             student_photo = self._load_student_photo(session)
             inline_images = self._load_inline_images(

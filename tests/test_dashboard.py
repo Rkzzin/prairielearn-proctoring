@@ -1923,6 +1923,36 @@ def test_dashboard_store_sets_session_review_status(dashboard_database_url):
     assert store.set_session_review_status("missing", SessionReviewStatus.REVIEWED) is None
 
 
+def test_dashboard_store_queues_periodic_snapshots_each_minute(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    started_at = datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc)
+    store.register_session(
+        SessionRecord(
+            session_id="periodic-images",
+            station_id="nuc-01",
+            turma="ES2025-T1",
+            assessment="Quiz-03",
+            started_at=started_at,
+            ended_at=started_at + timedelta(minutes=2, seconds=5),
+            status=StationStatus.COMPLETED,
+        )
+    )
+
+    assert store.queue_event_snapshots("periodic-images") == 3
+    snapshots = store.list_event_snapshots("periodic-images")
+
+    assert [snapshot.event_type for snapshot in snapshots] == [
+        "AUTHENTICATION_FRAME",
+        "PERIODIC_FRAME",
+        "PERIODIC_FRAME",
+    ]
+    assert [snapshot.event_timestamp for snapshot in snapshots] == [
+        started_at,
+        started_at + timedelta(minutes=1),
+        started_at + timedelta(minutes=2),
+    ]
+
+
 def test_dashboard_snapshot_does_not_sign_recording_urls(dashboard_database_url):
     class S3:
         def __init__(self):

@@ -169,7 +169,13 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
             "ELECTRONIC_DEVICE_DETECTED",
             EventSeverity.CRITICAL,
             now + timedelta(seconds=10),
-        )
+        ),
+        _snapshot(
+            "periodic-key",
+            "PERIODIC_FRAME",
+            EventSeverity.INFO,
+            now + timedelta(minutes=1),
+        ),
     ]
 
     class Store:
@@ -234,6 +240,7 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     assert 'src="cid:snapshot-1@proctoring"' in raw_message
     assert 'src="cid:student-photo@proctoring"' in raw_message
     assert "Autenticação do aluno" in raw_message
+    assert "Evidência periódica" not in raw_message
     assert "Foram mostradas todas as 2 imagem(ns) de alerta disponíveis." in raw_message
     assert html_message.index("Abrir revisão completa") < html_message.index(
         "Imagens selecionadas"

@@ -711,6 +711,7 @@ th, td {
 .filter-chip.filter-critical.active { border-color: #9f3b3b; background: #9f3b3b; }
 .filter-chip.filter-warning.active { border-color: #9a6818; background: #9a6818; }
 .filter-chip.filter-info.active { border-color: #526b75; background: #526b75; }
+.filter-chip.filter-periodic.active { border-color: #435e8c; background: #435e8c; }
 .filter-chip.filter-needs-review.active { border-color: #9a6818; background: #9a6818; }
 .filter-chip.filter-under-review.active { border-color: #1e626b; background: #1e626b; }
 .filter-chip.filter-reviewed.active { border-color: #24652b; background: #24652b; }
