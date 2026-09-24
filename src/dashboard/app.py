@@ -622,7 +622,10 @@ def create_app(
     ) -> JSONResponse:
         if payload.station_id != authenticated_station_id:
             raise HTTPException(status_code=403, detail="station_id não bate com o token.")
+        is_new_session = not dashboard_store.has_session(payload.session_id)
         session = dashboard_store.register_session(payload)
+        if is_new_session:
+            report_mailer.enqueue(session.session_id)
         return JSONResponse(session.model_dump(mode="json"), status_code=201)
 
     @app.post("/api/sessions/{session_id}/finalize")
@@ -634,8 +637,6 @@ def create_app(
         session = dashboard_store.finalize_session(session_id)
         if session is None:
             return JSONResponse({"detail": "Sessão não encontrada."}, status_code=404)
-        if auth_username:
-            report_mailer.prepare(session_id)
         snapshot_processor.enqueue(session_id)
         return JSONResponse(session.model_dump(mode="json"))
 

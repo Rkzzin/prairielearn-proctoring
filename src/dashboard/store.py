@@ -121,6 +121,10 @@ class DashboardStore:
             session = self._sessions.get(session_id)
             return self._hydrate_session(session) if session else None
 
+    def has_session(self, session_id: str) -> bool:
+        with self._lock:
+            return session_id in self._sessions
+
     def adjacent_sessions(
         self,
         session_id: str,

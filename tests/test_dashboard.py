@@ -190,7 +190,7 @@ def test_waiting_email_report_persists_and_can_be_activated(dashboard_database_u
 
 
 @pytest.mark.asyncio
-async def test_finalize_persists_email_intent_before_snapshot_processing(
+async def test_finalize_only_processes_snapshots_without_sending_email(
     tmp_path, dashboard_database_url
 ):
     calls = []
@@ -198,10 +198,6 @@ async def test_finalize_persists_email_intent_before_snapshot_processing(
     class FakeMailer:
         def resume_pending(self):
             pass
-
-        def prepare(self, session_id):
-            calls.append(("prepare", session_id))
-            return True
 
     class FakeProcessor:
         def resume_pending(self):
@@ -236,10 +232,7 @@ async def test_finalize_persists_email_intent_before_snapshot_processing(
         )
 
     assert response.status_code == 200
-    assert calls == [
-        ("prepare", "session-finalize-email"),
-        ("snapshots", "session-finalize-email"),
-    ]
+    assert calls == [("snapshots", "session-finalize-email")]
 
 
 @pytest.mark.asyncio
@@ -828,7 +821,19 @@ def test_legacy_heartbeat_does_not_erase_reported_cameras(tmp_path, dashboard_da
 
 @pytest.mark.asyncio
 async def test_register_session_and_append_events(tmp_path, dashboard_database_url):
-    app = _make_app(tmp_path, dashboard_database_url)
+    class FakeMailer:
+        def __init__(self):
+            self.calls = []
+
+        def resume_pending(self):
+            pass
+
+        def enqueue(self, session_id, *, force=False):
+            self.calls.append((session_id, force))
+            return True
+
+    mailer = FakeMailer()
+    app = _make_app(tmp_path, dashboard_database_url, session_report_mailer=mailer)
     station_headers = _station_headers(app, "nuc-01")
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         session_payload = SessionRecord(
@@ -849,6 +854,8 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
 
         create_response = await client.post("/api/sessions", json=session_payload, headers=station_headers)
         assert create_response.status_code == 201
+        duplicate_response = await client.post("/api/sessions", json=session_payload, headers=station_headers)
+        assert duplicate_response.status_code == 201
 
         event_payload = [
             SessionEventPayload(
@@ -878,6 +885,8 @@ async def test_register_session_and_append_events(tmp_path, dashboard_database_u
         assert "session_id,station_id,turma,assessment,student_id,student_name" in csv_text
         assert "sess-1,nuc-01,ES2025-T1,Quiz-03,123,Alice" in csv_text
         assert "GAZE_LEFT" in csv_text
+
+    assert mailer.calls == [("sess-1", False)]
 
 
 @pytest.mark.asyncio
