@@ -8,7 +8,7 @@
       <p>O dashboard envia depois que as imagens dos alertas forem processadas.</p>
     </div>
   </div>
-  <form id="notification-settings-form" onsubmit="saveNotificationSettings(event)">
+  <form id="notification-settings-form" class="form-card" onsubmit="saveNotificationSettings(event)">
     <label class="checkbox"><input type="checkbox" name="enabled" {% if notification_settings.enabled %}checked{% endif %}> Enviar relatório para todas as avaliações finalizadas</label>
     <label>Provedor de envio
       <select name="delivery_provider" id="delivery-provider" onchange="syncMailProvider()">
@@ -36,13 +36,19 @@
         <input type="number" name="image_link_limit" min="0" max="100" value="{{ notification_settings.image_link_limit }}">
         <small>Use 0 para incluir links para todas; valores de 1 a 100 priorizam eventos críticos.</small>
       </label>
-      <label id="ses-region-field">Região AWS SES<input type="text" name="ses_region" value="{{ notification_settings.ses_region }}"></label>
-      <label>URL pública do dashboard<input type="url" name="public_dashboard_url" value="{{ notification_settings.public_dashboard_url }}"></label>
+      <label id="ses-region-field">Região AWS SES
+        <input type="text" name="ses_region" value="{{ notification_settings.ses_region }}">
+      </label>
+      <label>URL pública do dashboard
+        <input type="url" name="public_dashboard_url" value="{{ notification_settings.public_dashboard_url }}">
+      </label>
     </div>
     <p class="form-error" id="notification-settings-error" hidden></p>
     <p id="notification-settings-success" hidden>Configuração salva.</p>
-    <button type="submit">Salvar notificações</button>
-    <button type="button" class="button-secondary" onclick="sendNotificationTest()">Enviar e-mail de teste</button>
+    <div class="modal-actions">
+      <button type="submit">Salvar notificações</button>
+      <button type="button" class="button-secondary" onclick="sendNotificationTest()">Enviar e-mail de teste</button>
+    </div>
   </form>
 </section>
 

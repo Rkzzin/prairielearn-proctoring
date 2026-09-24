@@ -112,6 +112,11 @@ code {
   grid-template-columns: minmax(280px, 420px) 1fr;
   gap: 20px;
 }
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
 .form-card {
   display: grid;
   gap: 14px;
