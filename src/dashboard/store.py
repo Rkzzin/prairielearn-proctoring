@@ -164,6 +164,22 @@ class DashboardStore:
                     for offset in range(60, (session.duration_seconds or 0) + 1, 60)
                 ),
                 *(
+                    SessionEventPayload(
+                        timestamp=session.started_at
+                        + timedelta(
+                            seconds=minute_start
+                            + self._periodic_random_offset(session_id, minute_start)
+                        ),
+                        event_type="PERIODIC_FRAME",
+                        severity=EventSeverity.INFO,
+                    )
+                    for minute_start in range(
+                        0,
+                        ((session.duration_seconds or 0) // 60) * 60,
+                        60,
+                    )
+                ),
+                *(
                     event
                     for event in session.events
                     if event.severity in {EventSeverity.WARNING, EventSeverity.CRITICAL}
@@ -191,6 +207,12 @@ class DashboardStore:
                 queued += result.rowcount
             self._db.commit()
             return queued
+
+    @staticmethod
+    def _periodic_random_offset(session_id: str, minute_start: int) -> int:
+        """Return a stable random-looking second strictly inside a minute interval."""
+        seed = f"{session_id}|periodic-frame|{minute_start}".encode("utf-8")
+        return 1 + int.from_bytes(hashlib.sha256(seed).digest()[:4], "big") % 59
 
     def retry_event_snapshots(self, session_id: str) -> int:
         self.queue_event_snapshots(session_id)

@@ -1938,19 +1938,20 @@ def test_dashboard_store_queues_periodic_snapshots_each_minute(dashboard_databas
         )
     )
 
-    assert store.queue_event_snapshots("periodic-images") == 3
+    assert store.queue_event_snapshots("periodic-images") == 5
     snapshots = store.list_event_snapshots("periodic-images")
 
-    assert [snapshot.event_type for snapshot in snapshots] == [
-        "AUTHENTICATION_FRAME",
-        "PERIODIC_FRAME",
-        "PERIODIC_FRAME",
+    assert snapshots[0].event_type == "AUTHENTICATION_FRAME"
+    periodic_offsets = [
+        int((snapshot.event_timestamp - started_at).total_seconds())
+        for snapshot in snapshots
+        if snapshot.event_type == "PERIODIC_FRAME"
     ]
-    assert [snapshot.event_timestamp for snapshot in snapshots] == [
-        started_at,
-        started_at + timedelta(minutes=1),
-        started_at + timedelta(minutes=2),
-    ]
+    assert periodic_offsets[1] == 60
+    assert periodic_offsets[3] == 120
+    assert 0 < periodic_offsets[0] < 60
+    assert 60 < periodic_offsets[2] < 120
+    assert store.queue_event_snapshots("periodic-images") == 0
 
 
 def test_dashboard_snapshot_does_not_sign_recording_urls(dashboard_database_url):
