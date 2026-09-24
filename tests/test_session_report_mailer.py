@@ -177,6 +177,8 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
             now + timedelta(minutes=1),
         ),
     ]
+    snapshots[1].environment_s3_bucket = "bucket"
+    snapshots[1].environment_s3_key = "snapshots/event-key-environment.jpg"
 
     class Store:
         finished = None
@@ -192,6 +194,9 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
 
         def read_event_snapshot_image(self, _snapshot):
             return b"jpeg-image"
+
+        def read_event_snapshot_environment_image(self, _snapshot):
+            return b"environment-jpeg-image"
 
         def read_student_photo(self, _turma, _student_id):
             output = BytesIO()
@@ -238,6 +243,9 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     assert "Início da prova: 15/09/2026 às 18:02:03" in raw_message
     assert "ELECTRONIC_DEVICE_DETECTED" not in raw_message
     assert 'src="cid:snapshot-1@proctoring"' in raw_message
+    assert 'src="cid:snapshot-2-environment@proctoring"' in raw_message
+    assert "Câmera principal" in raw_message
+    assert "Câmera ambiente" in raw_message
     assert 'src="cid:student-photo@proctoring"' in raw_message
     assert "Autenticação do aluno" in raw_message
     assert "Evidência periódica" not in raw_message
@@ -250,10 +258,12 @@ def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
         in raw_message
     )
     image_parts = [part for part in message.walk() if part.get_content_type() == "image/jpeg"]
-    assert len(image_parts) == 3
+    assert len(image_parts) == 4
     assert image_parts[0]["Content-ID"] == "<student-photo@proctoring>"
     assert image_parts[1].get_content() == b"jpeg-image"
     assert image_parts[1]["Content-ID"] == "<snapshot-1@proctoring>"
     assert image_parts[2].get_content() == b"jpeg-image"
     assert image_parts[2]["Content-ID"] == "<snapshot-2@proctoring>"
+    assert image_parts[3].get_content() == b"environment-jpeg-image"
+    assert image_parts[3]["Content-ID"] == "<snapshot-2-environment@proctoring>"
     assert store.finished == (report, {"message_id": "ses-123"})

@@ -132,7 +132,7 @@ class SessionReportMailer:
             ]
             snapshots = self._select_snapshots(available_snapshots, report.image_link_limit)
             student_photo = self._load_student_photo(session)
-            inline_images = self._load_inline_images(
+            inline_images, environment_inline_images = self._load_inline_images(
                 snapshots,
                 max_bytes=_MAX_INLINE_IMAGE_BYTES - len(student_photo or b""),
             )
@@ -141,6 +141,7 @@ class SessionReportMailer:
                 session,
                 snapshots,
                 inline_images,
+                environment_inline_images=environment_inline_images,
                 student_photo=student_photo,
                 available_snapshot_count=sum(
                     snapshot.status == "ready" for snapshot in available_snapshots
@@ -225,8 +226,9 @@ class SessionReportMailer:
         snapshots: list[EventSnapshotRecord],
         *,
         max_bytes: int,
-    ) -> dict[str, bytes]:
+    ) -> tuple[dict[str, bytes], dict[str, bytes]]:
         images: dict[str, bytes] = {}
+        environment_images: dict[str, bytes] = {}
         total_bytes = 0
         for snapshot in snapshots:
             try:
@@ -242,7 +244,26 @@ class SessionReportMailer:
                 continue
             images[snapshot.event_key] = image
             total_bytes += len(image)
-        return images
+            if not snapshot.environment_s3_key:
+                continue
+            try:
+                environment_image = self._store.read_event_snapshot_environment_image(
+                    snapshot
+                )
+            except Exception:
+                logger.warning(
+                    "Falha ao carregar imagem inline da câmera ambiente do evento %s",
+                    snapshot.event_key,
+                    exc_info=True,
+                )
+                continue
+            if (
+                environment_image
+                and total_bytes + len(environment_image) <= max(0, max_bytes)
+            ):
+                environment_images[snapshot.event_key] = environment_image
+                total_bytes += len(environment_image)
+        return images, environment_images
 
     def _load_student_photo(self, session) -> bytes | None:
         if session.student is None:
@@ -272,10 +293,12 @@ class SessionReportMailer:
         snapshots,
         inline_images: dict[str, bytes] | None = None,
         *,
+        environment_inline_images: dict[str, bytes] | None = None,
         student_photo: bytes | None = None,
         available_snapshot_count: int | None = None,
     ) -> EmailMessage:
         inline_images = inline_images or {}
+        environment_inline_images = environment_inline_images or {}
         base_url = report.public_dashboard_url.rstrip("/")
         session_url = f"{base_url}/sessions/{quote(session.session_id, safe='')}"
         all_flagged = [
@@ -315,15 +338,40 @@ class SessionReportMailer:
                 f"{session_url}/event-snapshots/{quote(snapshot.event_key, safe='')}"
             )
             image = inline_images.get(snapshot.event_key)
+            environment_image = environment_inline_images.get(snapshot.event_key)
             if image:
                 cid = f"snapshot-{index}@proctoring"
-                image_html = (
+                main_image_html = (
                     f'<a href="{html.escape(image_url)}">'
-                    f'<img src="cid:{cid}" alt="{html.escape(label)}" '
-                    'style="display:block;max-width:480px;width:100%;height:auto"></a><br>'
-                    f'<a href="{html.escape(image_url)}">Abrir imagem</a>'
+                    f'<img src="cid:{cid}" alt="Câmera principal: {html.escape(label)}" '
+                    'style="display:block;max-width:100%;width:100%;height:auto"></a>'
+                )
+                environment_image_html = ""
+                image_html = (
+                    '<table role="presentation" style="border-collapse:collapse;width:100%;max-width:640px"><tr>'
+                    f'<td style="width:{"50%" if environment_image else "100%"};padding:0 4px 0 0">'
+                    '<small>Câmera principal</small><br>'
+                    f'{main_image_html}</td>'
                 )
                 related_images.append((cid, f"snapshot-{index}.jpg", image))
+                if environment_image:
+                    environment_cid = f"snapshot-{index}-environment@proctoring"
+                    environment_image_html = (
+                        f'<a href="{html.escape(image_url)}">'
+                        f'<img src="cid:{environment_cid}" alt="Câmera ambiente: {html.escape(label)}" '
+                        'style="display:block;max-width:100%;width:100%;height:auto"></a>'
+                    )
+                    image_html += (
+                        '<td style="width:50%;padding:0 0 0 4px">'
+                        '<small>Câmera ambiente</small><br>'
+                        f'{environment_image_html}</td>'
+                    )
+                    related_images.append(
+                        (environment_cid, f"snapshot-{index}-environment.jpg", environment_image)
+                    )
+                image_html += (
+                    f'</tr></table><a href="{html.escape(image_url)}">Abrir imagens</a>'
+                )
             else:
                 image_html = f'<a href="{html.escape(image_url)}">Ver imagem</a>'
             relative_seconds = max(
