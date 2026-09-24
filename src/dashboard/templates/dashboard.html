@@ -29,6 +29,7 @@
     </div>
     <div class="panel-actions">
       <button type="button" class="button-secondary" onclick="openCreateStationModal()">Nova estação</button>
+      <button type="button" class="button-secondary" onclick="openUsersModal()">Usuários</button>
       <button type="button" class="button-secondary" id="capture-cameras-button" onclick="captureAllCameras()">Fotografar câmeras</button>
       <button type="button" class="button-secondary" id="calibrate-electronics-button" onclick="calibrateElectronics()">Calibrar eletrônicos</button>
       <button type="button" onclick="openBulkConfigModal()">Configurar estações</button>
@@ -99,6 +100,40 @@
       <button type="button" onclick="copyStationConfig()">Copiar configuração</button>
       <button type="button" class="button-secondary" onclick="closeCreateStationModal()">Concluir</button>
     </div>
+  </div>
+</dialog>
+
+<dialog id="users-modal" class="modal">
+  <h2>Usuários do painel</h2>
+  <p>Cadastro fechado: só quem está nesta lista consegue logar. Sem níveis de permissão, todo mundo tem acesso completo.</p>
+  <ul class="users-list" id="users-list">
+    {% for user in dashboard_users %}
+    <li data-username="{{ user.username }}">
+      <span><strong>{{ user.display_name }}</strong> ({{ user.username }}){% if user.username == current_username %} <em>— você</em>{% endif %}</span>
+      {% if user.username != current_username %}
+      <button type="button" class="button-secondary button-small" onclick="deleteDashboardUser('{{ user.username }}')">Remover</button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  <form class="form-card" id="create-user-form" onsubmit="createDashboardUser(event)">
+    <h3>Cadastrar novo usuário</h3>
+    <label>Login (sem espaços)
+      <input type="text" name="username" maxlength="100" placeholder="Ex.: rkzzin" required>
+    </label>
+    <label>Nome de exibição
+      <input type="text" name="display_name" maxlength="150" placeholder="Ex.: Rafael Kzzin" required>
+    </label>
+    <label>Senha (mín. 8 caracteres)
+      <input type="password" name="password" minlength="8" maxlength="200" required autocomplete="new-password">
+    </label>
+    <p class="form-error" id="create-user-error" hidden></p>
+    <div class="modal-actions">
+      <button type="submit" id="create-user-submit">Cadastrar usuário</button>
+    </div>
+  </form>
+  <div class="modal-actions">
+    <button type="button" class="button-secondary" onclick="document.getElementById('users-modal').close()">Fechar</button>
   </div>
 </dialog>
 
@@ -329,6 +364,70 @@ async function copyStationConfig() {
   const feedback = document.getElementById('station-config-copy-feedback');
   feedback.hidden = false;
   window.setTimeout(() => { feedback.hidden = true; }, 2000);
+}
+
+function openUsersModal() {
+  document.getElementById('create-user-form').reset();
+  document.getElementById('create-user-error').hidden = true;
+  document.getElementById('users-modal').showModal();
+}
+
+async function createDashboardUser(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const submit = document.getElementById('create-user-submit');
+  const error = document.getElementById('create-user-error');
+  const data = new FormData(form);
+  const username = data.get('username').trim();
+  const displayName = data.get('display_name').trim();
+  const password = data.get('password');
+  error.hidden = true;
+  submit.disabled = true;
+  submit.textContent = 'Cadastrando...';
+
+  try {
+    const response = await fetch('/api/dashboard-users', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({username, display_name: displayName, password})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+
+    const list = document.getElementById('users-list');
+    const item = document.createElement('li');
+    item.dataset.username = payload.username;
+    const label = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = payload.display_name;
+    label.append(strong, ` (${payload.username})`);
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'button-secondary button-small';
+    removeButton.textContent = 'Remover';
+    removeButton.onclick = () => deleteDashboardUser(payload.username);
+    item.append(label, ' ', removeButton);
+    list.appendChild(item);
+    form.reset();
+  } catch (requestError) {
+    error.textContent = requestError.message;
+    error.hidden = false;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = 'Cadastrar usuário';
+  }
+}
+
+async function deleteDashboardUser(username) {
+  const confirmed = window.confirm(`Remover o usuário "${username}"? Ele não vai mais conseguir logar.`);
+  if (!confirmed) return;
+  const response = await fetch(`/api/dashboard-users/${encodeURIComponent(username)}`, {method: 'DELETE'});
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    window.alert(payload.detail || `Falha ao remover: HTTP ${response.status}`);
+    return;
+  }
+  document.querySelector(`#users-list li[data-username="${CSS.escape(username)}"]`)?.remove();
 }
 
 async function deleteStation(stationId, stationName) {

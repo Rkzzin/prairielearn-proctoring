@@ -116,6 +116,29 @@ code {
   border-radius: 18px;
   padding: 20px;
 }
+.users-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.users-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--surface-strong);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.button-small {
+  width: auto;
+  padding: 6px 12px;
+  font-size: 0.85em;
+}
 .form-card label, .meta div {
   display: grid;
   gap: 6px;

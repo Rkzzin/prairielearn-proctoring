@@ -332,6 +332,19 @@ class DashboardUser(BaseModel):
     display_name: str
 
 
+class DashboardUserCreatePayload(BaseModel):
+    """Cadastro de usuário feito por dentro do painel (usuário já logado).
+
+    Continua "fechado" no sentido de que exige estar autenticado — não é
+    uma rota pública de signup, é equivalente a rodar
+    `manage_dashboard_user.py add`, só que sem precisar de acesso à máquina.
+    """
+
+    username: str = Field(min_length=1, max_length=100)
+    display_name: str = Field(min_length=1, max_length=150)
+    password: str = Field(min_length=8, max_length=200)
+
+
 class EnrollmentRecord(BaseModel):
     enrollment_id: str
     turma: str

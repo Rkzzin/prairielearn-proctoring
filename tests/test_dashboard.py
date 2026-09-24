@@ -2369,3 +2369,94 @@ async def test_logout_invalidates_session_cookie(tmp_path, dashboard_database_ur
 
     assert before_logout.status_code == 200
     assert after_logout.status_code == 303
+
+
+@pytest.mark.asyncio
+async def test_create_dashboard_user_from_inside_panel(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", cookies=cookies
+    ) as client:
+        create_response = await client.post(
+            "/api/dashboard-users",
+            json={"username": "rkzzin", "display_name": "Rafael Kzzin", "password": "outra-senha-forte"},
+        )
+        list_response = await client.get("/api/dashboard-users")
+        login_new_user = await client.post(
+            "/login", data={"username": "rkzzin", "password": "outra-senha-forte", "next": "/"}
+        )
+
+    assert create_response.status_code == 201
+    assert create_response.json() == {"username": "rkzzin", "display_name": "Rafael Kzzin"}
+    usernames = {user["username"] for user in list_response.json()}
+    assert {"prof", "rkzzin"} <= usernames
+    assert login_new_user.status_code == 303
+    assert "proctor_dashboard_session" in login_new_user.cookies
+
+
+@pytest.mark.asyncio
+async def test_create_dashboard_user_rejects_duplicate_username(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", cookies=cookies
+    ) as client:
+        response = await client.post(
+            "/api/dashboard-users",
+            json={"username": "prof", "display_name": "Outro Nome", "password": "outra-senha-forte"},
+        )
+
+    assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_create_dashboard_user_rejects_username_with_spaces(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", cookies=cookies
+    ) as client:
+        response = await client.post(
+            "/api/dashboard-users",
+            json={"username": "nome com espaço", "display_name": "X", "password": "outra-senha-forte"},
+        )
+
+    assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_create_dashboard_user_requires_login(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        response = await client.post(
+            "/api/dashboard-users",
+            json={"username": "rkzzin", "display_name": "Rafael Kzzin", "password": "outra-senha-forte"},
+        )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_delete_dashboard_user_cannot_remove_self_or_last_user(tmp_path, dashboard_database_url):
+    app = _make_app(tmp_path, dashboard_database_url, admin_auth=True)
+    cookies = await _login(app)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver", cookies=cookies
+    ) as client:
+        self_delete = await client.delete("/api/dashboard-users/prof")
+        assert self_delete.status_code == 400
+
+        await client.post(
+            "/api/dashboard-users",
+            json={"username": "rkzzin", "display_name": "Rafael Kzzin", "password": "outra-senha-forte"},
+        )
+        other_delete = await client.delete("/api/dashboard-users/rkzzin")
+
+    assert other_delete.status_code == 200
+    assert app.state.store.list_dashboard_users() == [{"username": "prof", "display_name": "prof"}]

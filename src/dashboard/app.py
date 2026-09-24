@@ -54,6 +54,7 @@ from src.dashboard.models import (
     CameraSnapshotPayload,
     CameraSnapshotRecord,
     CommandType,
+    DashboardUserCreatePayload,
     ExamConfigPayload,
     NotificationSettings,
     SessionEventPayload,
@@ -307,6 +308,8 @@ def create_app(
             request,
             "dashboard.html",
             title="Dashboard",
+            dashboard_users=dashboard_store.list_dashboard_users(),
+            current_username=getattr(request.state, "dashboard_user", {}).get("username"),
             **snapshot,
         )
 
@@ -497,6 +500,46 @@ def create_app(
         if not dashboard_store.delete_station(station_id):
             raise HTTPException(status_code=404, detail="Estação não encontrada.")
         return JSONResponse({"deleted": station_id})
+
+    @app.get("/api/dashboard-users")
+    async def list_dashboard_users() -> JSONResponse:
+        return JSONResponse(dashboard_store.list_dashboard_users())
+
+    @app.post("/api/dashboard-users")
+    async def create_dashboard_user(payload: DashboardUserCreatePayload) -> JSONResponse:
+        username = payload.username.strip()
+        display_name = payload.display_name.strip()
+        if "\n" in username or "\r" in username or " " in username:
+            raise HTTPException(
+                status_code=400, detail="O login não pode ter espaços ou quebras de linha."
+            )
+        if "\n" in display_name or "\r" in display_name:
+            raise HTTPException(status_code=400, detail="O nome deve ter apenas uma linha.")
+        try:
+            dashboard_store.create_dashboard_user(username, hash_password(payload.password), display_name)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="Já existe um usuário com esse login. Escolha outro.",
+            ) from exc
+        return JSONResponse(
+            {"username": username, "display_name": display_name}, status_code=201
+        )
+
+    @app.delete("/api/dashboard-users/{username}")
+    async def delete_dashboard_user(username: str, request: Request) -> JSONResponse:
+        current_user = getattr(request.state, "dashboard_user", None)
+        if current_user is not None and current_user["username"] == username:
+            raise HTTPException(
+                status_code=400, detail="Você não pode remover o próprio usuário logado."
+            )
+        if len(dashboard_store.list_dashboard_users()) <= 1:
+            raise HTTPException(
+                status_code=409, detail="Precisa sobrar ao menos um usuário cadastrado."
+            )
+        if not dashboard_store.delete_dashboard_user(username):
+            raise HTTPException(status_code=404, detail="Usuário não encontrado.")
+        return JSONResponse({"deleted": username})
 
     @app.get("/api/sessions")
     async def list_sessions() -> JSONResponse:

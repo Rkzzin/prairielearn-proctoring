@@ -1250,6 +1250,27 @@ class DashboardStore:
             )
             self._db.commit()
 
+    def create_dashboard_user(self, username: str, password_hash: str, display_name: str) -> None:
+        """Cria um usuário novo — usado pelo cadastro dentro do dashboard.
+
+        Diferente de `upsert_dashboard_user` (usado pelo CLI pra também
+        permitir resetar senha), aqui falha com `ValueError` se o username já
+        existir, pra não sobrescrever silenciosamente um usuário existente.
+        """
+        with self._lock:
+            exists = self._db.execute(
+                "SELECT 1 FROM dashboard_users WHERE username = %s",
+                (username,),
+            ).fetchone()
+            if exists:
+                raise ValueError(f"username já cadastrado: {username}")
+            self._db.execute(
+                "INSERT INTO dashboard_users (username, password_hash, display_name) "
+                "VALUES (%s, %s, %s)",
+                (username, password_hash, display_name),
+            )
+            self._db.commit()
+
     def upsert_dashboard_user(self, username: str, password_hash: str, display_name: str) -> None:
         """Cria ou atualiza um usuário do painel — usado por `manage_dashboard_user.py`."""
         with self._lock:
