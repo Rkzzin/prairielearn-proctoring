@@ -240,6 +240,22 @@
 <script>
 const timelineData = JSON.parse(document.getElementById('timeline-data').textContent);
 function tryNextStudentPhoto(img) {
+  const maxRetries = 2;
+  const retryDelayMs = 400;
+  const retriesLeft = Number(img.dataset.photoRetriesLeft ?? maxRetries);
+  if (retriesLeft > 0) {
+    // Erro de rede transitório (comum em wifi instável): tenta a MESMA
+    // extensão de novo antes de desistir dela e pular pra próxima, pra não
+    // depender do usuário dar reload manual.
+    img.dataset.photoRetriesLeft = String(retriesLeft - 1);
+    const currentSrc = img.src;
+    setTimeout(() => {
+      img.src = '';
+      img.src = currentSrc;
+    }, retryDelayMs);
+    return;
+  }
+  img.dataset.photoRetriesLeft = String(maxRetries);
   const candidates = JSON.parse(img.dataset.photoCandidates || '[]');
   if (!candidates.length) {
     img.remove();

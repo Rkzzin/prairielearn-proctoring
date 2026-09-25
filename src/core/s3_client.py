@@ -146,7 +146,7 @@ class S3Client:
     def photo_exists(self, turma_id: str, student_name: str) -> bool:
         """Verifica se a foto de um aluno existe no S3 (qualquer extensão)."""
         prefix = self.config.photos_prefix_for_turma(turma_id)
-        for ext in (".png", ".jpg", ".jpeg"):
+        for ext in (".jpg", ".png", ".jpeg"):
             key = f"{prefix}{student_name}{ext}"
             try:
                 self._s3.head_object(Bucket=self.config.bucket, Key=key)
@@ -172,7 +172,7 @@ class S3Client:
                 Params={"Bucket": self.config.bucket, "Key": f"{prefix}{student_name}{ext}"},
                 ExpiresIn=expires_in,
             )
-            for ext in (".png", ".jpg", ".jpeg")
+            for ext in (".jpg", ".png", ".jpeg")
         ]
 
 # ──────────────────────────────────────────────

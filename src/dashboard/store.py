@@ -347,7 +347,7 @@ class DashboardStore:
         if self._app_cfg is None or self._s3 is None:
             return None
         prefix = self._app_cfg.s3.photos_prefix_for_turma(turma)
-        for extension in (".png", ".jpg", ".jpeg"):
+        for extension in (".jpg", ".png", ".jpeg"):
             try:
                 response = self._s3.get_object(
                     Bucket=self._app_cfg.s3.bucket,
