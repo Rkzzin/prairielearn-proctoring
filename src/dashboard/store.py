@@ -327,6 +327,22 @@ class DashboardStore:
         response = self._s3.get_object(Bucket=snapshot.s3_bucket, Key=snapshot.s3_key)
         return response["Body"].read()
 
+    def read_event_snapshot_environment_image(
+        self,
+        snapshot: EventSnapshotRecord,
+    ) -> bytes | None:
+        if (
+            not snapshot.environment_s3_bucket
+            or not snapshot.environment_s3_key
+            or self._s3 is None
+        ):
+            return None
+        response = self._s3.get_object(
+            Bucket=snapshot.environment_s3_bucket,
+            Key=snapshot.environment_s3_key,
+        )
+        return response["Body"].read()
+
     def read_student_photo(self, turma: str, student_id: str) -> bytes | None:
         if self._app_cfg is None or self._s3 is None:
             return None
