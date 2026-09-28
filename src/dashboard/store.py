@@ -971,7 +971,14 @@ class DashboardStore:
             if len(station.camera_snapshots) >= 8:
                 raise ValueError("Limite de fotos do lote atingido")
             station.camera_snapshots.append(snapshot)
-            station.camera_snapshots.sort(key=lambda item: item.camera_index)
+            assigned_config = station.assigned_config
+            camera_order = {
+                assigned_config.primary_camera_index: 0,
+                assigned_config.secondary_camera_index: 1,
+            } if assigned_config else {}
+            station.camera_snapshots.sort(
+                key=lambda item: (camera_order.get(item.camera_index, 2), item.camera_index)
+            )
             station.camera_capture_status = "running"
             station.camera_capture_message = f"{len(station.camera_snapshots)} foto(s) recebida(s)"
             self._save_station(station)

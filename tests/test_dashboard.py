@@ -634,8 +634,19 @@ async def test_station_uploads_camera_snapshot_and_gallery_displays_it(tmp_path,
             station_name="NUC Sala 1",
             status=StationStatus.IDLE,
             available_cameras=[
-                {"index": 2, "name": "C922 Pro Stream Webcam", "device": "/dev/video2"}
+                {"index": 0, "name": "HD Pro Webcam C920", "device": "/dev/video0"},
+                {"index": 2, "name": "C922 Pro Stream Webcam", "device": "/dev/video2"},
             ],
+        )
+    )
+    app.state.store.create_config(
+        ExamConfigPayload(
+            turma="T1",
+            assessment="Quiz",
+            prairielearn_url="https://prairielearn.example.edu",
+            target_station_ids=["nuc-01"],
+            primary_camera_index=2,
+            secondary_camera_index=0,
         )
     )
 
@@ -646,6 +657,17 @@ async def test_station_uploads_camera_snapshot_and_gallery_displays_it(tmp_path,
     ) as client:
         queued = (await client.post("/api/camera-checks")).json()
         batch_id = queued["batch_id"]
+        response = await client.post(
+            "/api/camera-snapshots",
+            headers=headers,
+            json={
+                "batch_id": batch_id,
+                "camera_index": 0,
+                "camera_name": "HD Pro Webcam C920",
+                "device": "/dev/video0",
+                "image_base64": base64.b64encode(b"\xff\xd8external").decode("ascii"),
+            },
+        )
         response = await client.post(
             "/api/camera-snapshots",
             headers=headers,
@@ -664,6 +686,8 @@ async def test_station_uploads_camera_snapshot_and_gallery_displays_it(tmp_path,
     assert response.status_code == 201
     assert "C922 Pro Stream Webcam" in gallery.text
     assert "/camera-snapshots/" in gallery.text
+    assert gallery.text.index("C922 Pro Stream Webcam") < gallery.text.index("HD Pro Webcam C920")
+    assert [snapshot.camera_index for snapshot in app.state.store.get_station("nuc-01").camera_snapshots] == [2, 0]
     assert image.status_code == 200
     assert image.content == b"\xff\xd8jpeg"
 
