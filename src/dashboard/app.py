@@ -373,6 +373,13 @@ def create_app(
         session = dashboard_store.get_session(session_id)
         if session is None:
             return HTMLResponse("Sessão não encontrada.", status_code=404)
+        reviewer = getattr(request.state, "dashboard_user", None)
+        if reviewer is not None:
+            dashboard_store.start_session_review(
+                session_id,
+                username=reviewer["username"],
+                reviewer_name=reviewer["display_name"],
+            )
         timeline = _build_timeline(session)
         previous_session, next_session = dashboard_store.adjacent_sessions(session_id)
         event_snapshots = dashboard_store.list_event_snapshots(session_id)
@@ -763,6 +770,7 @@ def create_app(
             session_id,
             payload.review_status,
             reviewed_by=reviewer["display_name"] if reviewer else None,
+            reviewer_username=reviewer["username"] if reviewer else None,
         )
         if session is None:
             raise HTTPException(status_code=404, detail="Sessão não encontrada.")

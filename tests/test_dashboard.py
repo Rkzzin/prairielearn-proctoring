@@ -1351,6 +1351,7 @@ async def test_review_status_records_reviewer_display_name(tmp_path, dashboard_d
         base_url="http://testserver",
         cookies=await _login(app),
     ) as client:
+        opened_page = await client.get("/sessions/sess-reviewed")
         response = await client.post(
             "/api/sessions/sess-reviewed/review-status",
             json={"review_status": "VIOLATION"},
@@ -1367,6 +1368,14 @@ async def test_review_status_records_reviewer_display_name(tmp_path, dashboard_d
     session = app.state.store.get_session("sess-reviewed")
     assert session.reviewed_by == "prof"
     assert session.reviewed_at is not None
+    review_events = app.state.store.list_session_review_events("sess-reviewed")
+    assert len(review_events) == 1
+    assert review_events[0].username == "prof"
+    assert review_events[0].reviewer_name == "prof"
+    assert review_events[0].previous_status == SessionReviewStatus.NEEDS_REVIEW
+    assert review_events[0].review_status == SessionReviewStatus.VIOLATION
+    assert review_events[0].elapsed_seconds >= 0
+    assert opened_page.status_code == 200
     assert "Revisado por prof" in detail_page.text
 
 

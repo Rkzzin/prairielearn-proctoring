@@ -27,6 +27,7 @@ from src.dashboard.models import (
     SessionEmailReport,
     SessionEventPayload,
     SessionRecord,
+    SessionReviewEvent,
     SessionReviewStatus,
     StationHeartbeat,
     StationRecord,
@@ -95,6 +96,8 @@ class DashboardStore:
             self._sessions.clear()
             self._db.execute("DELETE FROM session_email_reports")
             self._db.execute("DELETE FROM event_snapshots")
+            self._db.execute("DELETE FROM session_review_events")
+            self._db.execute("DELETE FROM session_review_visits")
             self._db.execute("DELETE FROM sessions")
             self._db.commit()
 
@@ -791,6 +794,7 @@ class DashboardStore:
         review_status: SessionReviewStatus,
         *,
         reviewed_by: str | None = None,
+        reviewer_username: str | None = None,
     ) -> SessionRecord | None:
         """Grava o status de revisão e, se informado, quem revisou.
 
@@ -803,15 +807,84 @@ class DashboardStore:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
+            previous_status = session.review_status
             session.review_status = review_status
+            changed_at = datetime.now(timezone.utc)
             if reviewed_by is not None:
                 session.reviewed_by = reviewed_by
-                session.reviewed_at = datetime.now(timezone.utc)
+                session.reviewed_at = changed_at
+            if (
+                previous_status != review_status
+                and reviewer_username is not None
+                and reviewed_by is not None
+            ):
+                visit = self._db.execute(
+                    "SELECT opened_at FROM session_review_visits "
+                    "WHERE session_id = %s AND username = %s",
+                    (session_id, reviewer_username),
+                ).fetchone()
+                if visit is not None:
+                    opened_at = visit["opened_at"]
+                    elapsed_seconds = max(0, int((changed_at - opened_at).total_seconds()))
+                    self._db.execute(
+                        "INSERT INTO session_review_events "
+                        "(session_id, username, reviewer_name, opened_at, changed_at, "
+                        "elapsed_seconds, previous_status, review_status) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (
+                            session_id,
+                            reviewer_username,
+                            reviewed_by,
+                            opened_at,
+                            changed_at,
+                            elapsed_seconds,
+                            previous_status.value,
+                            review_status.value,
+                        ),
+                    )
             result = session.model_copy(deep=True)
             self._save_session(session)
+            self._db.commit()
 
         self._broadcast()
         return result
+
+    def start_session_review(
+        self,
+        session_id: str,
+        *,
+        username: str,
+        reviewer_name: str,
+    ) -> bool:
+        """Marca quando um usuário abriu uma sessão para revisão.
+
+        Uma nova abertura pelo mesmo usuário reinicia o cronômetro; as mudanças
+        posteriores de status mantêm o mesmo ponto inicial para a auditoria.
+        """
+        with self._lock:
+            if session_id not in self._sessions:
+                return False
+            self._db.execute(
+                "INSERT INTO session_review_visits "
+                "(session_id, username, reviewer_name, opened_at) "
+                "VALUES (%s, %s, %s, %s) "
+                "ON CONFLICT (session_id, username) DO UPDATE SET "
+                "reviewer_name = EXCLUDED.reviewer_name, opened_at = EXCLUDED.opened_at",
+                (session_id, username, reviewer_name, datetime.now(timezone.utc)),
+            )
+            self._db.commit()
+        return True
+
+    def list_session_review_events(self, session_id: str) -> list[SessionReviewEvent]:
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT review_event_id, session_id, username, reviewer_name, opened_at, "
+                "changed_at, elapsed_seconds, previous_status, review_status "
+                "FROM session_review_events WHERE session_id = %s "
+                "ORDER BY changed_at",
+                (session_id,),
+            ).fetchall()
+        return [SessionReviewEvent.model_validate(row) for row in rows]
 
     def append_events(self, session_id: str, events: list[SessionEventPayload]) -> SessionRecord | None:
         with self._lock:
@@ -1242,6 +1315,32 @@ class DashboardStore:
               display_name TEXT NOT NULL,
               created_at TIMESTAMPTZ NOT NULL DEFAULT now()
             )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS session_review_visits (
+              session_id TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+              username TEXT NOT NULL REFERENCES dashboard_users (username) ON DELETE CASCADE,
+              reviewer_name TEXT NOT NULL,
+              opened_at TIMESTAMPTZ NOT NULL,
+              PRIMARY KEY (session_id, username)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS session_review_events (
+              review_event_id BIGSERIAL PRIMARY KEY,
+              session_id TEXT NOT NULL REFERENCES sessions (session_id) ON DELETE CASCADE,
+              username TEXT NOT NULL REFERENCES dashboard_users (username) ON DELETE CASCADE,
+              reviewer_name TEXT NOT NULL,
+              opened_at TIMESTAMPTZ NOT NULL,
+              changed_at TIMESTAMPTZ NOT NULL,
+              elapsed_seconds INTEGER NOT NULL CHECK (elapsed_seconds >= 0),
+              previous_status TEXT NOT NULL,
+              review_status TEXT NOT NULL
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS session_review_events_session_changed_idx
+            ON session_review_events (session_id, changed_at)
             """,
             #: Sessão de cookie do login do painel — só o hash do token vai
             #: pro cookie; `token_hash` aqui é o que se compara. Expira por

@@ -47,6 +47,20 @@ class SessionReviewStatus(str, Enum):
     VIOLATION = "VIOLATION"
 
 
+class SessionReviewEvent(BaseModel):
+    """Auditoria de uma alteração de status durante a revisão manual."""
+
+    review_event_id: int
+    session_id: str
+    username: str
+    reviewer_name: str
+    opened_at: datetime
+    changed_at: datetime
+    elapsed_seconds: int = Field(ge=0)
+    previous_status: SessionReviewStatus
+    review_status: SessionReviewStatus
+
+
 class CommandType(str, Enum):
     APPLY_CONFIG = "APPLY_CONFIG"
     SET_AUTOSTART = "SET_AUTOSTART"
