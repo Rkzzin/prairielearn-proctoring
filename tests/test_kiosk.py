@@ -27,14 +27,14 @@ from src.kiosk.reidentify import run_reidentify
 
 def test_confirmation_flow_requires_identity_and_each_rule_acknowledgement():
     assert len(_CONFIRMATION_SLIDES) == 6
-    assert _CONFIRMATION_SLIDES[0]["action"] == "São meus dados"
+    assert _CONFIRMATION_SLIDES[0]["action"] == "Seguir, dados corretos"
     assert [slide["action"] for slide in _CONFIRMATION_SLIDES[1:-1]] == [
-        "Li e aceito",
-        "Li e aceito",
-        "Li e aceito",
-        "Li e aceito",
+        "Seguir",
+        "Seguir",
+        "Seguir",
+        "Seguir",
     ]
-    assert _CONFIRMATION_SLIDES[-1]["action"] == "Confirmar e iniciar avaliação"
+    assert _CONFIRMATION_SLIDES[-1]["action"] == "Seguir"
 
 
 class DummyProc:

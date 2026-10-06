@@ -38,7 +38,7 @@ _CONFIRMATION_SLIDES = (
     {
         "title": "Confirme sua identidade",
         "description": "Confira seu nome, identificação e enquadramento antes de continuar.",
-        "action": "São meus dados",
+        "action": "Seguir, dados corretos",
         "identity": True,
     },
     {
@@ -47,25 +47,25 @@ _CONFIRMATION_SLIDES = (
             "Para garantir uma avaliação justa, câmera, áudio ambiente, tela e atividade "
             "do teclado serão monitorados durante a realização."
         ),
-        "action": "Li e aceito",
+        "action": "Seguir",
         "identity": False,
     },
     {
         "title": "Regra 1: permaneça visível",
         "description": "Permaneça visível para a câmera durante toda a avaliação.",
-        "action": "Li e aceito",
+        "action": "Seguir",
         "identity": False,
     },
     {
         "title": "Regra 2: atividade individual",
         "description": "Realize a atividade individualmente, sem a ajuda de outra pessoa.",
-        "action": "Li e aceito",
+        "action": "Seguir",
         "identity": False,
     },
     {
         "title": "Regra 3: itens não autorizados",
         "description": "Não utilize celular ou materiais não autorizados durante a avaliação.",
-        "action": "Li e aceito",
+        "action": "Seguir",
         "identity": False,
     },
     {
@@ -74,7 +74,7 @@ _CONFIRMATION_SLIDES = (
             "Você confirmou sua identidade e leu as regras da avaliação. "
             "Aguarde todas as verificações do ambiente ficarem prontas para iniciar."
         ),
-        "action": "Confirmar e iniciar avaliação",
+        "action": "Seguir",
         "identity": False,
     },
 )
@@ -561,6 +561,20 @@ def _add_status_box(
     parent.after(0, refresh)
 
 
+def _watch_status(parent, *, status_url: str, on_update) -> None:
+    """Atualiza o estado técnico sem exibir os detalhes para o aluno."""
+
+    def refresh() -> None:
+        try:
+            with urllib.request.urlopen(status_url, timeout=0.5) as response:
+                on_update(json.loads(response.read()))
+        except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+            pass
+        parent.after(500, refresh)
+
+    parent.after(0, refresh)
+
+
 def _violation_report_message(reason: str) -> str | None:
     if reason.strip().upper() in {"ABSENCE", "MULTI_FACE", "DIFFERENT_USER"}:
         return "Esta ocorrência foi registrada automaticamente para a equipe responsável."
@@ -1013,12 +1027,9 @@ def _confirmation_mode(
         checks_ready = bool(payload.get("ready"))
         set_confirm_enabled()
 
-    status_box = tk.Frame(container, bg=PANEL)
-    status_box.pack(fill="x")
-    _add_status_box(
-        status_box,
+    _watch_status(
+        container,
         status_url=status_url,
-        bg=PANEL,
         on_update=update_release_state,
     )
 
@@ -1037,21 +1048,12 @@ def _confirmation_mode(
 
     _button(
         buttons,
-        text="Não são meus dados",
+        text="Sair",
         command=lambda: respond(cancel_url),
         padx=24,
         pady=12,
         variant="secondary",
     ).pack(side="left", padx=(0, 12))
-    back_button = _button(
-        buttons,
-        text="Voltar",
-        command=lambda: show_slide(current_slide - 1),
-        padx=24,
-        pady=12,
-        variant="secondary",
-    )
-    back_button.pack(side="left", padx=(0, 12))
     confirm_button = _button(
         buttons,
         text="",
@@ -1075,7 +1077,6 @@ def _confirmation_mode(
         else:
             identity_card.pack_forget()
             preview_frame.pack_forget()
-        back_button.configure(state="normal" if current_slide else "disabled")
         if current_slide == len(_CONFIRMATION_SLIDES) - 1:
             confirm_button.configure(text=slide["action"])
             set_confirm_enabled()
