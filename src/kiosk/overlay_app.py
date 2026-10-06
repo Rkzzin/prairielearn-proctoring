@@ -31,6 +31,54 @@ DISABLED_BG = "#E2E8F0"
 DISABLED_TEXT = "#64748B"
 FONT = "DejaVu Sans"
 
+# O fluxo é intencionalmente sequencial: cada regra só avança após o aceite
+# explícito do aluno. O conteúdo vem das regras já exibidas na confirmação
+# anterior, mas é apresentado em partes curtas para facilitar a leitura.
+_CONFIRMATION_SLIDES = (
+    {
+        "title": "Confirme sua identidade",
+        "description": "Confira seu nome, identificação e enquadramento antes de continuar.",
+        "action": "São meus dados",
+        "identity": True,
+    },
+    {
+        "title": "Monitoramento da avaliação",
+        "description": (
+            "Para garantir uma avaliação justa, câmera, áudio ambiente, tela e atividade "
+            "do teclado serão monitorados durante a realização."
+        ),
+        "action": "Li e aceito",
+        "identity": False,
+    },
+    {
+        "title": "Regra 1: permaneça visível",
+        "description": "Permaneça visível para a câmera durante toda a avaliação.",
+        "action": "Li e aceito",
+        "identity": False,
+    },
+    {
+        "title": "Regra 2: atividade individual",
+        "description": "Realize a atividade individualmente, sem a ajuda de outra pessoa.",
+        "action": "Li e aceito",
+        "identity": False,
+    },
+    {
+        "title": "Regra 3: itens não autorizados",
+        "description": "Não utilize celular ou materiais não autorizados durante a avaliação.",
+        "action": "Li e aceito",
+        "identity": False,
+    },
+    {
+        "title": "Pronto para iniciar",
+        "description": (
+            "Você confirmou sua identidade e leu as regras da avaliação. "
+            "Aguarde todas as verificações do ambiente ficarem prontas para iniciar."
+        ),
+        "action": "Confirmar e iniciar avaliação",
+        "identity": False,
+    },
+)
+
 
 def _button(parent, *, text: str, command, variant: str = "primary", **kwargs):
     import tkinter as tk
@@ -894,22 +942,31 @@ def _confirmation_mode(
     )
     container.place(relx=0.5, rely=0.5, anchor="center")
 
-    tk.Label(
+    progress_label = tk.Label(
         container,
-        text="IDENTIDADE CONFIRMADA",
         fg=SUCCESS,
         bg=PANEL,
         font=(FONT, 15, "bold"),
-    ).pack(pady=(0, 8))
-    tk.Label(
+    )
+    progress_label.pack(pady=(0, 8))
+    title_label = tk.Label(
         container,
-        text="Confira seus dados antes de iniciar",
         fg=TEXT,
         bg=PANEL,
         wraplength=1000,
         justify="center",
         font=(FONT, 36, "bold"),
-    ).pack(pady=(0, 14))
+    )
+    title_label.pack(pady=(0, 14))
+    description_label = tk.Label(
+        container,
+        fg=MUTED,
+        bg=PANEL,
+        wraplength=980,
+        justify="center",
+        font=(FONT, 19),
+    )
+    description_label.pack(pady=(0, 16))
     identity_card = tk.Frame(
         container,
         bg="#E9EEF5",
@@ -918,7 +975,6 @@ def _confirmation_mode(
         padx=24,
         pady=12,
     )
-    identity_card.pack(fill="x", pady=(0, 12))
     tk.Label(
         identity_card,
         text=f"{student_name}\nIdentificação: {student_id}",
@@ -928,39 +984,24 @@ def _confirmation_mode(
         font=(FONT, 24, "bold"),
     ).pack()
 
+    preview_frame = tk.Frame(container, bg=PANEL)
     _add_camera_preview(
-        container,
+        preview_frame,
         preview_url=preview_url,
         bg=PANEL,
         max_size=(220, 165),
     )
-
-    notice = (
-        "Para garantir uma avaliação justa, câmera, áudio ambiente, tela e atividade do teclado "
-        "serão monitorados durante a realização.\n\n"
-        "REGRAS DA AVALIAÇÃO\n"
-        "1. Permaneça visível durante toda a avaliação.\n"
-        "2. Realize a atividade individualmente.\n"
-        "3. Não utilize celular ou materiais não autorizados."
-    )
-    tk.Label(
-        container,
-        text=notice,
-        fg=MUTED,
-        bg=PANEL,
-        wraplength=1050,
-        justify="left",
-        font=(FONT, 16),
-    ).pack(pady=(0, 8))
-
-    confirmed = tk.BooleanVar(value=False)
     confirm_button: tk.Button
     remaining_label = tk.Label(container, fg=MUTED, bg=PANEL, font=(FONT, 15))
 
     checks_ready = False
+    current_slide = 0
+    accepted_slides: set[int] = set()
 
     def set_confirm_enabled() -> None:
-        enabled = confirmed.get() and checks_ready
+        if current_slide != len(_CONFIRMATION_SLIDES) - 1:
+            return
+        enabled = checks_ready and len(accepted_slides) == len(_CONFIRMATION_SLIDES) - 1
         confirm_button.configure(
             state="normal" if enabled else "disabled",
             bg=ACTION if enabled else DISABLED_BG,
@@ -980,63 +1021,6 @@ def _confirmation_mode(
         bg=PANEL,
         on_update=update_release_state,
     )
-
-    acknowledgement = tk.Frame(
-        container,
-        bg="#F8FAFC",
-        highlightbackground=PANEL_BORDER,
-        highlightthickness=1,
-        padx=18,
-        pady=14,
-        cursor="hand2",
-    )
-    acknowledgement.pack(fill="x", pady=(0, 18))
-    checkbox = tk.Canvas(
-        acknowledgement,
-        width=52,
-        height=52,
-        bg="#F8FAFC",
-        highlightthickness=0,
-        cursor="hand2",
-    )
-    checkbox.pack(side="left", padx=(0, 16))
-    acknowledgement_text = tk.Label(
-        acknowledgement,
-        text=(
-            "Confirmo que meus dados estão corretos, li as regras da avaliação "
-            "e estou ciente de que devo cumpri-las."
-        ),
-        fg=TEXT,
-        bg="#F8FAFC",
-        justify="left",
-        wraplength=900,
-        font=(FONT, 16, "bold"),
-        cursor="hand2",
-    )
-    acknowledgement_text.pack(side="left", fill="x", expand=True)
-
-    def draw_checkbox() -> None:
-        checkbox.delete("all")
-        checkbox.create_rectangle(
-            4,
-            4,
-            48,
-            48,
-            fill=SUCCESS if confirmed.get() else PANEL,
-            outline=SUCCESS if confirmed.get() else PRIMARY,
-            width=3,
-        )
-        if confirmed.get():
-            checkbox.create_line(13, 27, 22, 36, 40, 16, fill="#FFFFFF", width=5, capstyle="round", joinstyle="round")
-
-    def toggle_acknowledgement(_event=None) -> None:
-        confirmed.set(not confirmed.get())
-        draw_checkbox()
-        set_confirm_enabled()
-
-    for widget in (acknowledgement, checkbox, acknowledgement_text):
-        widget.bind("<Button-1>", toggle_acknowledgement)
-    draw_checkbox()
 
     buttons = tk.Frame(container, bg=PANEL)
     buttons.pack()
@@ -1059,17 +1043,54 @@ def _confirmation_mode(
         pady=12,
         variant="secondary",
     ).pack(side="left", padx=(0, 12))
+    back_button = _button(
+        buttons,
+        text="Voltar",
+        command=lambda: show_slide(current_slide - 1),
+        padx=24,
+        pady=12,
+        variant="secondary",
+    )
+    back_button.pack(side="left", padx=(0, 12))
     confirm_button = _button(
         buttons,
-        text="Confirmar e iniciar avaliação",
-        command=lambda: respond(confirm_url),
-        state="disabled",
+        text="",
+        command=lambda: advance_slide(),
         padx=24,
         pady=12,
         variant="primary",
     )
     confirm_button.pack(side="left")
-    set_confirm_enabled()
+
+    def show_slide(index: int) -> None:
+        nonlocal current_slide
+        current_slide = max(0, min(index, len(_CONFIRMATION_SLIDES) - 1))
+        slide = _CONFIRMATION_SLIDES[current_slide]
+        progress_label.configure(text=f"ETAPA {current_slide + 1} DE {len(_CONFIRMATION_SLIDES)}")
+        title_label.configure(text=slide["title"])
+        description_label.configure(text=slide["description"])
+        if slide["identity"]:
+            identity_card.pack(fill="x", pady=(0, 12))
+            preview_frame.pack(pady=(0, 4))
+        else:
+            identity_card.pack_forget()
+            preview_frame.pack_forget()
+        back_button.configure(state="normal" if current_slide else "disabled")
+        if current_slide == len(_CONFIRMATION_SLIDES) - 1:
+            confirm_button.configure(text=slide["action"])
+            set_confirm_enabled()
+        else:
+            confirm_button.configure(state="normal", bg=ACTION, fg="#FFFFFF", text=slide["action"])
+
+    def advance_slide() -> None:
+        if current_slide == len(_CONFIRMATION_SLIDES) - 1:
+            if checks_ready and len(accepted_slides) == len(_CONFIRMATION_SLIDES) - 1:
+                respond(confirm_url)
+            return
+        accepted_slides.add(current_slide)
+        show_slide(current_slide + 1)
+
+    show_slide(0)
     remaining_label.pack(pady=(18, 0))
 
     deadline = root.tk.call("clock", "seconds") + max(1, int(timeout_sec))

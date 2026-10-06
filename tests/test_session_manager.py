@@ -1430,7 +1430,7 @@ def test_session_manager_requires_identity_confirmation_before_starting_componen
 
     manager.start_session()
 
-    assert confirmation_calls == [("alice01", "Alice Silva", 20.0)]
+    assert confirmation_calls == [("alice01", "Alice Silva", 90.0)]
     assert engine.started is True
     assert capture.started is True
     assert uploader.started is True

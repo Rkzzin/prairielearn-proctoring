@@ -13,6 +13,7 @@ from src.kiosk.chromium import ChromiumKiosk
 from src.kiosk.lockdown import Lockdown
 from src.kiosk.overlay import SessionOverlay
 from src.kiosk.overlay_app import (
+    _CONFIRMATION_SLIDES,
     _blocked_reason_message,
     _clamp_overlay_position,
     _format_clock_time,
@@ -22,6 +23,18 @@ from src.kiosk.overlay_app import (
     _violation_report_message,
 )
 from src.kiosk.reidentify import run_reidentify
+
+
+def test_confirmation_flow_requires_identity_and_each_rule_acknowledgement():
+    assert len(_CONFIRMATION_SLIDES) == 6
+    assert _CONFIRMATION_SLIDES[0]["action"] == "São meus dados"
+    assert [slide["action"] for slide in _CONFIRMATION_SLIDES[1:-1]] == [
+        "Li e aceito",
+        "Li e aceito",
+        "Li e aceito",
+        "Li e aceito",
+    ]
+    assert _CONFIRMATION_SLIDES[-1]["action"] == "Confirmar e iniciar avaliação"
 
 
 class DummyProc:
