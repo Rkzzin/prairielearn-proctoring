@@ -37,9 +37,8 @@ FONT = "DejaVu Sans"
 _CONFIRMATION_SLIDES = (
     {
         "title": "Confirme sua identidade",
-        "description": "Confira seu nome, identificação e enquadramento antes de continuar.",
+        "description": "",
         "action": "Concordo, dados corretos",
-        "identity": True,
     },
     {
         "title": "Monitoramento da avaliação",
@@ -48,25 +47,21 @@ _CONFIRMATION_SLIDES = (
             "do teclado serão monitorados durante a realização."
         ),
         "action": "Concordo",
-        "identity": False,
     },
     {
         "title": "Permaneça visível para a câmera durante toda a avaliação.",
         "description": "",
         "action": "Concordo",
-        "identity": False,
     },
     {
         "title": "Realize a atividade individualmente, sem a ajuda de outra pessoa.",
         "description": "",
         "action": "Concordo",
-        "identity": False,
     },
     {
         "title": "Não utilize celular ou materiais não autorizados durante a avaliação.",
         "description": "",
         "action": "Concordo",
-        "identity": False,
     },
     {
         "title": "Pronto para iniciar",
@@ -75,7 +70,6 @@ _CONFIRMATION_SLIDES = (
             "Aguarde todas as verificações do ambiente ficarem prontas para iniciar."
         ),
         "action": "Concordo",
-        "identity": False,
     },
 )
 
@@ -980,36 +974,9 @@ def _confirmation_mode(
         wraplength=980,
         justify="center",
         font=(FONT, 19),
-        height=2,
+        height=4,
     )
     description_label.pack(pady=(0, 16))
-    slide_content = tk.Frame(container, bg=PANEL, height=290)
-    slide_content.pack(fill="x")
-    slide_content.pack_propagate(False)
-    identity_card = tk.Frame(
-        slide_content,
-        bg="#E9EEF5",
-        highlightbackground="#B7C9DE",
-        highlightthickness=1,
-        padx=24,
-        pady=12,
-    )
-    tk.Label(
-        identity_card,
-        text=f"{student_name}\nIdentificação: {student_id}",
-        fg=TEXT,
-        bg="#E9EEF5",
-        justify="center",
-        font=(FONT, 24, "bold"),
-    ).pack()
-
-    preview_frame = tk.Frame(slide_content, bg=PANEL)
-    _add_camera_preview(
-        preview_frame,
-        preview_url=preview_url,
-        bg=PANEL,
-        max_size=(220, 165),
-    )
     confirm_button: tk.Button
     remaining_label = tk.Label(container, fg=MUTED, bg=PANEL, font=(FONT, 15))
 
@@ -1075,13 +1042,13 @@ def _confirmation_mode(
         slide = _CONFIRMATION_SLIDES[current_slide]
         progress_label.configure(text=f"ETAPA {current_slide + 1} DE {len(_CONFIRMATION_SLIDES)}")
         title_label.configure(text=slide["title"])
-        description_label.configure(text=slide["description"])
-        if slide["identity"]:
-            identity_card.pack(fill="x", pady=(0, 12))
-            preview_frame.pack(pady=(0, 4))
-        else:
-            identity_card.pack_forget()
-            preview_frame.pack_forget()
+        description = slide["description"]
+        if current_slide == 0:
+            description = (
+                f"Confira se estes dados estão corretos:\n\n"
+                f"{student_name}\nIdentificação: {student_id}"
+            )
+        description_label.configure(text=description)
         if current_slide == len(_CONFIRMATION_SLIDES) - 1:
             confirm_button.configure(text=slide["action"])
             set_confirm_enabled()
