@@ -38,7 +38,7 @@ _CONFIRMATION_SLIDES = (
     {
         "title": "Confirme sua identidade",
         "description": "Confira seu nome, identificação e enquadramento antes de continuar.",
-        "action": "Seguir, dados corretos",
+        "action": "Concordo, dados corretos",
         "identity": True,
     },
     {
@@ -47,25 +47,25 @@ _CONFIRMATION_SLIDES = (
             "Para garantir uma avaliação justa, câmera, áudio ambiente, tela e atividade "
             "do teclado serão monitorados durante a realização."
         ),
-        "action": "Seguir",
+        "action": "Concordo",
         "identity": False,
     },
     {
-        "title": "Regra 1: permaneça visível",
-        "description": "Permaneça visível para a câmera durante toda a avaliação.",
-        "action": "Seguir",
+        "title": "Permaneça visível para a câmera durante toda a avaliação.",
+        "description": "",
+        "action": "Concordo",
         "identity": False,
     },
     {
-        "title": "Regra 2: atividade individual",
-        "description": "Realize a atividade individualmente, sem a ajuda de outra pessoa.",
-        "action": "Seguir",
+        "title": "Realize a atividade individualmente, sem a ajuda de outra pessoa.",
+        "description": "",
+        "action": "Concordo",
         "identity": False,
     },
     {
-        "title": "Regra 3: itens não autorizados",
-        "description": "Não utilize celular ou materiais não autorizados durante a avaliação.",
-        "action": "Seguir",
+        "title": "Não utilize celular ou materiais não autorizados durante a avaliação.",
+        "description": "",
+        "action": "Concordo",
         "identity": False,
     },
     {
@@ -74,7 +74,7 @@ _CONFIRMATION_SLIDES = (
             "Você confirmou sua identidade e leu as regras da avaliação. "
             "Aguarde todas as verificações do ambiente ficarem prontas para iniciar."
         ),
-        "action": "Seguir",
+        "action": "Concordo",
         "identity": False,
     },
 )
@@ -970,6 +970,7 @@ def _confirmation_mode(
         wraplength=1000,
         justify="center",
         font=(FONT, 36, "bold"),
+        height=2,
     )
     title_label.pack(pady=(0, 14))
     description_label = tk.Label(
@@ -979,10 +980,14 @@ def _confirmation_mode(
         wraplength=980,
         justify="center",
         font=(FONT, 19),
+        height=2,
     )
     description_label.pack(pady=(0, 16))
+    slide_content = tk.Frame(container, bg=PANEL, height=290)
+    slide_content.pack(fill="x")
+    slide_content.pack_propagate(False)
     identity_card = tk.Frame(
-        container,
+        slide_content,
         bg="#E9EEF5",
         highlightbackground="#B7C9DE",
         highlightthickness=1,
@@ -998,7 +1003,7 @@ def _confirmation_mode(
         font=(FONT, 24, "bold"),
     ).pack()
 
-    preview_frame = tk.Frame(container, bg=PANEL)
+    preview_frame = tk.Frame(slide_content, bg=PANEL)
     _add_camera_preview(
         preview_frame,
         preview_url=preview_url,
