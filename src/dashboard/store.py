@@ -591,6 +591,29 @@ class DashboardStore:
         self._broadcast()
         return True
 
+    def rename_station(self, station_id: str, station_name: str) -> StationRecord | None:
+        """Atualiza o nome de apresentação sem alterar o ID nem o token da NUC."""
+        with self._lock:
+            station = self._stations.get(station_id)
+            if station is None:
+                return None
+            station.station_name = station_name
+            station.station_name_customized = True
+            try:
+                self._save_station(station)
+                self._db.execute(
+                    "UPDATE station_tokens SET label = %s WHERE station_id = %s",
+                    (station_name, station_id),
+                )
+                self._db.commit()
+            except Exception:
+                self._db.rollback()
+                raise
+            result = station.model_copy(deep=True)
+
+        self._broadcast()
+        return result
+
     def upsert_station_heartbeat(self, payload: StationHeartbeat) -> StationRecord:
         with self._lock:
             station = self._stations.get(payload.station_id)
@@ -601,7 +624,7 @@ class DashboardStore:
                 )
                 self._stations[payload.station_id] = station
 
-            if payload.station_name:
+            if payload.station_name and not station.station_name_customized:
                 station.station_name = payload.station_name
             station.status = payload.status
             station.mode = payload.mode

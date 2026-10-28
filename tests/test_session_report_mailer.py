@@ -124,6 +124,35 @@ def test_mailer_explains_when_alert_images_do_not_fit_in_report():
     assert "Há mais 2 alerta(s) disponível(is) na revisão completa." in html_message
 
 
+def test_mailer_uses_dashboard_station_name_when_provided():
+    now = datetime.now(UTC)
+    session = SessionRecord(
+        session_id="session-1",
+        station_id="nuc-01",
+        turma="T1",
+        assessment="Quiz",
+        started_at=now,
+    )
+    report = SessionEmailReport(
+        session_id=session.session_id,
+        sender_email="proctor@example.edu",
+        recipient_emails=["teacher@example.edu"],
+        image_link_limit=1,
+        ses_region="sa-east-1",
+        public_dashboard_url="https://dashboard.example.edu",
+    )
+
+    message = SessionReportMailer._build_message(
+        report,
+        session,
+        [],
+        available_snapshot_count=0,
+        station_name="Sala 203",
+    )
+
+    assert "Estação: Sala 203" in message.get_payload()[0].get_content()
+
+
 def test_mailer_sends_html_summary_and_permanent_dashboard_image_links():
     now = datetime(2026, 9, 15, 21, 2, 3, tzinfo=UTC)
     events = [

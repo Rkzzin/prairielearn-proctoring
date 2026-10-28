@@ -58,7 +58,7 @@
   </dl>
   <dl class="meta session-technical-grid">
     <div><dt>ID da sessão</dt><dd>{{ session.session_id }}</dd></div>
-    <div><dt>Estação</dt><dd>{{ session.station_id }}</dd></div>
+    <div><dt>Estação</dt><dd>{{ station_label(session.station_id) }}</dd></div>
     <div><dt>Status interno</dt><dd>{{ session.status.value }}</dd></div>
     <div><dt>Eventos sinalizados</dt><dd>{{ session.flags_count }}</dd></div>
   </dl>

@@ -295,9 +295,15 @@ class StationCreatePayload(BaseModel):
     station_name: str = Field(min_length=1, max_length=100)
 
 
+class StationRenamePayload(BaseModel):
+    station_name: str = Field(min_length=1, max_length=100)
+
+
 class StationRecord(BaseModel):
     station_id: str
     station_name: str
+    #: Impede que o heartbeat da NUC substitua o nome definido no dashboard.
+    station_name_customized: bool = False
     status: StationStatus = StationStatus.IDLE
     mode: str | None = None
     student: StudentInfo | None = None

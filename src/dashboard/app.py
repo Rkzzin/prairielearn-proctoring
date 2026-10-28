@@ -62,6 +62,7 @@ from src.dashboard.models import (
     SessionReviewStatusPayload,
     StationCreatePayload,
     StationHeartbeat,
+    StationRenamePayload,
     UnrecognizedAuthenticationPayload,
 )
 from src.dashboard.session_report_mailer import SessionReportMailer
@@ -133,6 +134,13 @@ def _station_id_from_name(station_name: str) -> str:
     return (station_id or "estacao")[:64].rstrip("-")
 
 
+def _station_label(store: DashboardStore, station_id: str) -> str:
+    station = store.get_station(station_id)
+    if station is None or station.station_name == station_id:
+        return station_id
+    return f"{station.station_name} ({station_id})"
+
+
 def create_app(
     config: AppConfig | None = None,
     store: DashboardStore | None = None,
@@ -157,6 +165,9 @@ def create_app(
     dashboard_store = store or DashboardStore(
         app_config.dashboard.database_url,
         app_config=app_config,
+    )
+    templates.env.globals["station_label"] = lambda station_id: _station_label(
+        dashboard_store, station_id
     )
     #: `roster_name(turma, login)` nos templates — resolve o login (ex.: "felipehl",
     #: o mesmo identificador usado no enrollment facial via S3) pro nome real do
@@ -499,6 +510,20 @@ def create_app(
             },
             status_code=201,
         )
+
+    @app.patch("/api/stations/{station_id}")
+    async def rename_station(
+        station_id: str, payload: StationRenamePayload
+    ) -> JSONResponse:
+        station_name = payload.station_name.strip()
+        if not station_name:
+            raise HTTPException(status_code=400, detail="Informe o nome da estação.")
+        if "\n" in station_name or "\r" in station_name:
+            raise HTTPException(status_code=400, detail="O nome deve ter apenas uma linha.")
+        station = dashboard_store.rename_station(station_id, station_name)
+        if station is None:
+            raise HTTPException(status_code=404, detail="Estação não encontrada.")
+        return JSONResponse(station.model_dump(mode="json"))
 
     @app.delete("/api/stations/{station_id}")
     async def delete_station(station_id: str) -> JSONResponse:

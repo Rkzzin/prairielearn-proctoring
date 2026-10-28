@@ -132,6 +132,8 @@ class SessionReportMailer:
             ]
             snapshots = self._select_snapshots(available_snapshots, report.image_link_limit)
             student_photo = self._load_student_photo(session)
+            get_station = getattr(self._store, "get_station", None)
+            station = get_station(session.station_id) if get_station is not None else None
             inline_images, environment_inline_images = self._load_inline_images(
                 snapshots,
                 max_bytes=_MAX_INLINE_IMAGE_BYTES - len(student_photo or b""),
@@ -146,6 +148,7 @@ class SessionReportMailer:
                 available_snapshot_count=sum(
                     snapshot.status == "ready" for snapshot in available_snapshots
                 ),
+                station_name=station.station_name if station else session.station_id,
             )
             message_id = self._send_message(report, message)
             self._store.finish_email_report(
@@ -296,6 +299,7 @@ class SessionReportMailer:
         environment_inline_images: dict[str, bytes] | None = None,
         student_photo: bytes | None = None,
         available_snapshot_count: int | None = None,
+        station_name: str | None = None,
     ) -> EmailMessage:
         inline_images = inline_images or {}
         environment_inline_images = environment_inline_images or {}
@@ -412,7 +416,7 @@ class SessionReportMailer:
            {student_photo_html}
           <p><strong>Turma:</strong> {html.escape(session.turma)}<br>
              <strong>Avaliação:</strong> {html.escape(session.assessment)}<br>
-             <strong>Estação:</strong> {html.escape(session.station_id)}<br>
+              <strong>Estação:</strong> {html.escape(station_name or session.station_id)}<br>
              <strong>Início da prova:</strong> {html.escape(started_at_label)}<br>
              <strong>Índice de integridade:</strong> {integrity.score} ({html.escape(integrity.band)})</p>
           <p><strong>{critical_count}</strong> crítico(s) e
@@ -434,7 +438,7 @@ class SessionReportMailer:
                 f"Usuário: {student_id}",
                 f"Turma: {session.turma}",
                 f"Avaliação: {session.assessment}",
-                f"Estação: {session.station_id}",
+                f"Estação: {station_name or session.station_id}",
                 f"Início da prova: {started_at_label}",
                 f"Índice de integridade: {integrity.score} ({integrity.band})",
                 f"Alertas: {critical_count} críticos, {warning_count} warnings",

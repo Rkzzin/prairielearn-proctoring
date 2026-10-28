@@ -1999,6 +1999,27 @@ def test_finalize_session_preserves_block_timeout_cancellation(dashboard_databas
     assert finalized.status == StationStatus.TIMEOUT
 
 
+def test_renamed_station_name_is_preserved_over_heartbeats(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+    store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01", station_name="Nome da NUC", status=StationStatus.IDLE
+        )
+    )
+
+    renamed = store.rename_station("nuc-01", "Sala 203")
+    after_heartbeat = store.upsert_station_heartbeat(
+        StationHeartbeat(
+            station_id="nuc-01", station_name="Nome da NUC", status=StationStatus.IDLE
+        )
+    )
+
+    assert renamed is not None
+    assert renamed.station_name == "Sala 203"
+    assert after_heartbeat.station_name == "Sala 203"
+    assert after_heartbeat.station_name_customized is True
+
+
 def test_unrecognized_authentication_uses_its_own_session_status(dashboard_database_url):
     store = DashboardStore(dashboard_database_url)
 

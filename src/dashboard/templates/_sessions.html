@@ -22,7 +22,7 @@
         <td data-label="Sessão">{{ session.assessment }}</td>
         <td data-label="Realizada em">{{ format_session_datetime(session.started_at) }}</td>
         <td data-label="Duração">{{ format_duration(session.duration_seconds) }}</td>
-        <td data-label="Estação">{{ session.station_id }}</td>
+        <td data-label="Estação">{{ station_label(session.station_id) }}</td>
         <td data-label="Aluno">
           {% if session.student %}
           {% set roster_display_name = roster_name(session.turma, session.student.student_id) %}

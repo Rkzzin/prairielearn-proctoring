@@ -103,6 +103,21 @@
   </div>
 </dialog>
 
+<dialog id="rename-station-modal" class="modal">
+  <h2>Renomear estação</h2>
+  <p id="rename-station-id" class="muted-login"></p>
+  <form class="form-card" id="rename-station-form" onsubmit="renameStation(event)">
+    <label>Nome de exibição
+      <input type="text" id="rename-station-name" name="station_name" maxlength="100" required>
+    </label>
+    <p class="form-error" id="rename-station-error" hidden></p>
+    <div class="modal-actions">
+      <button type="submit" id="rename-station-submit">Salvar nome</button>
+      <button type="button" class="button-secondary" onclick="document.getElementById('rename-station-modal').close()">Cancelar</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="users-modal" class="modal">
   <h2>Usuários do painel</h2>
   <p>Cadastro fechado: só quem está nesta lista consegue logar. Sem níveis de permissão, todo mundo tem acesso completo.</p>
@@ -251,6 +266,7 @@ us.prairietest.com</textarea></label>
 
 <script>
 let currentStationId = null;
+let stationBeingRenamed = null;
 let configStations = [];
 document.getElementById('create-station-modal').addEventListener('close', () => {
   document.getElementById('station-config-output').textContent = '';
@@ -269,6 +285,42 @@ function openCreateStationModal() {
 function closeCreateStationModal() {
   document.getElementById('station-config-output').textContent = '';
   document.getElementById('create-station-modal').close();
+}
+
+function openStationRenameModal(stationId, stationName) {
+  stationBeingRenamed = stationId;
+  document.getElementById('rename-station-id').textContent = `ID: ${stationId}`;
+  document.getElementById('rename-station-name').value = stationName;
+  document.getElementById('rename-station-error').hidden = true;
+  document.getElementById('rename-station-modal').showModal();
+  document.getElementById('rename-station-name').focus();
+}
+
+async function renameStation(event) {
+  event.preventDefault();
+  const name = document.getElementById('rename-station-name').value.trim();
+  const error = document.getElementById('rename-station-error');
+  const submit = document.getElementById('rename-station-submit');
+  error.hidden = true;
+  submit.disabled = true;
+  submit.textContent = 'Salvando...';
+  try {
+    const response = await fetch(`/api/stations/${encodeURIComponent(stationBeingRenamed)}`, {
+      method: 'PATCH',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({station_name: name})
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
+    document.getElementById('rename-station-modal').close();
+    if (window.htmx) htmx.ajax('GET', '/partials/stations', '#stations-panel');
+  } catch (requestError) {
+    error.textContent = requestError.message;
+    error.hidden = false;
+  } finally {
+    submit.disabled = false;
+    submit.textContent = 'Salvar nome';
+  }
 }
 
 async function createStation(event) {
