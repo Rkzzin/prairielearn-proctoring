@@ -107,6 +107,7 @@ _EVENT_REASON_LABELS = {
 _SESSION_STATUS_LABELS = {
     "COMPLETED": "Concluída",
     "TIMEOUT": "Timeout de bloqueio",
+    "AUTHENTICATION_REJECTED": "Autenticação recusada",
     "SESSION": "Em andamento",
     "BLOCKED": "Pausada",
     "UPLOADING": "Finalizando",
@@ -147,6 +148,9 @@ def create_app(
     templates.env.globals["integrity_score"] = compute_integrity_score
     templates.env.globals["review_status_label"] = lambda status: _REVIEW_STATUS_LABELS.get(
         getattr(status, "value", status), str(status)
+    )
+    templates.env.globals["session_status_label"] = lambda status: _SESSION_STATUS_LABELS.get(
+        getattr(status, "value", status), str(getattr(status, "value", status)).replace("_", " ").title()
     )
     templates.env.globals["format_duration"] = _format_duration
     templates.env.globals["format_session_datetime"] = _format_session_datetime

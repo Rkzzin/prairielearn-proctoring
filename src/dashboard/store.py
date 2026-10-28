@@ -743,7 +743,7 @@ class DashboardStore:
             assessment=assessment,
             started_at=attempted_at,
             ended_at=attempted_at,
-            status=StationStatus.TIMEOUT,
+            status=StationStatus.AUTHENTICATION_REJECTED,
             flags_count=1,
             events=[event],
             category="AUTHENTICATION_ALERT",
@@ -771,7 +771,10 @@ class DashboardStore:
             if session is None:
                 return None
             session.ended_at = ended_at or datetime.now(timezone.utc)
-            if session.status != StationStatus.TIMEOUT:
+            if session.status not in {
+                StationStatus.TIMEOUT,
+                StationStatus.AUTHENTICATION_REJECTED,
+            }:
                 session.status = StationStatus.COMPLETED
             station = self._stations.get(session.station_id)
             if station:
@@ -1355,6 +1358,16 @@ class DashboardStore:
             """,
         ):
             self._db.execute(statement)
+        #: Alertas antigos de autenticação foram gravados como ``TIMEOUT``.
+        #: A categoria já distingue esses registros de um bloqueio expirado,
+        #: portanto a correção é segura e torna o histórico coerente com o
+        #: novo status explícito.
+        self._db.execute(
+            "UPDATE sessions SET payload = jsonb_set("
+            "payload, '{status}', '\"AUTHENTICATION_REJECTED\"'::jsonb) "
+            "WHERE payload->>'category' = 'AUTHENTICATION_ALERT' "
+            "AND payload->>'status' = 'TIMEOUT'"
+        )
         self._db.commit()
 
     def ensure_dashboard_user(self, username: str, password_hash: str, display_name: str) -> None:

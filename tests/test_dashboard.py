@@ -11,6 +11,7 @@ from jinja2 import Environment, FileSystemLoader
 from src.core.config import AppConfig, DashboardConfig
 from src.core.states import known_station_statuses
 from src.dashboard.app import (
+    _SESSION_STATUS_LABELS,
     _build_timeline,
     _event_counts,
     _format_duration,
@@ -1717,6 +1718,10 @@ def test_station_status_matches_canonical_state_vocabulary():
     assert {status.value for status in StationStatus} == known_station_statuses()
 
 
+def test_authentication_rejected_status_has_a_clear_dashboard_label():
+    assert _SESSION_STATUS_LABELS["AUTHENTICATION_REJECTED"] == "Autenticação recusada"
+
+
 def test_dashboard_store_persists_across_restarts(dashboard_database_url):
     store = DashboardStore(dashboard_database_url)
     store.create_config(
@@ -1992,6 +1997,22 @@ def test_finalize_session_preserves_block_timeout_cancellation(dashboard_databas
 
     assert finalized is not None
     assert finalized.status == StationStatus.TIMEOUT
+
+
+def test_unrecognized_authentication_uses_its_own_session_status(dashboard_database_url):
+    store = DashboardStore(dashboard_database_url)
+
+    alert = store.register_unrecognized_authentication(
+        station_id="nuc-01",
+        turma="ES2025-T1",
+        assessment="Quiz-03",
+        attempted_at=datetime(2026, 4, 16, 18, 0, tzinfo=timezone.utc),
+        local_path="/tmp/unrecognized-authentication.jpg",
+    )
+
+    assert alert.status == StationStatus.AUTHENTICATION_REJECTED
+    assert alert.category == "AUTHENTICATION_ALERT"
+    assert alert.events[0].event_type == "UNRECOGNIZED_AUTHENTICATION"
 
 
 def test_session_record_defaults_to_needs_review():

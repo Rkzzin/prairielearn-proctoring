@@ -445,6 +445,7 @@ button {
   font-weight: 700;
 }
 .session-table-status-timeout { color: #8a2929; background: #fbeaea; }
+.session-table-status-authentication_rejected { color: #8a2929; background: #fbeaea; }
 
 .review-status-badge {
   display: inline-block;
@@ -581,6 +582,7 @@ th, td {
 }
 .session-status-completed { color: #24652b; background: #e8f4e9; border-color: #bcd9bf; }
 .session-status-timeout { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
+.session-status-authentication_rejected { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
 .session-status-blocked { color: #8a2929; background: #fbeaea; border-color: #e8baba; }
 .session-status-session { color: #1e626b; background: #e3f1f2; border-color: #b7d7da; }
 .session-status-uploading { color: #435e8c; background: #eaf0fa; border-color: #c4d1e6; }

@@ -36,8 +36,11 @@ class StationMode(str, Enum):
 
 #: Status que só existem na visão do dashboard, sem contrapartida na NUC.
 #: ``COMPLETED``/``TIMEOUT`` são atribuídos ao finalizar a sessão;
+#: ``AUTHENTICATION_REJECTED`` identifica uma tentativa facial recusada e
 #: ``OFFLINE`` quando o heartbeat expira.
-DASHBOARD_ONLY_STATUSES = frozenset({"COMPLETED", "TIMEOUT", "OFFLINE"})
+DASHBOARD_ONLY_STATUSES = frozenset(
+    {"COMPLETED", "TIMEOUT", "AUTHENTICATION_REJECTED", "OFFLINE"}
+)
 
 
 def derive_station_status(state: SessionState, mode: StationMode) -> str:
